@@ -1,0 +1,221 @@
+"""
+Local Backtest API
+──────────────────
+Run:
+    uvicorn api:app --reload --port 8001
+
+Endpoints:
+    GET  /health                    → health check
+    POST /backtest                  → run backtest (blocking, waits for result)
+    POST /backtest/file             → run backtest using current_backtest_request.json
+    POST /backtest/start            → start backtest in background, returns job_id
+    GET  /backtest/status/{job_id}  → poll progress: completed_days / total_days
+    GET  /backtest/result/{job_id}  → get final result when status=done
+"""
+
+import json
+import threading
+import time
+import uuid
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+from features.backtest_engine import run_backtest
+
+# ─── Config ───────────────────────────────────────────────────────────────────
+
+REQUEST_JSON_PATH = Path(__file__).parent / "current_backtest_request.json"
+
+JOB_TTL_SECONDS = 60         # auto-delete jobs older than 1 min
+MAX_JOBS        = 10         # max jobs kept in memory at once
+
+# ─── Job store (in-memory) ────────────────────────────────────────────────────
+# job_id → { status, completed, total, percent, current_day, result, error, created_at }
+
+_jobs: dict = {}
+_jobs_lock = threading.Lock()
+
+
+def _cleanup_old_jobs():
+    """Remove jobs older than JOB_TTL_SECONDS and enforce MAX_JOBS limit."""
+    now = time.time()
+    expired = [jid for jid, j in _jobs.items()
+               if now - j.get("created_at", now) > JOB_TTL_SECONDS]
+    for jid in expired:
+        del _jobs[jid]
+
+    # if still over limit, remove oldest completed jobs first
+    if len(_jobs) >= MAX_JOBS:
+        done = sorted(
+            [(jid, j) for jid, j in _jobs.items() if j["status"] != "running"],
+            key=lambda x: x[1].get("created_at", 0),
+        )
+        for jid, _ in done[:len(_jobs) - MAX_JOBS + 1]:
+            del _jobs[jid]
+
+
+def _run_job(job_id: str, request: dict):
+    def on_progress(completed: int, total: int, day: str):
+        with _jobs_lock:
+            _jobs[job_id].update({
+                "completed":   completed,
+                "total":       total,
+                "percent":     round(completed / total * 100, 1) if total else 0,
+                "current_day": day,
+            })
+
+    try:
+        result = run_backtest(request, on_progress=on_progress)
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "done"
+            _jobs[job_id]["result"] = result
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "error"
+            _jobs[job_id]["error"]  = str(e)
+
+
+# ─── App ──────────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="Local Backtest API", version="2.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ─── Endpoints ────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+# ── Blocking endpoints (existing behaviour) ───────────────────────────────────
+
+@app.post("/backtest")
+async def backtest_from_body(request: dict):
+    """Run backtest synchronously — waits until complete then returns result."""
+    try:
+        return run_backtest(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/backtest/file")
+async def backtest_from_file():
+    """Run backtest from current_backtest_request.json synchronously."""
+    if not REQUEST_JSON_PATH.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {REQUEST_JSON_PATH}")
+    with open(REQUEST_JSON_PATH) as f:
+        request = json.load(f)
+    try:
+        return run_backtest(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Background job endpoints (with progress) ──────────────────────────────────
+
+@app.post("/backtest/start")
+async def backtest_start(request: dict):
+    """
+    Start backtest in background. Returns job_id immediately.
+
+    Postman flow:
+      1. POST /backtest/start  → { "job_id": "abc123" }
+      2. GET  /backtest/status/abc123  →  poll until status=done
+      3. GET  /backtest/result/abc123  →  get final result
+    """
+    job_id = str(uuid.uuid4())[:8]
+    with _jobs_lock:
+        _cleanup_old_jobs()
+        _jobs[job_id] = {
+            "status":      "running",
+            "completed":   0,
+            "total":       0,
+            "percent":     0.0,
+            "current_day": None,
+            "result":      None,
+            "error":       None,
+            "created_at":  time.time(),
+        }
+    thread = threading.Thread(target=_run_job, args=(job_id, request), daemon=True)
+    thread.start()
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.post("/backtest/start/file")
+async def backtest_start_file():
+    """Start backtest from current_backtest_request.json in background."""
+    if not REQUEST_JSON_PATH.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {REQUEST_JSON_PATH}")
+    with open(REQUEST_JSON_PATH) as f:
+        request = json.load(f)
+    job_id = str(uuid.uuid4())[:8]
+    with _jobs_lock:
+        _cleanup_old_jobs()
+        _jobs[job_id] = {
+            "status":      "running",
+            "completed":   0,
+            "total":       0,
+            "percent":     0.0,
+            "current_day": None,
+            "result":      None,
+            "error":       None,
+            "created_at":  time.time(),
+        }
+    thread = threading.Thread(target=_run_job, args=(job_id, request), daemon=True)
+    thread.start()
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/backtest/status/{job_id}")
+async def backtest_status(job_id: str):
+    """
+    Poll progress of a running backtest.
+
+    Response:
+      { "status": "running", "completed": 45, "total": 250,
+        "percent": 18.0, "current_day": "2024-03-15" }
+
+      status values: "running" | "done" | "error"
+    """
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return {
+        "job_id":      job_id,
+        "status":      job["status"],
+        "completed":   job["completed"],
+        "total":       job["total"],
+        "percent":     job["percent"],
+        "current_day": job["current_day"],
+        "error":       job["error"],
+    }
+
+
+@app.get("/backtest/result/{job_id}")
+async def backtest_result(job_id: str):
+    """
+    Get final result once status=done.
+    Returns 400 if still running, 500 if errored.
+    """
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    if job["status"] == "running":
+        raise HTTPException(status_code=400, detail="Backtest still running. Check /backtest/status/{job_id}")
+    if job["status"] == "error":
+        with _jobs_lock:
+            del _jobs[job_id]
+        raise HTTPException(status_code=500, detail=job["error"])
+    result = job["result"]
+    with _jobs_lock:
+        del _jobs[job_id]
+    return result

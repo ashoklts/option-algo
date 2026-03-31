@@ -1,0 +1,2135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlgoTest — Backtest</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  background: #f5f6f8;
+  color: #222;
+}
+
+/* ────────── NAVBAR ────────── */
+.navbar {
+  background: #1a1d2e;
+  display: flex;
+  align-items: center;
+  padding: 0 22px;
+  height: 46px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.nav-logo {
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+  margin-right: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.nav-logo .logo-icon {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  width: 16px;
+  height: 16px;
+}
+.nav-logo .logo-icon span {
+  background: #4f8ef7;
+  border-radius: 2px;
+  display: block;
+}
+.nav-links {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+.nav-links a {
+  color: #9ca3c8;
+  text-decoration: none;
+  padding: 5px 11px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.nav-links a:hover { color: #fff; background: rgba(255,255,255,.08); }
+.nav-links a .arr {
+  font-size: 9px;
+  opacity: .6;
+  margin-top: 1px;
+}
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12.5px;
+}
+.nav-right a { color: #9ca3c8; text-decoration: none; }
+.nav-right a:hover { color: #fff; }
+.avatar {
+  width: 28px; height: 28px;
+  background: #4f8ef7;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 11px;
+}
+.cred-pill {
+  background: rgba(79,142,247,.15);
+  border: 1px solid rgba(79,142,247,.3);
+  border-radius: 20px;
+  padding: 3px 10px;
+  color: #7eaaff;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* ────────── CREDITS BAR ────────── */
+.credits-bar {
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: flex-end;
+  gap: 28px;
+  padding: 5px 22px;
+  font-size: 11.5px;
+}
+.credits-bar .ci {
+  display: flex; align-items: center; gap: 5px;
+}
+.credits-bar .cl { color: #888; }
+.credits-bar .cv { font-weight: 700; color: #111; }
+.credits-bar a { color: #4f8ef7; text-decoration: none; font-size: 11px; }
+
+/* ────────── PAGE HEADER ────────── */
+.page-hdr {
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 9px 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pg-title { font-size: 17px; font-weight: 800; color: #111; }
+.hdr-btn {
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 11px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  background: #fff;
+  color: #444;
+  font-size: 11.5px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.hdr-btn:hover { background: #f8f9fa; }
+
+/* ────────── TABS ────────── */
+.tabs-bar {
+  background: #fff;
+  border-bottom: 2px solid #e5e7eb;
+  display: flex;
+  padding: 0 22px;
+  overflow-x: auto;
+}
+.tab {
+  padding: 11px 18px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  color: #666;
+  white-space: nowrap;
+  min-width: 145px;
+}
+.tab.active {
+  border-bottom-color: #0b619b;
+  color: #0b619b;
+}
+.tab .tt { font-size: 12.5px; font-weight: 700; }
+.tab .ts { font-size: 10.5px; color: #aaa; margin-top: 2px; }
+.tab.active .ts { color: rgba(11,97,155,.55); }
+.nb { background: #22c55e; color: #fff; font-size: 9px; padding: 1px 5px; border-radius: 10px; margin-left: 4px; font-weight: 700; }
+.ab { display: inline-block; background: #2563eb; color: #fff; font-size: 9px; padding: 1px 6px; border-radius: 10px; margin-top: 3px; }
+
+/* ────────── MAIN CONTENT ────────── */
+.main {
+  padding: 20px 22px;
+}
+
+/* ────────── TWO COLUMN ────────── */
+.top-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.left-col {
+  padding: 0;
+  border-right: 1px solid #e5e7eb;
+}
+.right-col {
+  padding: 0;
+}
+
+/* ────────── SECTION ────────── */
+.section {
+  padding: 20px 24px 0 24px;
+}
+.section:last-child {
+  padding-bottom: 20px;
+}
+.sec-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111;
+  margin-bottom: 16px;
+}
+
+/* ────────── INNER CARD ────────── */
+.inner-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  background: #fff;
+}
+
+/* ────────── FIELD ROW ────────── */
+.field-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.field-row:last-child { margin-bottom: 0; }
+
+.f-lbl {
+  width: 130px;
+  min-width: 130px;
+  text-align: right;
+  padding-right: 14px;
+  font-size: 12.5px;
+  color: #555;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+/* ────────── INFO ICON ────────── */
+.ii {
+  width: 14px; height: 14px;
+  background: #e5e7eb;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: #666;
+  cursor: help;
+  flex-shrink: 0;
+  font-style: normal;
+}
+
+/* ────────── DROPDOWN ────────── */
+.dd {
+  height: 32px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  color: #222;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+  min-width: 120px;
+}
+.dd:focus { border-color: #0b619b; box-shadow: 0 0 0 2px rgba(11,97,155,.15); }
+
+/* ────────── BUTTON GROUP ────────── */
+.bgrp {
+  display: inline-flex;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.bgrp .gb {
+  padding: 5px 14px;
+  border: none;
+  background: #fff;
+  color: #555;
+  font-size: 12.5px;
+  cursor: pointer;
+  border-right: 1px solid #d1d5db;
+  line-height: 1.4;
+  transition: background .15s;
+}
+.bgrp .gb:last-child { border-right: none; }
+.bgrp .gb.on {
+  background: #0b619b;
+  color: #fff;
+  font-weight: 600;
+}
+.bgrp .gb:hover:not(.on) { background: #f0f2f5; }
+
+/* Strategy type */
+.bgrp.strategy .gb.on {
+  background: #0b619b;
+}
+
+/* ────────── TIME INPUT ────────── */
+.time-wrap {
+  display: flex;
+  align-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #fff;
+  height: 32px;
+}
+.time-wrap input[type=time] {
+  border: none;
+  outline: none;
+  padding: 0 8px;
+  font-size: 12.5px;
+  color: #222;
+  background: transparent;
+  height: 100%;
+  width: 88px;
+}
+.time-wrap .clk {
+  padding: 0 8px;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  border-left: 1px solid #e5e7eb;
+  height: 100%;
+  font-size: 13px;
+}
+/* Disabled time */
+.time-wrap.dim {
+  opacity: 0.45;
+}
+.time-wrap.dim input { pointer-events: none; }
+
+/* ────────── TOGGLE ────────── */
+.tgl {
+  position: relative;
+  width: 36px; height: 20px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tgl input { opacity: 0; width: 0; height: 0; }
+.tgl-track {
+  position: absolute;
+  inset: 0;
+  background: #9ca3af;
+  border-radius: 20px;
+  transition: background .2s;
+}
+.tgl-thumb {
+  position: absolute;
+  width: 14px; height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  top: 3px; left: 3px;
+  transition: transform .2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.tgl input:checked ~ .tgl-track { background: #0b619b; }
+.tgl input:checked ~ .tgl-thumb { transform: translateX(16px); }
+
+/* ────────── ENTRY ROW HALVES ────────── */
+.entry-half-row {
+  display: flex;
+  align-items: flex-start;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 16px;
+  margin-top: 0;
+  gap: 0;
+}
+.entry-half {
+  flex: 1;
+  padding: 0 16px;
+}
+.entry-half:first-child {
+  border-right: 1px solid #f0f0f0;
+  padding-left: 0;
+}
+.entry-half:last-child {
+  padding-right: 0;
+}
+.eh-label {
+  font-size: 12.5px;
+  color: #555;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.eh-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Momentum dropdown */
+.mom-dd {
+  display: flex;
+  align-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  overflow: hidden;
+  opacity: 0.45;
+  pointer-events: none;
+}
+.mom-dd select {
+  border: none;
+  outline: none;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  background: #e8edf8;
+  color: #333;
+  height: 30px;
+  cursor: pointer;
+}
+.mom-dd .mom-val {
+  padding: 0 10px;
+  font-size: 12px;
+  color: #555;
+  border-left: 1px solid #d1d5db;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  background: #fff;
+}
+.mom-dd.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ────────── SEPARATOR ────────── */
+.sep {
+  height: 1px;
+  background: #f0f0f0;
+  margin: 16px 0;
+}
+
+/* ══════════ RANGE BREAKOUT MODAL ══════════ */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 999;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: #fff;
+  border-radius: 10px;
+  width: 580px;
+  padding: 24px 28px 22px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.18);
+  position: relative;
+}
+.modal-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.modal-title { font-size: 15px; font-weight: 700; color: #111; }
+.modal-close {
+  background: none; border: none; cursor: pointer;
+  font-size: 18px; color: #888; line-height: 1;
+  padding: 2px 6px; border-radius: 4px;
+}
+.modal-close:hover { background: #f0f0f0; color: #333; }
+.modal-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+  margin-bottom: 18px;
+}
+.mf-group { display: flex; flex-direction: column; gap: 6px; }
+.mf-label { font-size: 11.5px; color: #888; }
+.mf-input {
+  height: 34px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: #aaa;
+  background: #fafafa;
+  outline: none;
+  width: 100%;
+}
+.mf-input.active-input {
+  color: #222;
+  background: #fff;
+  border-color: #0b619b;
+}
+.mf-input.active-input:focus { box-shadow: 0 0 0 2px rgba(11,97,155,.15); }
+.time-field {
+  display: flex;
+  align-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  overflow: hidden;
+  height: 34px;
+  background: #fff;
+  border-color: #0b619b;
+}
+.time-field input[type=time] {
+  border: none; outline: none;
+  padding: 0 10px;
+  font-size: 13px;
+  color: #222;
+  background: transparent;
+  flex: 1;
+}
+.time-field .tf-clk {
+  padding: 0 10px;
+  border-left: 1px solid #e5e7eb;
+  color: #888;
+  display: flex; align-items: center;
+}
+/* Entry on / Tracking pill buttons */
+.modal-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.modal-pill-grp { display: flex; flex-direction: column; gap: 8px; }
+.modal-pill-grp .mf-label { font-size: 11.5px; color: #888; }
+.pill-btns {
+  display: flex;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+  width: 100%;
+}
+.pill-btns button {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  background: #fff;
+  color: #555;
+  font-size: 13px;
+  cursor: pointer;
+  border-right: 1px solid #d1d5db;
+  transition: background .15s;
+  white-space: nowrap;
+  text-align: center;
+}
+.pill-btns button:last-child { border-right: none; }
+.pill-btns button.on {
+  background: #0b619b;
+  color: #fff;
+  font-weight: 600;
+}
+.pill-btns button:hover:not(.on) { background: #f0f5fb; }
+/* Description text */
+.modal-desc {
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: #444;
+  line-height: 1.65;
+  margin-bottom: 20px;
+}
+.modal-desc strong { color: #111; }
+/* Footer */
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.btn-cancel {
+  padding: 7px 18px;
+  border: none;
+  background: none;
+  color: #0b619b;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.btn-cancel:hover { background: #f0f5fb; }
+.btn-confirm {
+  padding: 7px 20px;
+  border: none;
+  background: #0b619b;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.btn-confirm:hover { background: #084d7a; }
+
+/* ══════════ LEG BUILDER ══════════ */
+.lb-wrap {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 18px 24px 22px;
+  margin-bottom: 14px;
+}
+.lb-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.lb-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.lb-collapse {
+  color: #0b619b;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lb-collapse:hover { text-decoration: underline; }
+
+.lb-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.lb-col {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.lb-lbl {
+  font-size: 11.5px;
+  color: #666;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.lb-input {
+  height: 32px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  color: #222;
+  outline: none;
+}
+.lb-input:focus { border-color: #2563eb; }
+
+.lb-dd-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.lb-dd {
+  height: 32px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 0 28px 0 10px;
+  font-size: 12.5px;
+  color: #222;
+  background: #fff;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+  min-width: 90px;
+}
+.lb-dd:focus { border-color: #2563eb; }
+.dd-arr {
+  position: absolute;
+  right: 8px;
+  color: #888;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.add-leg-btn {
+  background: #0b619b;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 28px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: .2px;
+}
+.add-leg-btn:hover { background: #084d7a; }
+
+/* ══════════ LEGS SECTION ══════════ */
+.legs-wrap {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 18px 24px;
+  margin-bottom: 14px;
+}
+.legs-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111;
+  margin-bottom: 12px;
+}
+
+/* Leg item */
+.leg-item {
+  position: relative;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  padding: 14px 50px 14px 16px;
+  margin-bottom: 10px;
+  background: #fafbfc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.leg-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 22px;
+  background: #6b7280;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  align-self: flex-start;
+}
+/* Side buttons */
+.leg-side-btns {
+  position: absolute;
+  top: 14px; right: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.side-btn {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+  transition: opacity .15s;
+}
+.side-btn.del { background: #ef4444; color: #fff; }
+.side-btn.cfg { background: #d1d5db; color: #555; }
+.side-btn:hover { opacity: .8; }
+
+/* Leg row 1: basic controls */
+.leg-r1 {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  justify-content: center;
+  width: 100%;
+}
+.lc { display: flex; flex-direction: column; gap: 5px; }
+.lc .ll { font-size: 11px; color: #888; white-space: nowrap; display: flex; align-items: center; gap: 3px; }
+
+/* Leg dropdowns */
+.leg-dd-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.leg-dd {
+  height: 30px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 0 26px 0 9px;
+  font-size: 12px;
+  color: #222;
+  background: #fff;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+}
+.leg-dd:focus { border-color: #2563eb; }
+.leg-dd-arr {
+  position: absolute;
+  right: 7px;
+  color: #999;
+  font-size: 10px;
+  pointer-events: none;
+}
+.leg-input {
+  height: 30px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #222;
+  outline: none;
+  width: 60px;
+  text-align: center;
+}
+.leg-input:focus { border-color: #2563eb; }
+
+/* Leg row 2: SL / Target / Trail */
+.leg-r2 {
+  display: flex;
+  align-items: flex-start;
+  gap: 30px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  justify-content: center;
+  width: 100%;
+}
+.leg-ctrl-grp {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lcg-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #444;
+}
+/* Blue tinted dropdown (disabled state) */
+.blue-dd-wrap {
+  display: flex;
+  align-items: center;
+  border: 1px solid #0b619b;
+  border-radius: 5px;
+  overflow: hidden;
+  opacity: .45;
+  pointer-events: none;
+  transition: opacity .2s;
+}
+.blue-dd-wrap.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+.blue-dd-wrap select {
+  height: 28px;
+  border: none;
+  outline: none;
+  padding: 0 22px 0 8px;
+  font-size: 11.5px;
+  color: #fff;
+  background: #0b619b;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  min-width: 110px;
+}
+.blue-dd-wrap .bd-arr {
+  background: #0b619b;
+  padding: 0 6px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  color: #fff;
+  font-size: 10px;
+  border-left: 1px solid rgba(255,255,255,.25);
+  flex-shrink: 0;
+}
+.blue-dd-wrap .bd-val {
+  width: 55px;
+  height: 28px;
+  border: none;
+  border-left: 1px solid #d1d5db;
+  text-align: center;
+  font-size: 12px;
+  color: #555;
+  background: #fff;
+  outline: none;
+  padding: 0 6px;
+}
+/* Trail SL has extra value */
+.trail-val {
+  width: 55px;
+  height: 28px;
+  border: none;
+  border-left: 1px solid #d1d5db;
+  text-align: center;
+  font-size: 12px;
+  color: #555;
+  background: #fff;
+  outline: none;
+  padding: 0 6px;
+}
+
+/* Row 3: Re-entry / Momentum / Range Breakout */
+.leg-r3 {
+  display: flex;
+  align-items: flex-start;
+  gap: 26px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+}
+/* Re-entry dropdown row */
+.reentry-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  opacity: .45;
+  pointer-events: none;
+  transition: opacity .2s;
+  border: 1px solid #0b619b;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.reentry-wrap.active { opacity:1; pointer-events:auto; }
+.re-dd {
+  height: 28px;
+  border: none;
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: #fff;
+  background: #0b619b;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+  min-width: 110px;
+}
+.re-num {
+  height: 28px;
+  width: 36px;
+  border: none;
+  border-left: 1px solid #d1d5db;
+  text-align: center;
+  font-size: 12px;
+  color: #555;
+  outline: none;
+  background: #fff;
+}
+.re-arr-btn {
+  height: 28px;
+  border: none;
+  border-left: 1px solid #d1d5db;
+  background: #f5f6f8;
+  color: #888;
+  font-size: 10px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+/* Momentum wrap */
+.mom-r3-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  opacity: .45;
+  pointer-events: none;
+  transition: opacity .2s;
+}
+.mom-r3-wrap.active { opacity:1; pointer-events:auto; }
+/* Momentum dropdown styled same as blue-dd */
+.mom-dd-box {
+  display: flex;
+  align-items: center;
+  border: 1px solid #0b619b;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.mom-r3-dd {
+  height: 28px;
+  border: none;
+  padding: 0 8px;
+  font-size: 11.5px;
+  color: #fff;
+  background: #0b619b;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+  min-width: 120px;
+}
+.mom-r3-arr {
+  height: 28px;
+  background: #0b619b;
+  border-left: 1px solid rgba(255,255,255,.25);
+  padding: 0 6px;
+  font-size: 10px;
+  color: #fff;
+  display: flex; align-items: center;
+}
+.mom-val-input {
+  height: 28px;
+  width: 40px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  outline: none;
+}
+.mom-time-wrap {
+  display: flex;
+  align-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  overflow: hidden;
+  height: 28px;
+  background: #fff;
+}
+.mom-time-wrap input[type=time] {
+  border: none; outline: none;
+  padding: 0 6px;
+  font-size: 11.5px;
+  color: #999;
+  background: transparent;
+  width: 80px;
+}
+.mom-time-wrap .tclk {
+  padding: 0 6px;
+  border-left: 1px solid #e5e7eb;
+  color: #bbb;
+  font-size: 12px;
+  display: flex; align-items: center;
+}
+/* High / Low / Strike Price pills */
+.hl-grp {
+  display: flex;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.hl-grp span {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #aaa;
+  background: #fff;
+  border-right: 1px solid #d1d5db;
+  cursor: pointer;
+}
+.hl-grp span:last-child { border-right: none; }
+.hl-grp span.on { background: #e8edf8; color: #2563eb; font-weight: 600; }
+
+/* Range breakout */
+.rng-brk { display: flex; flex-direction: column; gap: 6px; }
+
+/* ══════════ OVERALL STRATEGY SETTINGS ══════════ */
+.overall-wrap {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 18px 24px 22px;
+  margin-bottom: 14px;
+}
+.overall-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.overall-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ov-col {
+  padding: 18px 20px;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ov-col:last-child { border-right: none; }
+
+.ov-row { display: flex; flex-direction: column; gap: 7px; }
+.ov-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: #333;
+  font-weight: 500;
+}
+/* reuse blue-dd-wrap for overall dropdowns */
+.ov-dd-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* number value box beside dropdown */
+.ov-val {
+  height: 28px;
+  width: 60px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  text-align: center;
+  font-size: 12px;
+  color: #aaa;
+  outline: none;
+  background: #fff;
+}
+/* Re-entry count small chevron */
+.ov-re-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid #0b619b;
+  border-radius: 5px;
+  overflow: hidden;
+  opacity: .45;
+  pointer-events: none;
+  transition: opacity .2s;
+  width: fit-content;
+}
+.ov-re-row.active { opacity:1; pointer-events:auto; }
+.ov-re-dd {
+  height: 30px;
+  border: none;
+  padding: 0 10px;
+  font-size: 12px;
+  color: #fff;
+  background: #0b619b;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+  width: 110px;
+}
+.ov-re-num {
+  height: 30px;
+  width: 40px;
+  border: none;
+  border-left: 1px solid #d1d5db;
+  text-align: center;
+  font-size: 12px;
+  color: #555;
+  outline: none;
+  background: #fff;
+}
+.ov-re-arr {
+  height: 30px;
+  border: none;
+  border-left: 1px solid #d1d5db;
+  background: #f5f6f8;
+  color: #888;
+  font-size: 10px;
+  padding: 0 7px;
+  cursor: pointer;
+}
+/* If profit reaches / Lock profit — same line */
+.profit-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: nowrap;
+  margin-top: 4px;
+}
+.profit-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.profit-item label {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+}
+.profit-item input {
+  height: 30px;
+  width: 65px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  text-align: center;
+  font-size: 12px;
+  color: #333;
+  outline: none;
+}
+.profit-item input:focus { border-color: #0b619b; }
+.rng-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  transition: opacity .2s;
+}
+.rng-ctrl.disabled {
+  opacity: .45;
+  pointer-events: none;
+}
+
+</style>
+</head>
+<body>
+
+<!-- ══ RANGE BREAKOUT MODAL ══ -->
+<div class="modal-overlay" id="rngModal">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <span class="modal-title">Range Breakout</span>
+      <button class="modal-close" onclick="closeRngModal(false)">✕</button>
+    </div>
+
+    <div class="modal-fields">
+      <div class="mf-group">
+        <span class="mf-label">Start Time</span>
+        <input type="text" class="mf-input" value="09:35" readonly id="rng_start_display">
+      </div>
+      <div class="mf-group">
+        <span class="mf-label">End Time</span>
+        <div class="time-field">
+          <input type="time" value="09:45" id="rng_end_time" oninput="updateRngDesc()">
+          <span class="tf-clk">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-pill-grp">
+        <span class="mf-label">Entry on</span>
+        <div class="pill-btns" id="entryOnGrp">
+          <button class="on" onclick="pillClick(this,'entryOnGrp');updateRngDesc()">High</button>
+          <button onclick="pillClick(this,'entryOnGrp');updateRngDesc()">Low</button>
+        </div>
+      </div>
+      <div class="modal-pill-grp">
+        <span class="mf-label">Tracking</span>
+        <div class="pill-btns" id="trackingGrp">
+          <button class="on" onclick="pillClick(this,'trackingGrp');updateRngDesc()">Strike Price</button>
+          <button onclick="pillClick(this,'trackingGrp');updateRngDesc()">Underlying</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-desc" id="rngDesc"></div>
+
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeRngModal(false)">Cancel</button>
+      <button class="btn-confirm" onclick="closeRngModal(true)">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- NAVBAR -->
+<nav class="navbar">
+  <div class="nav-logo">
+    <div class="logo-icon">
+      <span></span><span></span><span></span><span></span>
+    </div>
+    AlgoTest
+  </div>
+  <div class="nav-links">
+    <a href="#">Backtest <span class="arr">▾</span></a>
+    <a href="#">Algo Trade <span class="arr">▾</span></a>
+    <a href="#">Signals <span class="arr">▾</span></a>
+    <a href="#">Marketplace <span class="arr">▾</span></a>
+    <a href="#">ClickTrade <span class="arr">▾</span></a>
+    <a href="#">Webinars <span class="arr">▾</span></a>
+  </div>
+  <div class="nav-right">
+    <a href="#">Pricing</a>
+    <a href="#">Broker Setup</a>
+    <div class="avatar">AS</div>
+    <div class="cred-pill">Credits:265</div>
+  </div>
+</nav>
+
+<!-- CREDITS BAR -->
+<div class="credits-bar">
+  <div class="ci"><span class="cl">Credits Available</span><span class="cv">265</span><a href="#">Add</a></div>
+  <div class="ci"><span class="cl">Weekly Backtests</span><span class="cv">21</span><a href="#">Buy Backtests</a></div>
+</div>
+
+<!-- PAGE HEADER -->
+<div class="page-hdr">
+  <span class="pg-title">Backtest</span>
+  <a class="hdr-btn" href="#">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+    Import .algtst
+  </a>
+  <a class="hdr-btn" href="#">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+    Export .algtst
+  </a>
+  <a class="hdr-btn" href="#">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+    PDF
+  </a>
+</div>
+
+<!-- TABS -->
+<div class="tabs-bar">
+  <div class="tab active">
+    <div class="tt">Weekly &amp; Monthly Expiries</div>
+    <div class="ts">NIFTY | SENSEX</div>
+  </div>
+  <div class="tab">
+    <div class="tt">Monthly Only Expiry</div>
+    <div class="ts">MIDCPNIFTY | BANKNIFTY | FINNIFTY | BANKEX</div>
+  </div>
+  <div class="tab">
+    <div class="tt">Stocks – Cash / F&amp;O</div>
+    <div class="ts">ALL NIFTY 500 STOCKS</div>
+  </div>
+  <div class="tab">
+    <div class="tt">Delta Exchange <span class="nb">New</span></div>
+    <div class="ts">BTCUSD | ETHUSD</div>
+    <div><span class="ab">Algo Trading</span></div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- TOP GRID: Instrument + Entry -->
+  <div class="top-grid">
+
+    <!-- LEFT: Instrument settings + Legwise settings -->
+    <div class="left-col">
+
+      <!-- Instrument Settings -->
+      <div class="section">
+        <div class="sec-title">Instrument settings</div>
+        <div class="inner-card">
+
+          <!-- Index -->
+          <div class="field-row">
+            <div class="f-lbl">Index</div>
+            <select class="dd" style="width:160px">
+              <option>NIFTY</option>
+              <option>BANKNIFTY</option>
+              <option>SENSEX</option>
+              <option>FINNIFTY</option>
+              <option>MIDCPNIFTY</option>
+            </select>
+          </div>
+
+          <!-- Underlying from -->
+          <div class="field-row">
+            <div class="f-lbl">
+              Underlying from
+              <i class="ii">i</i>
+            </div>
+            <div class="bgrp">
+              <button class="gb on" onclick="grpClick(this)">Cash</button>
+              <button class="gb" onclick="grpClick(this)">Futures</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Legwise Settings -->
+      <div class="section" style="padding-top:0">
+        <div class="sec-title">Legwise settings</div>
+        <div class="inner-card">
+
+          <!-- Square Off -->
+          <div class="field-row">
+            <div class="f-lbl">
+              Square Off
+              <i class="ii">i</i>
+            </div>
+            <div class="bgrp">
+              <button class="gb on" onclick="grpClick(this)">Partial</button>
+              <button class="gb" onclick="grpClick(this)">Complete</button>
+            </div>
+          </div>
+
+          <!-- Trail SL to Breakeven -->
+          <div class="field-row" style="align-items:flex-start;padding-top:2px">
+            <div class="f-lbl" style="padding-top:2px">
+              <!-- empty, checkbox row is full width -->
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="trailChk" onchange="trailChkChange()"
+                  style="width:13px;height:13px;accent-color:#0b619b;cursor:pointer">
+                <span style="font-size:12.5px;color:#444">Trail SL to Break-even price</span>
+                <i class="ii">i</i>
+              </label>
+              <div class="bgrp" id="trailLegs" style="opacity:.45;pointer-events:none">
+                <button class="gb on" onclick="grpClick(this)">All Legs</button>
+                <button class="gb" onclick="grpClick(this)">SL Legs</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div><!-- /left-col -->
+
+    <!-- RIGHT: Entry settings -->
+    <div class="right-col">
+      <div class="section" style="padding-bottom:20px">
+        <div class="sec-title">Entry settings</div>
+        <div class="inner-card">
+
+          <!-- Strategy Type -->
+          <div class="field-row">
+            <div class="f-lbl">Strategy Type</div>
+            <div class="bgrp strategy">
+              <button class="gb on" onclick="grpClick(this);stratChange(this)">Intraday</button>
+              <button class="gb" onclick="grpClick(this);stratChange(this)">BTST</button>
+              <button class="gb" onclick="grpClick(this);stratChange(this)">Positional</button>
+            </div>
+          </div>
+
+          <!-- Entry Time / Exit Time -->
+          <div class="field-row">
+            <div class="f-lbl">Entry Time</div>
+            <div class="time-wrap">
+              <input type="time" value="09:35">
+              <span class="clk">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </span>
+            </div>
+            <div class="f-lbl" style="width:80px;min-width:80px;padding-left:14px;padding-right:14px;justify-content:flex-start">Exit Time</div>
+            <div class="time-wrap">
+              <input type="time" value="15:15">
+              <span class="clk">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </span>
+            </div>
+          </div>
+
+          <div class="sep"></div>
+
+          <!-- No re-entry after | Overall Momentum -->
+          <div class="entry-half-row">
+
+            <!-- Left half: No re-entry after -->
+            <div class="entry-half">
+              <div class="eh-label">
+                No re-entry after
+              </div>
+              <div class="eh-ctrl">
+                <label class="tgl" id="noReTgl">
+                  <input type="checkbox" onchange="toggleReEntry(this)">
+                  <div class="tgl-track"></div>
+                  <div class="tgl-thumb"></div>
+                </label>
+              </div>
+              <!-- time below toggle -->
+              <div style="margin-top:8px">
+                <div class="time-wrap dim" id="noReTime" style="width:fit-content">
+                  <input type="time" value="09:35">
+                  <span class="clk">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right half: Overall Momentum -->
+            <div class="entry-half">
+              <div class="eh-label">
+                Overall Momentum <i class="ii">i</i>
+              </div>
+              <div class="eh-ctrl">
+                <label class="tgl" id="momTgl">
+                  <input type="checkbox" onchange="toggleMomentum(this)">
+                  <div class="tgl-track"></div>
+                  <div class="tgl-thumb"></div>
+                </label>
+              </div>
+              <!-- dropdown + value below -->
+              <div style="margin-top:8px">
+                <div class="mom-dd" id="momCtrl">
+                  <select>
+                    <option>Points (Pts) +</option>
+                    <option>Points (Pts) -</option>
+                    <option>% +</option>
+                    <option>% -</option>
+                  </select>
+                  <span class="mom-val">0</span>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /entry-half-row -->
+
+        </div><!-- /inner-card -->
+      </div>
+    </div><!-- /right-col -->
+
+  </div><!-- /top-grid -->
+
+  <!-- ══════════ LEG BUILDER ══════════ -->
+  <div class="lb-wrap">
+
+    <!-- Header -->
+    <div class="lb-header">
+      <span class="lb-title">Leg Builder <i class="ii">i</i></span>
+      <span class="lb-collapse" onclick="toggleLB()">Collapse</span>
+    </div>
+
+    <!-- Controls row -->
+    <div class="lb-body" id="lbBody">
+      <div class="lb-row">
+
+        <!-- Select Segments -->
+        <div class="lb-col">
+          <div class="lb-lbl">Select segments</div>
+          <div class="bgrp">
+            <button class="gb" onclick="grpClick(this)">Futures</button>
+            <button class="gb on" onclick="grpClick(this)">Options</button>
+          </div>
+        </div>
+
+        <!-- Total Lot -->
+        <div class="lb-col">
+          <div class="lb-lbl">Total Lot</div>
+          <input type="number" value="1" class="lb-input" style="width:58px;text-align:center">
+        </div>
+
+        <!-- Position -->
+        <div class="lb-col">
+          <div class="lb-lbl">Position</div>
+          <div class="bgrp">
+            <button class="gb" onclick="grpClick(this)">Buy</button>
+            <button class="gb on" onclick="grpClick(this)">Sell</button>
+          </div>
+        </div>
+
+        <!-- Option Type -->
+        <div class="lb-col">
+          <div class="lb-lbl">Option Type</div>
+          <div class="bgrp">
+            <button class="gb on" onclick="grpClick(this)">Call</button>
+            <button class="gb" onclick="grpClick(this)">Put</button>
+          </div>
+        </div>
+
+        <!-- Expiry -->
+        <div class="lb-col">
+          <div class="lb-lbl">Expiry</div>
+          <div class="lb-dd-wrap">
+            <select class="lb-dd">
+              <option>Weekly</option>
+              <option>Next Week</option>
+              <option>Monthly</option>
+              <option>Next Month</option>
+            </select>
+            <span class="dd-arr">▾</span>
+          </div>
+        </div>
+
+        <!-- Strike Criteria -->
+        <div class="lb-col">
+          <div class="lb-lbl">Strike Criteria <i class="ii">i</i></div>
+          <div class="lb-dd-wrap" style="opacity:.55">
+            <select class="lb-dd" style="width:120px">
+              <option>Strike Type</option>
+              <option>ATM %</option>
+              <option>Closest Premium</option>
+              <option>Premium ≥</option>
+              <option>Premium ≤</option>
+              <option>Premium Range</option>
+              <option>Straddle Width</option>
+              <option>Straddle %</option>
+              <option>Synthetic Future</option>
+              <option>Delta (0–100)</option>
+              <option>Fixed Strike</option>
+            </select>
+            <span class="dd-arr">▾</span>
+          </div>
+        </div>
+
+        <!-- Strike Type -->
+        <div class="lb-col">
+          <div class="lb-lbl">Strike Type</div>
+          <div class="lb-dd-wrap" style="opacity:.55">
+            <select class="lb-dd" style="width:80px">
+              <option>ATM</option>
+              <option>ITM 1</option><option>ITM 2</option><option>ITM 3</option>
+              <option>OTM 1</option><option>OTM 2</option><option>OTM 3</option>
+            </select>
+            <span class="dd-arr">▾</span>
+          </div>
+        </div>
+
+      </div><!-- /lb-row -->
+
+      <!-- Add Leg Button -->
+      <div style="text-align:center;margin-top:22px">
+        <button class="add-leg-btn" onclick="addLeg()">Add Leg</button>
+      </div>
+    </div><!-- /lbBody -->
+
+  </div><!-- /lb-wrap -->
+
+  <!-- ══════════ LEGS SECTION ══════════ -->
+  <div class="legs-wrap">
+    <div class="legs-title">Legs</div>
+    <div id="legsContainer"></div>
+  </div>
+
+  <!-- ══════════ OVERALL STRATEGY SETTINGS ══════════ -->
+  <div class="overall-wrap">
+    <div class="overall-title">Overall strategy settings <i class="ii">i</i></div>
+    <div class="overall-grid">
+
+      <!-- Column 1 -->
+      <div class="ov-col">
+
+        <!-- Overall Stop Loss -->
+        <div class="ov-row">
+          <div class="ov-head">
+            Overall Stop Loss
+            <label class="tgl" style="width:32px;height:18px">
+              <input type="checkbox" onchange="ovTog(this,'osl_ctrl')">
+              <div class="tgl-track"></div><div class="tgl-thumb"></div>
+            </label>
+          </div>
+          <div class="ov-dd-row">
+            <div class="blue-dd-wrap" id="osl_ctrl">
+              <select><option>Max Loss</option><option>% Loss</option></select>
+              <span class="bd-arr">▾</span>
+              <input type="number" value="0" class="bd-val">
+            </div>
+          </div>
+        </div>
+
+        <!-- Overall Re-entry on SL -->
+        <div class="ov-row">
+          <div class="ov-head">
+            Overall Re-entry on SL <i class="ii">i</i>
+            <label class="tgl" style="width:32px;height:18px">
+              <input type="checkbox" onchange="ovTogRe(this,'oresl_ctrl')">
+              <div class="tgl-track"></div><div class="tgl-thumb"></div>
+            </label>
+          </div>
+          <div class="ov-re-row" id="oresl_ctrl">
+            <select class="ov-re-dd">
+              <option>RE ASAP</option><option>RE ASAP Reverse</option>
+              <option>RE Momentum</option><option>RE Momentum Reverse</option>
+              <option>RE Cost (Recost)</option><option>RE Cost Reverse</option>
+            </select>
+            <input type="number" value="1" class="ov-re-num">
+            <button class="ov-re-arr">▾</button>
+          </div>
+        </div>
+
+      </div><!-- /col1 -->
+
+      <!-- Column 2 -->
+      <div class="ov-col">
+
+        <!-- Overall Target -->
+        <div class="ov-row">
+          <div class="ov-head">
+            Overall Target
+            <label class="tgl" style="width:32px;height:18px">
+              <input type="checkbox" onchange="ovTog(this,'otgt_ctrl')">
+              <div class="tgl-track"></div><div class="tgl-thumb"></div>
+            </label>
+          </div>
+          <div class="ov-dd-row">
+            <div class="blue-dd-wrap" id="otgt_ctrl">
+              <select><option>Max Profit</option><option>% Profit</option></select>
+              <span class="bd-arr">▾</span>
+              <input type="number" value="0" class="bd-val">
+            </div>
+          </div>
+        </div>
+
+        <!-- Overall Re-entry on Tgt -->
+        <div class="ov-row">
+          <div class="ov-head">
+            Overall Re-entry on Tgt <i class="ii">i</i>
+            <label class="tgl" style="width:32px;height:18px">
+              <input type="checkbox" onchange="ovTogRe(this,'oretgt_ctrl')">
+              <div class="tgl-track"></div><div class="tgl-thumb"></div>
+            </label>
+          </div>
+          <div class="ov-re-row" id="oretgt_ctrl">
+            <select class="ov-re-dd">
+              <option>RE ASAP</option><option>RE ASAP Reverse</option>
+              <option>RE Momentum</option><option>RE Momentum Reverse</option>
+              <option>RE Cost (Recost)</option><option>RE Cost Reverse</option>
+            </select>
+            <input type="number" value="1" class="ov-re-num">
+            <button class="ov-re-arr">▾</button>
+          </div>
+        </div>
+
+      </div><!-- /col2 -->
+
+      <!-- Column 3 -->
+      <div class="ov-col">
+
+        <!-- Trailing Options -->
+        <div class="ov-row">
+          <div class="ov-head">
+            Trailing Options
+            <label class="tgl" style="width:32px;height:18px">
+              <input type="checkbox" onchange="ovTog(this,'otrail_ctrl')">
+              <div class="tgl-track"></div><div class="tgl-thumb"></div>
+            </label>
+          </div>
+          <div class="ov-dd-row">
+            <div class="blue-dd-wrap" id="otrail_ctrl">
+              <select><option>Lock</option><option>Trail</option></select>
+              <span class="bd-arr">▾</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- If profit reaches / Lock profit — same line -->
+        <div class="ov-row">
+          <div class="profit-row">
+            <div class="profit-item">
+              <label>If profit reaches</label>
+              <input type="number" value="0">
+            </div>
+            <div class="profit-item">
+              <label>Lock profit</label>
+              <input type="number" value="1">
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /col3 -->
+
+    </div><!-- /overall-grid -->
+  </div><!-- /overall-wrap -->
+
+</div><!-- /main -->
+
+<script>
+// Button group toggle
+function grpClick(btn) {
+  const grp = btn.closest('.bgrp');
+  grp.querySelectorAll('.gb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+}
+
+// Trail SL checkbox
+function trailChkChange() {
+  const chk = document.getElementById('trailChk');
+  const grp = document.getElementById('trailLegs');
+  grp.style.opacity = chk.checked ? '1' : '0.45';
+  grp.style.pointerEvents = chk.checked ? 'auto' : 'none';
+}
+
+// No re-entry after toggle
+function toggleReEntry(chk) {
+  const tw = document.getElementById('noReTime');
+  if (chk.checked) {
+    tw.classList.remove('dim');
+    tw.querySelector('input').style.pointerEvents = 'auto';
+  } else {
+    tw.classList.add('dim');
+    tw.querySelector('input').style.pointerEvents = 'none';
+  }
+}
+
+// Overall Momentum toggle
+function toggleMomentum(chk) {
+  const ctrl = document.getElementById('momCtrl');
+  ctrl.classList.toggle('active', chk.checked);
+}
+
+// Strategy type change
+function stratChange(btn) {}
+
+/* ══ LEG BUILDER ══ */
+let lbOpen = true;
+function toggleLB() {
+  const body = document.getElementById('lbBody');
+  const btn  = document.querySelector('.lb-collapse');
+  lbOpen = !lbOpen;
+  body.style.display = lbOpen ? 'block' : 'none';
+  btn.textContent = lbOpen ? 'Collapse' : 'Expand';
+}
+
+/* ══ LEG HTML FACTORY ══ */
+let legCount = 0;
+function addLeg() {
+  legCount++;
+  const n = legCount;
+  const container = document.getElementById('legsContainer');
+  const div = document.createElement('div');
+  div.className = 'leg-item';
+  div.id = 'leg_' + n;
+  div.innerHTML = `
+    <div class="leg-num">#${n}</div>
+    <div class="leg-side-btns">
+      <button class="side-btn del" onclick="removeLeg('leg_${n}')">✕</button>
+      <button class="side-btn cfg">⚙</button>
+    </div>
+
+    <!-- Row 1: Basic -->
+    <div class="leg-r1">
+      <div class="lc">
+        <span class="ll">Lots</span>
+        <input type="number" value="1" class="leg-input" style="width:55px">
+      </div>
+      <div class="lc">
+        <span class="ll">Position</span>
+        <div class="leg-dd-wrap">
+          <select class="leg-dd" style="width:80px">
+            <option>Sell</option><option>Buy</option>
+          </select>
+          <span class="leg-dd-arr">▾</span>
+        </div>
+      </div>
+      <div class="lc">
+        <span class="ll">Option Type</span>
+        <div class="leg-dd-wrap">
+          <select class="leg-dd" style="width:80px">
+            <option>Call</option><option>Put</option>
+          </select>
+          <span class="leg-dd-arr">▾</span>
+        </div>
+      </div>
+      <div class="lc">
+        <span class="ll">Expiry</span>
+        <div class="leg-dd-wrap">
+          <select class="leg-dd" style="width:100px">
+            <option>Weekly</option><option>Next Week</option>
+            <option>Monthly</option><option>Next Month</option>
+          </select>
+          <span class="leg-dd-arr">▾</span>
+        </div>
+      </div>
+      <div class="lc">
+        <span class="ll">Select Strike Criteria <i class="ii">i</i></span>
+        <div style="display:flex;gap:5px">
+          <div class="leg-dd-wrap">
+            <select class="leg-dd" style="width:120px">
+              <option>Strike Type</option><option>ATM %</option>
+              <option>Closest Premium</option><option>Premium ≥</option>
+              <option>Premium ≤</option><option>Premium Range</option>
+              <option>Straddle Width</option><option>Straddle %</option>
+              <option>Synthetic Future</option><option>Delta (0–100)</option>
+              <option>Fixed Strike</option>
+            </select>
+            <span class="leg-dd-arr">▾</span>
+          </div>
+          <div class="leg-dd-wrap">
+            <select class="leg-dd" style="width:75px">
+              <option>ATM</option><option>ITM 1</option><option>ITM 2</option>
+              <option>OTM 1</option><option>OTM 2</option><option>OTM 3</option>
+            </select>
+            <span class="leg-dd-arr">▾</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: Target / SL / Trail SL -->
+    <div class="leg-r2">
+
+      <!-- Target Profit -->
+      <div class="leg-ctrl-grp">
+        <div class="lcg-head">
+          Target Profit
+          <label class="tgl" style="width:32px;height:18px">
+            <input type="checkbox" onchange="togLegCtrl(this,'tgt_${n}')">
+            <div class="tgl-track"></div><div class="tgl-thumb"></div>
+          </label>
+        </div>
+        <div class="blue-dd-wrap" id="tgt_${n}">
+          <select style="width:120px">
+            <option>Points (Pts)</option><option>Underlying Pts</option>
+            <option>Percent (%)</option><option>Underlying %</option>
+          </select>
+          <span class="bd-arr">▾</span>
+          <input type="number" class="bd-val" value="0" min="0">
+        </div>
+      </div>
+
+      <!-- Stop Loss -->
+      <div class="leg-ctrl-grp">
+        <div class="lcg-head">
+          Stop Loss
+          <label class="tgl" style="width:32px;height:18px">
+            <input type="checkbox" onchange="togLegCtrl(this,'sl_${n}')">
+            <div class="tgl-track"></div><div class="tgl-thumb"></div>
+          </label>
+        </div>
+        <div class="blue-dd-wrap" id="sl_${n}">
+          <select style="width:120px">
+            <option>Points (Pts)</option><option>Underlying Pts</option>
+            <option>Percent (%)</option><option>Underlying %</option>
+          </select>
+          <span class="bd-arr">▾</span>
+          <input type="number" class="bd-val" value="0" min="0">
+        </div>
+      </div>
+
+      <!-- Trail SL -->
+      <div class="leg-ctrl-grp">
+        <div class="lcg-head">
+          Trail SL <i class="ii">i</i>
+          <label class="tgl" style="width:32px;height:18px">
+            <input type="checkbox" onchange="togLegCtrl(this,'tsl_${n}')">
+            <div class="tgl-track"></div><div class="tgl-thumb"></div>
+          </label>
+        </div>
+        <div class="blue-dd-wrap" id="tsl_${n}">
+          <select>
+            <option>Points</option><option>%</option>
+          </select>
+          <span class="bd-arr">▾</span>
+          <input type="number" class="bd-val" value="0" min="0">
+          <input type="number" class="trail-val" value="0" min="0">
+        </div>
+      </div>
+
+    </div><!-- /leg-r2 -->
+
+    <!-- Row 3: Re-entry / Momentum / Range Breakout -->
+    <div class="leg-r3">
+
+      <!-- Re-entry on Tgt -->
+      <div class="leg-ctrl-grp">
+        <div class="lcg-head">
+          Re-entry on Tgt <i class="ii">i</i>
+          <label class="tgl" style="width:32px;height:18px">
+            <input type="checkbox" onchange="togReEntry(this,'re_tgt_${n}')">
+            <div class="tgl-track"></div><div class="tgl-thumb"></div>
+          </label>
+        </div>
+        <div class="reentry-wrap" id="re_tgt_${n}">
+          <select class="re-dd">
+            <option>RE ASAP</option><option>RE ASAP Reverse</option>
+            <option>RE Momentum</option><option>RE Momentum Reverse</option>
+            <option>RE Cost (Recost)</option><option>RE Cost Reverse</option>
+          </select>
+          <input type="number" value="1" class="re-num">
+          <button class="re-arr-btn">▾</button>
+        </div>
+      </div>
+
+      <!-- Re-entry on SL -->
+      <div class="leg-ctrl-grp">
+        <div class="lcg-head">
+          Re-entry on SL <i class="ii">i</i>
+          <label class="tgl" style="width:32px;height:18px">
+            <input type="checkbox" onchange="togReEntry(this,'re_sl_${n}')">
+            <div class="tgl-track"></div><div class="tgl-thumb"></div>
+          </label>
+        </div>
+        <div class="reentry-wrap" id="re_sl_${n}">
+          <select class="re-dd">
+            <option>RE ASAP</option><option>RE ASAP Reverse</option>
+            <option>RE Momentum</option><option>RE Momentum Reverse</option>
+            <option>RE Cost (Recost)</option><option>RE Cost Reverse</option>
+          </select>
+          <input type="number" value="1" class="re-num">
+          <button class="re-arr-btn">▾</button>
+        </div>
+      </div>
+
+      <!-- Simple Momentum -->
+      <div class="leg-ctrl-grp">
+        <div class="lcg-head">
+          Simple Momentum <i class="ii">i</i>
+          <label class="tgl" style="width:32px;height:18px">
+            <input type="checkbox" onchange="togMom(this,'mom_${n}')">
+            <div class="tgl-track"></div><div class="tgl-thumb"></div>
+          </label>
+        </div>
+        <div class="mom-r3-wrap" id="mom_${n}">
+          <div class="mom-dd-box">
+            <select class="mom-r3-dd">
+              <option>Points (Pts) ↑</option><option>Points (Pts) ↓</option>
+              <option>% ↑</option><option>% ↓</option>
+            </select>
+            <span class="mom-r3-arr">▾</span>
+          </div>
+          <input type="number" value="0" class="mom-val-input">
+        </div>
+      </div>
+
+      <!-- Range Breakout -->
+      <div class="rng-brk">
+        <div class="lcg-head">
+          Range Breakout
+          <label class="tgl" style="width:32px;height:18px">
+            <input type="checkbox" onchange="togRngBrk(this,'rng_${n}')">
+            <div class="tgl-track"></div><div class="tgl-thumb"></div>
+          </label>
+        </div>
+        <div class="rng-ctrl disabled" id="rng_${n}">
+          <div class="mom-time-wrap">
+            <input type="time" value="09:45">
+            <span class="tclk">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </span>
+          </div>
+          <div class="hl-grp">
+            <span class="on">High</span>
+            <span>Low</span>
+            <span>Strike Price</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /leg-r3 -->
+  `;
+  container.appendChild(div);
+  renumber();
+}
+
+function removeLeg(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  renumber();
+}
+function renumber() {
+  document.querySelectorAll('.leg-item .leg-num').forEach((el, i) => {
+    el.textContent = '#' + (i + 1);
+  });
+}
+
+// Overall toggle — blue-dd-wrap
+function ovTog(chk, id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('active', chk.checked);
+}
+// Overall re-entry toggle
+function ovTogRe(chk, id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('active', chk.checked);
+}
+
+// Toggle leg SL/Target/Trail
+function togLegCtrl(chk, id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('active', chk.checked);
+}
+// Toggle re-entry
+function togReEntry(chk, id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('active', chk.checked);
+}
+// Active toggle checkbox reference (for cancel/confirm)
+let _activeRngChk = null;
+let _activeRngId  = null;
+
+// Toggle Range Breakout — open modal on enable
+function togRngBrk(chk, id) {
+  if (chk.checked) {
+    _activeRngChk = chk;
+    _activeRngId  = id;
+    updateRngDesc();
+    document.getElementById('rngModal').classList.add('open');
+  } else {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('disabled');
+  }
+}
+
+// Pill button toggle inside modal
+function pillClick(btn, grpId) {
+  const grp = document.getElementById(grpId);
+  grp.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+}
+
+// Close modal: confirm=true → enable, confirm=false → revert toggle OFF
+function closeRngModal(confirm) {
+  document.getElementById('rngModal').classList.remove('open');
+  if (!_activeRngChk) return;
+  if (confirm) {
+    // Enable the range breakout control
+    const el = document.getElementById(_activeRngId);
+    if (el) el.classList.remove('disabled');
+  } else {
+    // Revert checkbox to unchecked
+    _activeRngChk.checked = false;
+    const el = document.getElementById(_activeRngId);
+    if (el) el.classList.add('disabled');
+  }
+  _activeRngChk = null;
+  _activeRngId  = null;
+}
+
+// Update description text dynamically
+function updateRngDesc() {
+  const endTime  = document.getElementById('rng_end_time').value || '09:45';
+  const startVal = document.getElementById('rng_start_display').value || '09:35';
+  const entryOn  = document.querySelector('#entryOnGrp button.on')?.textContent || 'High';
+  const tracking = document.querySelector('#trackingGrp button.on')?.textContent || 'Strike Price';
+
+  // Compute end-1min for range display
+  const [h, m] = endTime.split(':').map(Number);
+  const prevMin = m === 0 ? 59 : m - 1;
+  const prevHr  = m === 0 ? h - 1 : h;
+  const rangeEnd = `${String(prevHr).padStart(2,'0')}:${String(prevMin).padStart(2,'0')}:59`;
+  const startFull = startVal + ':00';
+
+  const trackLabel = tracking === 'Strike Price' ? 'Selected Strike' : 'Underlying';
+
+  document.getElementById('rngDesc').innerHTML =
+    `We will start by tracking the <strong>${trackLabel}</strong> price between <strong>${startFull}</strong> and <strong>${rangeEnd}</strong>. We will take entry after <strong>${rangeEnd.replace(':59',':59')}</strong> once the <strong>${entryOn}</strong> price of the <strong>${trackLabel}</strong> in the range is breached.`;
+}
+
+// Close modal on overlay click (outside box)
+document.getElementById('rngModal').addEventListener('click', function(e) {
+  if (e.target === this) closeRngModal(false);
+});
+
+// Toggle momentum
+function togMom(chk, id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('active', chk.checked);
+}
+
+// HL pills
+document.addEventListener('click', e => {
+  if (e.target.closest('.hl-grp')) {
+    const span = e.target.closest('span');
+    if (!span) return;
+    const grp = span.closest('.hl-grp');
+    grp.querySelectorAll('span').forEach(s => s.classList.remove('on'));
+    span.classList.add('on');
+  }
+});
+
+// Init: one default leg
+addLeg();
+</script>
+</body>
+</html>

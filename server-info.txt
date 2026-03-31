@@ -1,0 +1,26 @@
+uvicorn api:app --reload --port 8000
+cd /home/ashok-innoppl/Documents/option-algo/backend
+uvicorn api:app --reload --port 8000
+
+
+uvicorn gateway:gateway --reload --port 8000 - for 2 porject different folder
+
+
+sudo systemctl enable mongod
+sudo systemctl start mongod
+sudo systemctl status mongod
+
+
+http://localhost:8000/algo/backtest/result/2c6173c6
+
+http://localhost:8000/algo/backtest/status/bd26c779
+
+
+
+cd /home/ashok-innoppl/Documents/option-algo/backend
+uvicorn api:app --reload --port 8000
+
+FOR CACHE DATA
+
+cd /home/ashok-innoppl/Documents/option-algo/backend
+python3 warm_cache.py --underlying NIFTY --start 2026-01-01 --end 2026-12-31

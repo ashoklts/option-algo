@@ -1,0 +1,513 @@
+{
+  "version": "0.7",
+  "name": "NIFTY-0DTE-12-45-13-no-sl",
+  "strategy": {
+    "Ticker": "NIFTY",
+    "TakeUnderlyingFromCashOrNot": "True",
+    "TrailSLtoBreakeven": "False",
+    "SquareOffAllLegs": "False",
+    "EntryIndicators": {
+      "Type": "IndicatorTreeNodeType.OperandNode",
+      "OperandType": "OperandType.And",
+      "Value": [
+        {
+          "Type": "IndicatorTreeNodeType.DataNode",
+          "Value": {
+            "IndicatorName": "IndicatorType.TimeIndicator",
+            "Parameters": {
+              "Hour": 12,
+              "Minute": 43
+            }
+          }
+        }
+      ]
+    },
+    "ExitIndicators": {
+      "Type": "IndicatorTreeNodeType.OperandNode",
+      "OperandType": "OperandType.And",
+      "Value": [
+        {
+          "Type": "IndicatorTreeNodeType.DataNode",
+          "Value": {
+            "IndicatorName": "IndicatorType.TimeIndicator",
+            "Parameters": {
+              "Hour": 15,
+              "Minute": 25
+            }
+          }
+        }
+      ]
+    },
+    "StrategyType": "StrategyType.IntradaySameDay",
+    "MaxPositionInADay": 1,
+    "ReentryTimeRestriction": "None",
+    "SkipInitialCandles": 0,
+    "ListOfLegConfigs": [
+      {
+        "EntryType": "EntryType.EntryByDeltaRange",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.CE",
+        "LegMomentum": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.NextLeg",
+          "Value": {
+            "NextLegRef": "callLeg1"
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 23
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 10,
+            "StopLossMove": 5
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": {
+          "LowerRange": 35,
+          "UpperRange": 65
+        },
+        "id": "k49do8lv"
+      },
+      {
+        "EntryType": "EntryType.EntryByDeltaRange",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.PE",
+        "LegMomentum": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.NextLeg",
+          "Value": {
+            "NextLegRef": "putLeg1"
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 23
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 10,
+            "StopLossMove": 5
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": {
+          "LowerRange": 35,
+          "UpperRange": 65
+        },
+        "id": "ttx2772l"
+      }
+    ],
+    "IdleLegConfigs": {
+      "callLeg1": {
+        "EntryType": "EntryType.EntryByDeltaRange",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.CE",
+        "LegMomentum": {
+          "Type": "MomentumType.PercentageDown",
+          "Value": 8
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.NextLeg",
+          "Value": {
+            "NextLegRef": "callLeg2"
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 18
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 11,
+            "StopLossMove": 7
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": {
+          "LowerRange": 40,
+          "UpperRange": 70
+        },
+        "id": "callLeg1"
+      },
+      "callLeg2": {
+        "EntryType": "EntryType.EntryByStrikeType",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.CE",
+        "LegMomentum": {
+          "Type": "MomentumType.PercentageDown",
+          "Value": 8
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.NextLeg",
+          "Value": {
+            "NextLegRef": "callLeg3"
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 18
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 11,
+            "StopLossMove": 7
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": "StrikeType.ATM",
+        "id": "callLeg2"
+      },
+      "callLeg3": {
+        "EntryType": "EntryType.EntryByStrikeType",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.CE",
+        "LegMomentum": {
+          "Type": "MomentumType.PercentageDown",
+          "Value": 7
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.NextLeg",
+          "Value": {
+            "NextLegRef": "callLeg4"
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 20
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 10,
+            "StopLossMove": 6
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": "StrikeType.ATM",
+        "id": "callLeg3"
+      },
+      "callLeg4": {
+        "EntryType": "EntryType.EntryByDeltaRange",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.PE",
+        "LegMomentum": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.Immediate",
+          "Value": {
+            "ReentryCount": 5
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 18
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 11,
+            "StopLossMove": 6
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": {
+          "LowerRange": 35,
+          "UpperRange": 65
+        },
+        "id": "callLeg4"
+      },
+      "putLeg1": {
+        "EntryType": "EntryType.EntryByDeltaRange",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.PE",
+        "LegMomentum": {
+          "Type": "MomentumType.PercentageDown",
+          "Value": 8
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.NextLeg",
+          "Value": {
+            "NextLegRef": "putLeg2"
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 18
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 11,
+            "StopLossMove": 7
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": {
+          "LowerRange": 40,
+          "UpperRange": 70
+        },
+        "id": "putLeg1"
+      },
+      "putLeg2": {
+        "EntryType": "EntryType.EntryByStrikeType",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.PE",
+        "LegMomentum": {
+          "Type": "MomentumType.PercentageDown",
+          "Value": 8
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.NextLeg",
+          "Value": {
+            "NextLegRef": "putLeg3"
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 18
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 11,
+            "StopLossMove": 7
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": "StrikeType.ATM",
+        "id": "putLeg2"
+      },
+      "putLeg3": {
+        "EntryType": "EntryType.EntryByStrikeType",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.PE",
+        "LegMomentum": {
+          "Type": "MomentumType.PercentageDown",
+          "Value": 7
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.NextLeg",
+          "Value": {
+            "NextLegRef": "putLeg4"
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 20
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 10,
+            "StopLossMove": 6
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": "StrikeType.ATM",
+        "id": "putLeg3"
+      },
+      "putLeg4": {
+        "EntryType": "EntryType.EntryByDeltaRange",
+        "ExpiryKind": "ExpiryType.Weekly",
+        "InstrumentKind": "LegType.CE",
+        "LegMomentum": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegReentrySL": {
+          "Type": "ReentryType.Immediate",
+          "Value": {
+            "ReentryCount": 5
+          }
+        },
+        "LegReentryTP": {
+          "Type": "None",
+          "Value": {}
+        },
+        "LegStopLoss": {
+          "Type": "LegTgtSLType.Percentage",
+          "Value": 18
+        },
+        "LegTarget": {
+          "Type": "None",
+          "Value": 0
+        },
+        "LegTrailSL": {
+          "Type": "TrailStopLossType.Points",
+          "Value": {
+            "InstrumentMove": 11,
+            "StopLossMove": 6
+          }
+        },
+        "LotConfig": {
+          "Type": "LotType.Quantity",
+          "Value": 1
+        },
+        "PositionType": "PositionType.Sell",
+        "StrikeParameter": {
+          "LowerRange": 35,
+          "UpperRange": 65
+        },
+        "id": "putLeg4"
+      }
+    },
+    "OverallMomentum": {
+      "Type": "None",
+      "Value": 0
+    },
+    "OverallSL": {
+      "Type": "None",
+      "Value": 0
+    },
+    "OverallTgt": {
+      "Type": "OverallTgtSLType.MTM",
+      "Value": 4000
+    },
+    "OverallTrailSL": {
+      "Type": "None",
+      "Value": {}
+    },
+    "LockAndTrail": {
+      "Type": "None",
+      "Value": {}
+    },
+    "OverallReentrySL": {
+      "Type": "None",
+      "Value": {}
+    },
+    "OverallReentryTgt": {
+      "Type": "ReentryType.Immediate",
+      "Value": {
+        "ReentryCount": 1
+      }
+    },
+    "WeeklyOldRegime": true
+  },
+  "attributes": {
+    "template": "Straddle920",
+    "positional": "False"
+  }
+}
