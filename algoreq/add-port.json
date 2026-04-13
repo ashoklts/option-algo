@@ -1,0 +1,72 @@
+{
+    "Broker.Dummy": [
+        {
+            "strategy_id": "67f266a41a0f7b9663d4e439",
+            "execution_cache": {
+                "execution_version": "v2",
+                "entry_time": 580,
+                "exit_time": 925,
+                "num_original_legs": 2,
+                "lot_config": [
+                    {
+                        "type": "LotType.Quantity",
+                        "value": 1
+                    },
+                    {
+                        "type": "LotType.Quantity",
+                        "value": 1
+                    }
+                ],
+                "expiries": [
+                    "ExpiryType.Weekly",
+                    "ExpiryType.Weekly"
+                ],
+                "instruments": [
+                    "LegType.CE",
+                    "LegType.PE"
+                ],
+                "ticker": "NIFTY",
+                "strategy_type": "StrategyType.IntradaySameDay",
+                "reentry_restriction": null
+            },
+            "multiplier": 1,
+            "underlying_max_lots": {
+                "NIFTY": 27
+            }
+        },
+        {
+            "strategy_id": "67f26927ed7d441e6c0017a5",
+            "execution_cache": {
+                "execution_version": "v2",
+                "entry_time": 563,
+                "exit_time": 925,
+                "num_original_legs": 2,
+                "lot_config": [
+                    {
+                        "type": "LotType.Quantity",
+                        "value": 1
+                    },
+                    {
+                        "type": "LotType.Quantity",
+                        "value": 1
+                    }
+                ],
+                "expiries": [
+                    "ExpiryType.Weekly",
+                    "ExpiryType.Weekly"
+                ],
+                "instruments": [
+                    "LegType.CE",
+                    "LegType.PE"
+                ],
+                "ticker": "NIFTY",
+                "strategy_type": "StrategyType.IntradaySameDay",
+                "reentry_restriction": null
+            },
+            "multiplier": 1,
+            "underlying_max_lots": {
+                "NIFTY": 27
+            }
+        }
+    ]
+}

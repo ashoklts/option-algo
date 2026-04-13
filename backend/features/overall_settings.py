@@ -90,19 +90,45 @@ def parse_overall_tgt(strategy: dict) -> Tuple[str, float]:
 def _parse_overall_reentry(strategy: dict, key: str) -> Tuple[str, int]:
     """Shared parser for OverallReentrySL and OverallReentryTgt."""
     cfg = strategy.get(key, {})
-    t   = cfg.get("Type", "None")
-    val = cfg.get("Value", {})
-    if t == "None":
+    t = str(cfg.get("Type") or cfg.get("type") or "None").strip()
+    if t == "None" or not t:
         return "None", 0
 
-    count = min(int(val.get("ReentryCount", 0)), MAX_OVERALL_REENTRIES)
+    raw_value = cfg.get("Value")
+    if raw_value is None:
+        raw_value = cfg.get("value")
 
-    if "MomentumReverse" in t:
+    if isinstance(raw_value, dict):
+        raw_count = raw_value.get("ReentryCount")
+        if raw_count is None:
+            raw_count = raw_value.get("count")
+    elif raw_value is not None:
+        raw_count = raw_value
+    else:
+        raw_count = cfg.get("Count")
+        if raw_count is None:
+            raw_count = cfg.get("count")
+
+    try:
+        count = min(int(raw_count or 0), MAX_OVERALL_REENTRIES)
+    except Exception:
+        count = 0
+
+    normalized_type = t.replace(" ", "").lower()
+
+    if "momentumreverse" in normalized_type:
         return "MomentumReverse", count
-    if "Momentum" in t:
+    if "momentum" in normalized_type:
         return "Momentum", count
-    if "ImmediateReverse" in t or "Reverse" in t:
+    if "immediatereverse" in normalized_type or normalized_type.endswith("reverse"):
         return "ImmediateReverse", count
+    if (
+        "immediate" in normalized_type
+        or "reasap" in normalized_type
+        or "reentry" in normalized_type
+        or "renetry" in normalized_type
+    ):
+        return "Immediate", count
     return "Immediate", count
 
 
@@ -129,9 +155,228 @@ def parse_overall_reentry_tgt(strategy: dict) -> Tuple[str, int]:
     return _parse_overall_reentry(strategy, "OverallReentryTgt")
 
 
+def _build_cycle_sub_trades_for_overall_checks(
+    idx,
+    day: str,
+    entry_time: str,
+    exit_time: str,
+    legs: list,
+    expiries: list,
+    step: int,
+    lot_size: int,
+    spot: float,
+    idle_configs: dict = None,
+) -> Tuple[list, float]:
+    """
+    Build the actual sub-trade path for one cycle using the same leg processing
+    logic as the backtest engine. This keeps overall SL detection aligned with
+    real trail SL, leg re-entry, lazy-leg momentum, and actual entry timing.
+    """
+    from .backtest_engine import (
+        _resolve_expiry,
+        _pick_strike,
+        _find_momentum_entry,
+        _add_one_minute,
+        _process_leg,
+    )
+    from .lazy_leg import process_lazy_legs
+
+    sub_trades: list = []
+    total_entry_premium = 0.0
+
+    for leg_num, leg in enumerate(legs, start=1):
+        position     = "SELL" if "Sell" in leg["PositionType"] else "BUY"
+        otype        = "CE"   if "CE"   in leg["InstrumentKind"] else "PE"
+        expiry_kind  = leg.get("ExpiryKind", "ExpiryType.Weekly")
+        entry_type   = leg.get("EntryType", "EntryType.EntryByStrikeType")
+        strike_param = leg.get("StrikeParameter", "StrikeType.ATM")
+        lots         = int(leg["LotConfig"]["Value"])
+        sl_type      = leg["LegStopLoss"]["Type"]
+        sl_val       = float(leg["LegStopLoss"]["Value"])
+        tgt_type     = leg["LegTarget"]["Type"]
+        tgt_val      = float(leg["LegTarget"]["Value"])
+        momentum_type = leg.get("LegMomentum", {}).get("Type", "None")
+        momentum_val  = float(leg.get("LegMomentum", {}).get("Value", 0))
+        trail_sl      = leg.get("LegTrailSL", {})
+        trail_type    = trail_sl.get("Type", "None")
+        trail_x       = float(trail_sl.get("Value", {}).get("InstrumentMove", 0))
+        trail_y       = float(trail_sl.get("Value", {}).get("StopLossMove", 0))
+
+        re_sl  = leg.get("LegReentrySL", {})
+        re_tp  = leg.get("LegReentryTP", {})
+        reentry_sl_type = re_sl.get("Type", "None")
+        reentry_tp_type = re_tp.get("Type", "None")
+        re_sl_val = re_sl.get("Value", {})
+        re_tp_val = re_tp.get("Value", {})
+        reentry_sl_count = int(re_sl_val.get("ReentryCount", 0) if isinstance(re_sl_val, dict) else 0) \
+            if reentry_sl_type != "None" else 0
+        reentry_tp_count = int(re_tp_val.get("ReentryCount", 0) if isinstance(re_tp_val, dict) else 0) \
+            if reentry_tp_type != "None" else 0
+        reentry_sl_next_ref = re_sl_val.get("NextLegRef") if isinstance(re_sl_val, dict) else None
+        reentry_tp_next_ref = re_tp_val.get("NextLegRef") if isinstance(re_tp_val, dict) else None
+
+        expiry = _resolve_expiry(day, expiry_kind, expiries)
+        if expiry is None:
+            continue
+
+        strike = _pick_strike(idx, day, entry_time, expiry, otype, spot, entry_type, strike_param, step)
+        if strike is None:
+            continue
+
+        actual_entry_time = entry_time
+        override_entry_px = None
+        override_base_px = None
+
+        if momentum_type != "None" and momentum_val > 0:
+            if "Underlying" in momentum_type:
+                base_px = idx.get_spot(day, entry_time)
+            else:
+                base_px = idx.get_close(day, entry_time, expiry, strike, otype)
+            if base_px is None:
+                continue
+
+            mom_time, mom_px = _find_momentum_entry(
+                idx, day, _add_one_minute(entry_time), exit_time,
+                expiry, strike, otype, base_px, momentum_type, momentum_val,
+            )
+            if mom_time is None:
+                continue
+            actual_entry_time = mom_time
+            override_entry_px = mom_px
+            override_base_px = base_px
+        else:
+            if idx.get_close(day, entry_time, expiry, strike, otype) is None:
+                continue
+
+        result = _process_leg(
+            idx, day, actual_entry_time, exit_time,
+            expiry, strike, otype, position,
+            sl_type, sl_val, tgt_type, tgt_val,
+            reentry_sl_count, reentry_tp_count,
+            reentry_sl_type, reentry_tp_type,
+            lots, lot_size,
+            entry_type, strike_param, step,
+            momentum_type, momentum_val,
+            override_entry_px=override_entry_px,
+            override_base_px=override_base_px,
+            strategy_entry_time=entry_time,
+            trail_type=trail_type, trail_x=trail_x, trail_y=trail_y,
+            reentry_sl_next_ref=reentry_sl_next_ref,
+            reentry_tp_next_ref=reentry_tp_next_ref,
+        )
+
+        if result.get("sub_trades"):
+            first_trade = result["sub_trades"][0]
+            total_entry_premium += first_trade["entry_price"] * lots * lot_size
+
+        for st in result.get("sub_trades", []):
+            st["parent_leg_num"] = leg_num
+            st["parent_leg_type"] = otype
+            sub_trades.append(st)
+
+        if idle_configs and result.get("next_leg_ref"):
+            lazy_legs = process_lazy_legs(
+                idx, day, exit_time, expiries,
+                result["next_leg_ref"],
+                result["next_leg_trigger_time"],
+                idle_configs, lot_size, step,
+            )
+            for ll in lazy_legs:
+                for st in ll.get("sub_trades", []):
+                    st["lazy_leg_id"] = ll["id"]
+                    st["parent_leg_num"] = leg_num
+                    st["parent_leg_type"] = otype
+                    sub_trades.append(st)
+
+    return sub_trades, total_entry_premium
+
+
+def _build_minute_pnl_from_sub_trades(idx, day: str, sub_trades: list, entry_time: str, exit_time: str) -> list:
+    timeline = []
+    for t in idx._all_times.get(day, []):
+        if t <= entry_time or t > exit_time:
+            continue
+
+        combined = 0.0
+        for st in sub_trades:
+            st_entry = st.get("entry_time", "")
+            st_exit = st.get("exit_time", "")
+            if not st_entry or st_entry > t:
+                continue
+
+            if st_exit and st_exit <= t:
+                combined += st.get("pnl", 0)
+                continue
+
+            cur_price = idx.get_close(day, t, st.get("_expiry", ""), st.get("strike"), st.get("option_type", ""))
+            if cur_price is None:
+                continue
+
+            qty = st.get("_lots", 1) * st.get("_lot_size", 1)
+            direction = -1 if st.get("entry_action", "SELL") == "SELL" else 1
+            combined += (cur_price - st.get("entry_price", 0)) * qty * direction
+
+        timeline.append((t, round(combined, 2)))
+    return timeline
+
+
 # ═══════════════════════════════════════════════════════════════════
 # 2. OVERALL SL — DETECTION
 # ═══════════════════════════════════════════════════════════════════
+
+def _build_lazy_leg_state(idx, day, trigger_time, expiries, step, lot_size, idle_cfg, spot_at_trigger):
+    """Build a leg_state dict for a lazy leg entering at trigger_time (approximation)."""
+    from .backtest_engine import (
+        _resolve_expiry, _pick_strike,
+        _calc_trigger_price, _calc_pnl,
+    )
+    position    = "SELL" if "Sell" in idle_cfg["PositionType"] else "BUY"
+    otype       = "CE"   if "CE"   in idle_cfg["InstrumentKind"] else "PE"
+    expiry_kind = idle_cfg.get("ExpiryKind", "ExpiryType.Weekly")
+    entry_type  = idle_cfg.get("EntryType",  "EntryType.EntryByStrikeType")
+    strike_param= idle_cfg.get("StrikeParameter", "StrikeType.ATM")
+    lots        = int(idle_cfg["LotConfig"]["Value"])
+    sl_type     = idle_cfg["LegStopLoss"]["Type"]
+    sl_val      = float(idle_cfg["LegStopLoss"]["Value"])
+    tgt_type    = idle_cfg.get("LegTarget", {}).get("Type", "None")
+    tgt_val     = float(idle_cfg.get("LegTarget", {}).get("Value", 0))
+
+    expiry = _resolve_expiry(day, expiry_kind, expiries)
+    if expiry is None:
+        return None
+
+    strike = _pick_strike(idx, day, trigger_time, expiry, otype, spot_at_trigger,
+                          entry_type, strike_param, step)
+    if strike is None:
+        return None
+
+    entry_price = idx.get_close(day, trigger_time, expiry, strike, otype)
+    if entry_price is None:
+        return None
+
+    entry_spot = idx.get_spot(day, trigger_time) or 0.0
+    sl_px  = _calc_trigger_price(entry_price, entry_spot, position, sl_type,  sl_val,  is_sl=True)
+    tgt_px = _calc_trigger_price(entry_price, entry_spot, position, tgt_type, tgt_val, is_sl=False)
+
+    # next lazy leg ref (chain support)
+    re_sl      = idle_cfg.get("LegReentrySL", {})
+    next_ref   = re_sl.get("Value", {}).get("NextLegRef") if re_sl.get("Type") == "ReentryType.NextLeg" else None
+
+    return {
+        "position":     position,
+        "otype":        otype,
+        "expiry":       expiry,
+        "strike":       strike,
+        "lots":         lots,
+        "lot_size":     lot_size,
+        "entry_price":  entry_price,
+        "sl_px":        sl_px,
+        "tgt_px":       tgt_px,
+        "realized_pnl": None,
+        "active_from":  trigger_time,   # only count MTM at candles > trigger_time
+        "next_leg_ref": next_ref,
+    }
+
 
 def find_overall_sl_exit_time(
     idx,
@@ -145,119 +390,37 @@ def find_overall_sl_exit_time(
     overall_sl_type: str,
     overall_sl_val: float,
     spot: float,
+    idle_configs: dict = None,
+    base_pnl_before_cycle: float = 0.0,
 ) -> Optional[str]:
     """
     Scan candles minute-by-minute to find when total strategy MTM P&L
     first hits the overall SL threshold.
 
-    Logic
-    ─────
-    • Each leg contributes unrealized MTM PnL while it is still active.
-    • When a leg's individual SL fires, its PnL is locked (realized).
-    • Remaining active legs keep contributing unrealized PnL.
-    • Returns the first candle time where total_pnl ≤ threshold, or None.
-
-    Note: Momentum-entry legs are approximated as entering at strategy entry_time.
+    Includes lazy legs in the MTM calculation — when a main leg's SL fires
+    and triggers a NextLeg (lazy leg), that lazy leg is added to the simulation
+    from its trigger candle onwards so the overall SL threshold is computed
+    on the full strategy MTM (main + lazy legs combined).
     """
-    # Deferred import to avoid circular dependency
-    from .backtest_engine import (
-        _resolve_expiry, _pick_strike,
-        _calc_trigger_price, _calc_pnl,
-    )
-
     if overall_sl_type == "None" or overall_sl_val <= 0:
         return None
 
-    # ── Build per-leg state ───────────────────────────────────────────────────
-    leg_states: list = []
-    total_entry_premium = 0.0
-
-    for leg in legs:
-        position     = "SELL" if "Sell" in leg["PositionType"] else "BUY"
-        otype        = "CE"   if "CE"   in leg["InstrumentKind"] else "PE"
-        expiry_kind  = leg.get("ExpiryKind",      "ExpiryType.Weekly")
-        entry_type   = leg.get("EntryType",       "EntryType.EntryByStrikeType")
-        strike_param = leg.get("StrikeParameter", "StrikeType.ATM")
-        lots         = int(leg["LotConfig"]["Value"])
-        sl_type      = leg["LegStopLoss"]["Type"]
-        sl_val       = float(leg["LegStopLoss"]["Value"])
-
-        expiry = _resolve_expiry(day, expiry_kind, expiries)
-        if expiry is None:
-            return None
-
-        strike = _pick_strike(idx, day, entry_time, expiry, otype, spot,
-                              entry_type, strike_param, step)
-        if strike is None:
-            return None
-
-        entry_price = idx.get_close(day, entry_time, expiry, strike, otype)
-        if entry_price is None:
-            return None
-
-        entry_spot = idx.get_spot(day, entry_time) or 0.0
-        sl_px      = _calc_trigger_price(entry_price, entry_spot, position,
-                                         sl_type, sl_val, is_sl=True)
-
-        leg_states.append({
-            "position":     position,
-            "otype":        otype,
-            "expiry":       expiry,
-            "strike":       strike,
-            "lots":         lots,
-            "lot_size":     lot_size,
-            "entry_price":  entry_price,
-            "sl_px":        sl_px,
-            "realized_pnl": None,   # None = still active
-        })
-        total_entry_premium += entry_price * lots * lot_size
+    sub_trades, total_entry_premium = _build_cycle_sub_trades_for_overall_checks(
+        idx, day, entry_time, exit_time, legs, expiries, step, lot_size, spot, idle_configs,
+    )
+    if not sub_trades:
+        return None
 
     # ── Threshold ─────────────────────────────────────────────────────────────
     if overall_sl_type == "PremiumPercentage":
         threshold = -(total_entry_premium * overall_sl_val / 100)
-    else:  # MTM — direct ₹
+    else:
         threshold = -overall_sl_val
 
-    # ── Scan minute-by-minute ─────────────────────────────────────────────────
-    times = sorted(
-        t for t in idx._all_times.get(day, [])
-        if entry_time < t <= exit_time
-    )
-
-    for t in times:
-        total_mtm = 0.0
-
-        for ls in leg_states:
-            if ls["realized_pnl"] is not None:
-                total_mtm += ls["realized_pnl"]
-                continue
-
-            cur_price = idx.get_close(day, t, ls["expiry"], ls["strike"], ls["otype"])
-            if cur_price is None:
-                continue
-
-            # Lock PnL if individual SL fires (close-price approximation)
-            if ls["sl_px"] is not None:
-                sl_hit = (
-                    (ls["position"] == "SELL" and cur_price >= ls["sl_px"]) or
-                    (ls["position"] == "BUY"  and cur_price <= ls["sl_px"])
-                )
-                if sl_hit:
-                    ls["realized_pnl"] = _calc_pnl(
-                        ls["position"], ls["entry_price"], ls["sl_px"],
-                        ls["lots"], ls["lot_size"],
-                    )
-                    total_mtm += ls["realized_pnl"]
-                    continue
-
-            # Active leg — unrealized MTM
-            total_mtm += _calc_pnl(
-                ls["position"], ls["entry_price"], cur_price,
-                ls["lots"], ls["lot_size"],
-            )
-
-        if total_mtm <= threshold:
-            return t   # overall SL hit
+    for t, total_mtm in _build_minute_pnl_from_sub_trades(idx, day, sub_trades, entry_time, exit_time):
+        day_total_mtm = round(base_pnl_before_cycle + total_mtm, 2)
+        if day_total_mtm <= threshold:
+            return t
 
     return None
 
@@ -278,6 +441,8 @@ def find_overall_tgt_exit_time(
     overall_tgt_type: str,
     overall_tgt_val: float,
     spot: float,
+    idle_configs: dict = None,
+    base_pnl_before_cycle: float = 0.0,
 ) -> Optional[str]:
     """
     Scan candles minute-by-minute to find when total strategy MTM P&L
@@ -313,8 +478,11 @@ def find_overall_tgt_exit_time(
         lots         = int(leg["LotConfig"]["Value"])
         sl_type      = leg["LegStopLoss"]["Type"]
         sl_val       = float(leg["LegStopLoss"]["Value"])
-        tgt_type     = leg["LegTarget"]["Type"]
-        tgt_val      = float(leg["LegTarget"]["Value"])
+        tgt_type_leg = leg["LegTarget"]["Type"]
+        tgt_val_leg  = float(leg["LegTarget"]["Value"])
+
+        re_sl    = leg.get("LegReentrySL", {})
+        next_ref = re_sl.get("Value", {}).get("NextLegRef") if re_sl.get("Type") == "ReentryType.NextLeg" else None
 
         expiry = _resolve_expiry(day, expiry_kind, expiries)
         if expiry is None:
@@ -331,9 +499,9 @@ def find_overall_tgt_exit_time(
 
         entry_spot = idx.get_spot(day, entry_time) or 0.0
         sl_px  = _calc_trigger_price(entry_price, entry_spot, position,
-                                     sl_type,  sl_val,  is_sl=True)
+                                     sl_type,     sl_val,     is_sl=True)
         tgt_px = _calc_trigger_price(entry_price, entry_spot, position,
-                                     tgt_type, tgt_val, is_sl=False)
+                                     tgt_type_leg, tgt_val_leg, is_sl=False)
 
         leg_states.append({
             "position":     position,
@@ -345,14 +513,16 @@ def find_overall_tgt_exit_time(
             "entry_price":  entry_price,
             "sl_px":        sl_px,
             "tgt_px":       tgt_px,
-            "realized_pnl": None,   # None = still active
+            "realized_pnl": None,
+            "active_from":  entry_time,
+            "next_leg_ref": next_ref,
         })
         total_entry_premium += entry_price * lots * lot_size
 
     # ── Threshold (always positive) ───────────────────────────────────────────
     if overall_tgt_type == "PremiumPercentage":
         threshold = total_entry_premium * overall_tgt_val / 100
-    else:  # MTM — direct ₹
+    else:
         threshold = overall_tgt_val
 
     # ── Scan minute-by-minute ─────────────────────────────────────────────────
@@ -363,8 +533,14 @@ def find_overall_tgt_exit_time(
 
     for t in times:
         total_mtm = 0.0
+        new_lazy_states = []
 
         for ls in leg_states:
+            if t <= ls.get("active_from", entry_time):
+                if ls["realized_pnl"] is not None:
+                    total_mtm += ls["realized_pnl"]
+                continue
+
             if ls["realized_pnl"] is not None:
                 total_mtm += ls["realized_pnl"]
                 continue
@@ -385,6 +561,14 @@ def find_overall_tgt_exit_time(
                         ls["lots"], ls["lot_size"],
                     )
                     total_mtm += ls["realized_pnl"]
+                    if ls.get("next_leg_ref") and idle_configs and ls["next_leg_ref"] in idle_configs:
+                        spot_now = idx.get_spot(day, t) or spot
+                        lazy_state = _build_lazy_leg_state(
+                            idx, day, t, expiries, step, lot_size,
+                            idle_configs[ls["next_leg_ref"]], spot_now,
+                        )
+                        if lazy_state:
+                            new_lazy_states.append(lazy_state)
                     continue
 
             # Lock PnL if individual Target fires
@@ -407,8 +591,11 @@ def find_overall_tgt_exit_time(
                 ls["lots"], ls["lot_size"],
             )
 
-        if total_mtm >= threshold:
-            return t   # overall target hit
+        leg_states.extend(new_lazy_states)
+
+        day_total_mtm = round(base_pnl_before_cycle + total_mtm, 2)
+        if day_total_mtm >= threshold:
+            return t
 
     return None
 
@@ -486,9 +673,12 @@ def run_overall_reentry(
     idle_configs: dict,  # IdleLegConfigs for lazy legs
     overall_sl_type: str,
     overall_sl_val: float,
+    overall_tgt_type: str,
+    overall_tgt_val: float,
     reentry_type: str,   # "Immediate"|"ImmediateReverse"|"Momentum"|"MomentumReverse"
     reentries_left: int,
     cycle_number: int,   # 1 = first re-entry, 2 = second, …
+    base_pnl_before_cycle: float = 0.0,
 ) -> List[dict]:
     """
     Execute one overall re-entry cycle starting from trigger_time.
@@ -529,17 +719,30 @@ def run_overall_reentry(
     debug_print(f"{tag} type={reentry_type} spot={spot:.2f} reentries_left={reentries_left}")
 
     # ── Find effective exit for this cycle (may be shortened by another overall SL) ──
+    cycle_sl_val = overall_sl_val * (cycle_number + 1) if overall_sl_type != "None" else overall_sl_val
+    cycle_tgt_val = overall_tgt_val * (cycle_number + 1) if overall_tgt_type != "None" else overall_tgt_val
     next_overall_sl_time = find_overall_sl_exit_time(
         idx, day, trigger_time, exit_time,
         leg_configs, expiries, step, lot_size,
-        overall_sl_type, overall_sl_val, spot,
+        overall_sl_type, cycle_sl_val, spot,
+        idle_configs=idle_configs,
+        base_pnl_before_cycle=base_pnl_before_cycle,
     )
-    effective_exit = next_overall_sl_time if next_overall_sl_time else exit_time
+    next_overall_tgt_time = find_overall_tgt_exit_time(
+        idx, day, trigger_time, exit_time,
+        leg_configs, expiries, step, lot_size,
+        overall_tgt_type, cycle_tgt_val, spot,
+        idle_configs=idle_configs,
+        base_pnl_before_cycle=base_pnl_before_cycle,
+    )
+    next_overall_sl_time, next_overall_tgt_time, effective_exit = resolve_effective_exit(
+        next_overall_sl_time, next_overall_tgt_time, exit_time
+    )
 
     # ── Process each leg fresh ────────────────────────────────────────────────
     cycle_legs: List[dict] = []
 
-    for leg in leg_configs:
+    for leg_num, leg in enumerate(leg_configs, start=1):
         position     = "SELL" if "Sell" in leg["PositionType"] else "BUY"
         if is_reverse:
             position = "BUY" if position == "SELL" else "SELL"
@@ -637,6 +840,11 @@ def run_overall_reentry(
             reentry_tp_next_ref=reentry_tp_next_ref,
         )
 
+        for st in result["sub_trades"]:
+            st["parent_leg_num"]        = leg_num
+            st["parent_leg_type"]       = otype
+            st["overall_reentry_cycle"] = cycle_number
+
         leg_dict = {
             "id":           leg["id"],
             "expiry":       expiry,
@@ -654,6 +862,7 @@ def run_overall_reentry(
             "pnl":          result["total_leg_pnl"],
             "sub_trades":   result["sub_trades"],
             "overall_reentry_cycle": cycle_number,
+            "leg_num":      leg_num,
         }
 
         # ── Lazy legs (NextLeg triggered inside this cycle) ───────────────────
@@ -667,6 +876,9 @@ def run_overall_reentry(
             for ll in lazy_legs:
                 for st in ll.get("sub_trades", []):
                     st["lazy_leg_id"] = ll["id"]
+                    st["parent_leg_num"]        = leg_num
+                    st["parent_leg_type"]       = otype
+                    st["overall_reentry_cycle"] = cycle_number
                     inner = st.get("reentry_type", "Initial")
                     st["reentry_type"] = (
                         f"Lazy({ll['id']})" if inner == "Initial"
@@ -684,8 +896,27 @@ def run_overall_reentry(
     if not cycle_legs:
         return []
 
+    if next_overall_sl_time:
+        for leg in cycle_legs:
+            for st in leg.get("sub_trades", []):
+                if st.get("exit_time") == next_overall_sl_time and st.get("exit_reason") == "Time Exit":
+                    st["exit_reason"] = "Overall SL"
+            if leg.get("exit_time") == next_overall_sl_time and leg.get("exit_reason") == "Time Exit":
+                leg["exit_reason"] = "Overall SL"
+
+    if next_overall_tgt_time:
+        for leg in cycle_legs:
+            for st in leg.get("sub_trades", []):
+                if st.get("exit_time") == next_overall_tgt_time and st.get("exit_reason") == "Time Exit":
+                    st["exit_reason"] = "Overall Target"
+            if leg.get("exit_time") == next_overall_tgt_time and leg.get("exit_reason") == "Time Exit":
+                leg["exit_reason"] = "Overall Target"
+
     # ── If overall SL fires again in this cycle → recurse ────────────────────
-    if next_overall_sl_time and reentries_left > 1:
+    cycle_pnl = round(sum(leg.get("pnl", 0) for leg in cycle_legs), 2)
+    next_base_pnl = round(base_pnl_before_cycle + cycle_pnl, 2)
+
+    if next_overall_sl_time and effective_exit == next_overall_sl_time and reentries_left > 1:
         debug_print(f"{tag} overall SL fires again at {next_overall_sl_time} → cycle {cycle_number + 1}")
         next_cycle = run_overall_reentry(
             idx, day,
@@ -698,9 +929,12 @@ def run_overall_reentry(
             idle_configs   = idle_configs,
             overall_sl_type  = overall_sl_type,
             overall_sl_val   = overall_sl_val,
+            overall_tgt_type = overall_tgt_type,
+            overall_tgt_val  = overall_tgt_val,
             reentry_type   = reentry_type,
             reentries_left = reentries_left - 1,
             cycle_number   = cycle_number + 1,
+            base_pnl_before_cycle = next_base_pnl,
         )
         cycle_legs.extend(next_cycle)
 
@@ -728,6 +962,7 @@ def run_overall_reentry_tgt(
     reentry_type: str,    # "Immediate"|"ImmediateReverse"|"Momentum"|"MomentumReverse"
     reentries_left: int,
     cycle_number: int,    # 1 = first re-entry, 2 = second, …
+    base_pnl_before_cycle: float = 0.0,
 ) -> List[dict]:
     """
     Execute one overall re-entry cycle starting from trigger_time after profit target hit.
@@ -771,15 +1006,21 @@ def run_overall_reentry_tgt(
     debug_print(f"{tag} type={reentry_type} spot={spot:.2f} reentries_left={reentries_left}")
 
     # ── Find effective exit for this cycle (SL or Target may fire, SL wins on tie) ──
+    cycle_sl_val = overall_sl_val * (cycle_number + 1) if overall_sl_type != "None" else overall_sl_val
+    cycle_tgt_val = overall_tgt_val * (cycle_number + 1) if overall_tgt_type != "None" else overall_tgt_val
     next_sl_time = find_overall_sl_exit_time(
         idx, day, trigger_time, exit_time,
         leg_configs, expiries, step, lot_size,
-        overall_sl_type, overall_sl_val, spot,
+        overall_sl_type, cycle_sl_val, spot,
+        idle_configs=idle_configs,
+        base_pnl_before_cycle=base_pnl_before_cycle,
     )
     next_tgt_time = find_overall_tgt_exit_time(
         idx, day, trigger_time, exit_time,
         leg_configs, expiries, step, lot_size,
-        overall_tgt_type, overall_tgt_val, spot,
+        overall_tgt_type, cycle_tgt_val, spot,
+        idle_configs=idle_configs,
+        base_pnl_before_cycle=base_pnl_before_cycle,
     )
     next_sl_time, next_tgt_time, effective_exit = resolve_effective_exit(
         next_sl_time, next_tgt_time, exit_time
@@ -788,7 +1029,7 @@ def run_overall_reentry_tgt(
     # ── Process each leg fresh ────────────────────────────────────────────────
     cycle_legs: List[dict] = []
 
-    for leg in leg_configs:
+    for leg_num, leg in enumerate(leg_configs, start=1):
         position     = "SELL" if "Sell" in leg["PositionType"] else "BUY"
         if is_reverse:
             position = "BUY" if position == "SELL" else "SELL"
@@ -883,6 +1124,11 @@ def run_overall_reentry_tgt(
             reentry_tp_next_ref=reentry_tp_next_ref,
         )
 
+        for st in result["sub_trades"]:
+            st["parent_leg_num"]        = leg_num
+            st["parent_leg_type"]       = otype
+            st["overall_reentry_cycle"] = cycle_number
+
         leg_dict = {
             "id":           leg["id"],
             "expiry":       expiry,
@@ -900,6 +1146,7 @@ def run_overall_reentry_tgt(
             "pnl":          result["total_leg_pnl"],
             "sub_trades":   result["sub_trades"],
             "overall_reentry_tgt_cycle": cycle_number,
+            "leg_num":      leg_num,
         }
 
         # ── Lazy legs (NextLeg triggered inside this cycle) ───────────────────
@@ -913,6 +1160,9 @@ def run_overall_reentry_tgt(
             for ll in lazy_legs:
                 for st in ll.get("sub_trades", []):
                     st["lazy_leg_id"] = ll["id"]
+                    st["parent_leg_num"]        = leg_num
+                    st["parent_leg_type"]       = otype
+                    st["overall_reentry_cycle"] = cycle_number
                     inner = st.get("reentry_type", "Initial")
                     st["reentry_type"] = (
                         f"Lazy({ll['id']})" if inner == "Initial"
@@ -930,7 +1180,25 @@ def run_overall_reentry_tgt(
     if not cycle_legs:
         return []
 
+    if next_sl_time:
+        for leg in cycle_legs:
+            for st in leg.get("sub_trades", []):
+                if st.get("exit_time") == next_sl_time and st.get("exit_reason") == "Time Exit":
+                    st["exit_reason"] = "Overall SL"
+            if leg.get("exit_time") == next_sl_time and leg.get("exit_reason") == "Time Exit":
+                leg["exit_reason"] = "Overall SL"
+
+    if next_tgt_time:
+        for leg in cycle_legs:
+            for st in leg.get("sub_trades", []):
+                if st.get("exit_time") == next_tgt_time and st.get("exit_reason") == "Time Exit":
+                    st["exit_reason"] = "Overall Target"
+            if leg.get("exit_time") == next_tgt_time and leg.get("exit_reason") == "Time Exit":
+                leg["exit_reason"] = "Overall Target"
+
     # ── If overall Target fires again (and fired before SL) → recurse ─────────
+    cycle_pnl = round(sum(leg.get("pnl", 0) for leg in cycle_legs), 2)
+    next_base_pnl = round(base_pnl_before_cycle + cycle_pnl, 2)
     target_fired_first = (
         next_tgt_time is not None
         and effective_exit == next_tgt_time
@@ -954,6 +1222,7 @@ def run_overall_reentry_tgt(
             reentry_type     = reentry_type,
             reentries_left   = reentries_left - 1,
             cycle_number     = cycle_number + 1,
+            base_pnl_before_cycle = next_base_pnl,
         )
         cycle_legs.extend(next_cycle)
 

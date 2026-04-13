@@ -1,0 +1,424 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+    <link rel="preload" as="font" type="font/woff2"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&amp;display=swap"
+        crossorigin="">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>
+        Options Simulator for Nifty, Banknifty, Finnifty, Sensex, Midcpnifty -
+        Stockmock
+    </title>
+    <link rel="shortcut icon" type="image/x-icon" href="https://www.stockmock.in/images/favicon.ico" />
+    <!-- Primary Meta Tags -->
+    <meta name="title" content="Stockmock - India&#39;s Best Options
+     Backtesting &amp; Trading Strategies Platform" />
+
+
+
+    <script src="./assets/js/jquery-3.2.1.min.js"></script>
+    <script src="./assets/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" href="./assets/css/style.css   " data-n-g="">
+
+    <link rel="stylesheet" type="text/css" href="./assets/css/bs4.css" />
+    <link rel="stylesheet" type="text/css" href="./assets/css/main.css" />
+    <link rel="stylesheet" type="text/css" href="./assets/css/portfolio-activation.css" />
+</head>
+
+
+<body>
+    <div id="root">
+        <div data-app-header data-header-base=".."></div>
+
+
+        <section id="body-content">
+
+
+
+
+
+
+
+            <div id="__next">
+                <div class="relative text-primaryBlack-800">
+                    <div class="relative">
+
+                        <div class="relative h-verticalBarHeight  md:ml-8">
+                            <div class="relative dark:bg-primaryBlack-0">
+                                <div class="px-2 dark:bg-primaryBlack-200 md:px-0">
+                                    <div class="flex flex-wrap items-center justify-between gap-5 border-b p-4">
+                                        <div
+                                            class="flex flex-wrap items-end gap-4 md:flex-nowrap md:justify-start md:gap-12">
+                                            <div class="flex items-center gap-2">
+                                                <div class="flex flex-col gap-1.5"><span id="portfolio-page-title"
+                                                        class="flex items-center gap-1 text-base font-medium leading-none  md:gap-3 md:text-2xl md:leading-9"><button><svg
+                                                                xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                                viewBox="0 0 24 24" stroke-width="1.5"
+                                                                stroke="currentColor" class="size-6">
+                                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                                    d="M6.75 15.75L3 12m0 0l3.75-3.75M3 12h18"></path>
+                                                            </svg></button>chan Sensex stra</span></div>
+                                            </div>
+                                            <div class="ml-auto flex items-center gap-3 md:ml-0"><button
+                                                    class="font-semibold leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4 !border-none !px-3 !py-1.5 !text-xs !font-normal"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                        viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                                                        class="h-4">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3">
+                                                        </path>
+                                                    </svg><span class="hidden md:block">PDF</span></button><button
+                                                    data-testid="portfolio-export-btn"
+                                                    class="font-semibold leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4 !border-none !px-3 !py-1.5 !text-xs !font-normal"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                        viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                                                        class="h-4 w-4">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            d="M9 8.25H7.5a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25H15m0-3-3-3m0 0-3 3m3-3V15">
+                                                        </path>
+                                                    </svg><span class="hidden md:inline">Export <span
+                                                            class="text-xxsm">.algtst</span></span></button><button
+                                                    data-testid="portfolio-edit-btn"
+                                                    class="hidden font-semibold leading-2 relative items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4 !border !border-primaryBlack-350 !px-3 !py-1.5 !text-xs !font-normal"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                        viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                                                        class="h-4 w-4">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10">
+                                                        </path>
+                                                    </svg><span class="hidden md:inline">Edit</span></button><button
+                                                    data-testid="portfolio-delete-btn"
+                                                    class="font-semibold leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4 !border !border-primaryBlack-350 !px-3 !py-1.5 !text-xs !font-normal !text-red-500"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                                        fill="currentColor" class="h-4 w-4">
+                                                        <path fill-rule="evenodd"
+                                                            d="M16.5 4.478v.227a48.816 48.816 0 013.878.512.75.75 0 11-.256 1.478l-.209-.035-1.005 13.07a3 3 0 01-2.991 2.77H8.084a3 3 0 01-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 01-.256-1.478A48.567 48.567 0 017.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 013.369 0c1.603.051 2.815 1.387 2.815 2.951zm-6.136-1.452a51.196 51.196 0 013.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 00-6 0v-.113c0-.794.609-1.428 1.364-1.452zm-.355 5.945a.75.75 0 10-1.5.058l.347 9a.75.75 0 101.499-.058l-.346-9zm5.48.058a.75.75 0 10-1.498-.058l-.347 9a.75.75 0 001.5.058l.345-9z"
+                                                            clip-rule="evenodd"></path>
+                                                    </svg><span class="hidden md:inline">Delete</span></button></div>
+                                        </div>
+                                        <div class="hidden w-full  text-xs md:grid md:w-auto grid-cols-2 gap-2">
+                                            <div class="flex flex-col gap-1">
+                                                <div class="flex items-center gap-1">Credits Available</div>
+                                                <div class="flex items-end gap-4 pr-4"><span
+                                                        class="text-sm font-bold leading-5">265</span><button
+                                                        class="text-xs font-medium leading-4 text-primaryBlue-500 hover:underline hover:underline-offset-2"
+                                                        data-testid="add-credits-button">Add</button></div>
+                                            </div>
+                                            <div class="flex flex-col items-end justify-between ">
+                                                <div class="flex items-center gap-1 text-primaryBlack-700">Weekly
+                                                    Backtests
+                                                </div>
+                                                <div class="flex items-end gap-4"><span
+                                                        class=" text-sm text-primaryBlack-600"><span
+                                                            class="text-sm font-medium text-primaryBlack-750">39</span></span><button
+                                                        class="text-primaryBlue-500 hover:underline hover:underline-offset-1 font-semibold leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4 !p-0 !font-medium">Buy
+                                                        Backtests</button></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="domtopdf" class="p-4 dark:bg-primaryBlack-0 md:p-5">
+                                    <div>
+                                        <div class="mb-6 rounded-lg px-4">
+                                            <p class="mb-3 text-sm font-medium text-primaryBlack-750">Overall Portfolio
+                                                Setting
+                                            </p>
+                                            <div class="portfolio-settings-toolbar">
+                                                <div id="portfolio-qty-filter"
+                                                    class="flex w-full items-center justify-start gap-3 md:w-auto">
+                                                    <span class="text-xs font-medium text-primaryBlack-750">Quantity
+                                                        Multiplier</span>
+                                                    <div class="portfolio-qty-stepper">
+                                                        <button type="button" id="portfolio-qty-decrement"
+                                                            class="portfolio-qty-stepper-btn"
+                                                            aria-label="Decrease quantity multiplier">-</button>
+                                                        <span id="portfolio-qty-value"
+                                                            class="portfolio-qty-stepper-value">1</span>
+                                                        <button type="button" id="portfolio-qty-increment"
+                                                            class="portfolio-qty-stepper-btn"
+                                                            aria-label="Increase quantity multiplier">+</button>
+                                                    </div>
+                                                    <input id="portfolio-qty-select" type="hidden" value="1">
+                                                </div>
+                                                <div class="portfolio-settings-toolbar-right">
+                                                    <button type="button" id="portfolio-edit-link-btn"
+                                                        class="border border-primaryBlue-500 text-primaryBlue-500 hover:bg-primaryBlue-500 hover:text-white font-semibold leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-2 text-center text-xs duration-75 md:px-4 md:py-2 md:leading-4">
+                                                        <span>Edit Portfolio</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div class="grid grid-cols-4 items-start gap-2 md:grid-cols-9">
+
+                                                <div class="col-span-2 flex justify-center md:col-span-1">
+                                                    <div class="hidden"></div>
+                                                    <div hidden=""
+                                                        style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
+                                                    </div>
+                                                </div>
+                                                <div class="col-span-2  justify-center md:hidden">
+                                                    <div class="relative w-full md:w-auto" data-headlessui-state="">
+                                                        <button
+                                                            class="flex w-full items-center justify-between gap-2 rounded border border-primaryBlack-350 bg-primaryBlack-0 px-2 py-1 text-xs md:w-max"
+                                                            type="button" aria-expanded="false" data-headlessui-state=""
+                                                            id="headlessui-popover-button-«rpp»"><span>Slippage</span><svg
+                                                                xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                                viewBox="0 0 24 24" stroke="currentColor"
+                                                                class="size-3">
+                                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                                    stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                                            </svg></button>
+                                                    </div>
+                                                    <div hidden=""
+                                                        style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
+                                                    </div>
+                                                </div>
+                                                <div
+                                                    class="col-span-4 flex items-center justify-center gap-2 md:col-span-3">
+                                                    <div id="portfolio-mode-toggle-group"
+                                                        class="flex flex-wrap items-center justify-between gap-2">
+                                                        <div
+                                                            class="flex w-full !w-max p-0.5 rounded border border-primaryBlack-400  ">
+                                                            <label for="toggle--input__0_01KMVVN4YGJ1ZYW0YFAZ1Y6M0X"
+                                                                class="cursor-pointer whitespace-nowrap bg-primaryBlack-0 px-4 py-2 text-center text-xs text-primaryBlack-800 dark:bg-primaryBlack-200   md:text-xs/4 md:w-fit !px-2 !py-1 !text-xs rounded-l w-full"
+                                                                data-testid="DTE-button"><input hidden=""
+                                                                    id="toggle--input__0_01KMVVN4YGJ1ZYW0YFAZ1Y6M0X"
+                                                                    class="hidden" type="radio"
+                                                                    value="DTE">DTE</label><label
+                                                                for="toggle--input__1_01KMVVN4YGJ1ZYW0YFAZ1Y6M0X"
+                                                                class="cursor-pointer whitespace-nowrap bg-primaryBlack-0 px-4 py-2 text-center text-xs text-primaryBlack-800 dark:bg-primaryBlack-200   md:text-xs/4 md:w-fit !px-2 !py-1 !text-xs !bg-secondaryBlue-50 !font-bold !text-secondaryBlue-500  w-full"
+                                                                data-testid="Weekdays-button"><input hidden=""
+                                                                    id="toggle--input__1_01KMVVN4YGJ1ZYW0YFAZ1Y6M0X"
+                                                                    class="hidden" type="radio" value="Weekdays"
+                                                                    checked="">Weekdays</label><label
+                                                                for="toggle--input__2_01KMVVN4YGJ1ZYW0YFAZ1Y6M0X"
+                                                                class="cursor-pointer whitespace-nowrap bg-primaryBlack-0 px-4 py-2 text-center text-xs text-primaryBlack-800 dark:bg-primaryBlack-200   md:text-xs/4 md:w-fit !px-2 !py-1 !text-xs rounded-r w-full"
+                                                                data-testid="Budget Days-button"><input hidden=""
+                                                                    id="toggle--input__2_01KMVVN4YGJ1ZYW0YFAZ1Y6M0X"
+                                                                    class="hidden" type="radio"
+                                                                    value="Budget Days">Budget
+                                                                Days</label>
+                                                        </div>
+                                                    </div>
+                                                    <div id="portfolio-top-filter"
+                                                        class="relative w-full md:w-auto portfolio-top-filter"
+                                                        data-headlessui-state=""><button data-portfolio-filter-button
+                                                            class="flex w-full items-center justify-between gap-2 rounded border border-primaryBlack-350 bg-primaryBlack-0 px-2 py-1 text-xs md:w-max"
+                                                            type="button" aria-expanded="false" data-headlessui-state=""
+                                                            id="headlessui-popover-button-«rpr»"><span>Weekdays</span><svg
+                                                                xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                                viewBox="0 0 24 24" stroke="currentColor"
+                                                                class="size-3">
+                                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                                    stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                                            </svg></button>
+                                                        <div id="portfolio-top-filter-menu"
+                                                            class="portfolio-top-filter-menu" hidden></div>
+                                                    </div>
+                                                    <div hidden=""
+                                                        style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
+                                                    </div>
+                                                </div>
+                                                <div class="col-span-1 hidden justify-center md:flex">
+                                                    <div id="portfolio-slippage-filter"
+                                                        class="relative w-full md:w-auto" data-headlessui-state="">
+                                                        <button data-portfolio-slippage-button
+                                                            class="flex w-full items-center justify-between gap-2 rounded border border-primaryBlack-350 bg-primaryBlack-0 px-2 py-1 text-xs md:w-max"
+                                                            type="button" aria-expanded="false" data-headlessui-state=""
+                                                            id="headlessui-popover-button-«rpt»"><span>Slippage</span><svg
+                                                                xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                                viewBox="0 0 24 24" stroke="currentColor"
+                                                                class="size-3">
+                                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                                    stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                                            </svg></button>
+                                                        <div id="portfolio-slippage-popover"
+                                                            class="portfolio-slippage-popover" hidden>
+                                                            <div class="mb-3 text-sm text-primaryBlack-700">Slippage (%)
+                                                            </div>
+                                                            <div class="flex items-center gap-3">
+                                                                <div class="flex items-center gap-2">
+                                                                    <input id="portfolio-slippage-input" min="0"
+                                                                        max="100" step="0.1"
+                                                                        class="w-20 rounded border border-primaryBlack-350 px-2 py-2 text-center text-xs"
+                                                                        type="number" value="0">
+                                                                    <span class="text-xs text-primaryBlack-600">%</span>
+                                                                </div>
+                                                                <button type="button" id="portfolio-slippage-apply"
+                                                                    class="border border-secondaryBlue-500 bg-secondaryBlue-500 text-white hover:border-secondaryBlue-400 hover:bg-secondaryBlue-400 font-semibold leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-2 text-center text-xs duration-75">Apply</button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div hidden=""
+                                                        style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
+                                                    </div>
+                                                </div>
+                                                <div class="col-span-1"></div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div
+                                                class="my-2 hidden items-center justify-between border-0.5 border-primaryBlack-350 bg-primaryBlack-200 p-2 text-xs font-medium leading-4 text-primaryBlack-725 sticky top-0 z-5 md:flex">
+                                                <div class="flex items-center gap-3"><label
+                                                        class="flex cursor-pointer items-center gap-2 text-xs font-normal leading-6 "
+                                                        for="overallSelect"><input
+                                                            class="h-4 w-4 cursor-pointer rounded border border-secondaryBlue-500 text-secondaryBlue-500  focus:ring-secondaryBlue-500"
+                                                            id="overallSelect" type="checkbox" checked=""></label><label
+                                                        for="overallSelect" class="cursor-pointer"><span
+                                                            id="portfolio-selected-count"
+                                                            class="font-semibold">2</span><span
+                                                            id="portfolio-selected-total">/2 selected</span></label>
+                                                </div>
+                                                <button
+                                                    class="font-semibold leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4 !px-2 !py-1 !text-xs !font-normal !text-red-500"><svg
+                                                        xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                                        fill="currentColor" class="h-3.5 w-3.5">
+                                                        <path fill-rule="evenodd"
+                                                            d="M16.5 4.478v.227a48.816 48.816 0 013.878.512.75.75 0 11-.256 1.478l-.209-.035-1.005 13.07a3 3 0 01-2.991 2.77H8.084a3 3 0 01-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 01-.256-1.478A48.567 48.567 0 017.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 013.369 0c1.603.051 2.815 1.387 2.815 2.951zm-6.136-1.452a51.196 51.196 0 013.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 00-6 0v-.113c0-.794.609-1.428 1.364-1.452zm-.355 5.945a.75.75 0 10-1.5.058l.347 9a.75.75 0 101.499-.058l-.346-9zm5.48.058a.75.75 0 10-1.498-.058l-.347 9a.75.75 0 001.5.058l.345-9z"
+                                                            clip-rule="evenodd"></path>
+                                                    </svg>Delete Selected</button>
+                                            </div>
+                                            <div class="portfolio-row-summary-header">
+                                                <span>Strategies</span>
+                                                <span>Quantity multiplier</span>
+                                                <span>DTE / Weekdays</span>
+                                                <span>Entry</span>
+                                                <span>Exit</span>
+                                                <span></span>
+                                            </div>
+                                            <div id="portfolio-strategy-rows">
+                                                <div id="portfolio-strategy-row-template" draggable="true"
+                                                    class=" group my-3 grid cursor-move grid-cols-9 gap-2 gap-y-4 rounded border border-primaryBlack-350 p-4 pb-2 text-center text-xs font-medium leading-4 hover:bg-primaryBlack-200 dark:bg-primaryBlack-350 hover:dark:bg-primaryBlack-100   md:my-2 md:items-center md:p-2">
+                                                    <div data-row-main
+                                                        class="col-span-8 flex items-start gap-1 text-primaryBlack-700 md:items-center md:gap-5 md:col-span-3">
+                                                        <div><svg xmlns="http://www.w3.org/2000/svg" width="24"
+                                                                height="24" viewBox="0 0 24 24" fill="none"
+                                                                stroke="currentColor" stroke-width="2"
+                                                                stroke-linecap="round" stroke-linejoin="round"
+                                                                class="lucide lucide-grip-vertical size-4"
+                                                                aria-hidden="true">
+                                                                <circle cx="9" cy="12" r="1"></circle>
+                                                                <circle cx="9" cy="5" r="1"></circle>
+                                                                <circle cx="9" cy="19" r="1"></circle>
+                                                                <circle cx="15" cy="12" r="1"></circle>
+                                                                <circle cx="15" cy="5" r="1"></circle>
+                                                                <circle cx="15" cy="19" r="1"></circle>
+                                                            </svg></div><label
+                                                            class="flex cursor-pointer items-center gap-2 text-xs font-normal leading-6  mt-1 md:mt-0"
+                                                            for="0"><input
+                                                                class="h-4 w-4 cursor-pointer rounded border border-secondaryBlue-500 text-secondaryBlue-500  focus:ring-secondaryBlue-500"
+                                                                id="0" type="checkbox" checked=""></label>
+                                                        <div class="ml-3 flex flex-col items-start gap-1 md:ml-0">
+                                                            <div
+                                                                class="flex items-center gap-1 text-sm font-medium text-primaryBlack-750">
+                                                                <div class="group relative"
+                                                                    data-testid="special-text-tooltip">
+                                                                    NIFTY-p-50</div>
+                                                            </div>
+                                                            <div class="flex items-center gap-2"><span
+                                                                    class="text-xs font-normal text-primaryBlack-700">NIFTY</span><span>•</span><span
+                                                                    class="text-xs font-normal text-primaryBlack-700">INTRADAY</span>
+                                                            </div>
+                                                        </div><button
+                                                            class="text-primaryBlue-500 hover:underline hover:underline-offset-1 font-semibold leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4  !px-0 !py-0 md:invisible md:!px-4 md:!py-2 md:group-hover:visible"><svg
+                                                                xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                                                fill="currentColor" class="size-5 ">
+                                                                <path
+                                                                    d="M21.731 2.269a2.625 2.625 0 00-3.712 0l-1.157 1.157 3.712 3.712 1.157-1.157a2.625 2.625 0 000-3.712zM19.513 8.199l-3.712-3.712-8.4 8.4a5.25 5.25 0 00-1.32 2.214l-.8 2.685a.75.75 0 00.933.933l2.685-.8a5.25 5.25 0 002.214-1.32l8.4-8.4z">
+                                                                </path>
+                                                                <path
+                                                                    d="M5.25 5.25a3 3 0 00-3 3v10.5a3 3 0 003 3h10.5a3 3 0 003-3V13.5a.75.75 0 00-1.5 0v5.25a1.5 1.5 0 01-1.5 1.5H5.25a1.5 1.5 0 01-1.5-1.5V8.25a1.5 1.5 0 011.5-1.5h5.25a.75.75 0 000-1.5H5.25z">
+                                                                </path>
+                                                            </svg></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                                <div
+                                    class="sticky bottom-0 z-[29] mt-96  flex  w-full flex-col  items-center justify-between gap-2 bg-primaryBlack-0 shadow-card shadow-black/30  print:hidden">
+                                    <div class="flex w-full flex-col items-end justify-between pt-2 md:flex-row">
+                                        <div
+                                            class="mb-2 flex  w-auto items-center gap-2 bg-transparent px-4 pt-2 text-xs  md:px-10">
+                                        </div>
+                                        <div
+                                            class="flex w-full items-center justify-around gap-2 px-4 py-2 md:ml-auto md:w-max md:flex-row md:px-5 md:py-0">
+                                            <button data-testid="portfolio-recent-backtests-btn"
+                                                class="border border-primaryBlue-500 text-primaryBlue-500 hover:bg-primaryBlue-500 hover:text-white font-medium leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4 hidden !border-green-600 !text-green-600 hover:!bg-green-600 hover:!text-white md:flex md:!px-3"><svg
+                                                    xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                                    stroke-width="1.5" stroke="currentColor" class="h-4">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                                </svg>Activate Selected</button>
+
+                                            <div hidden=""
+                                                style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
+                                            </div>
+                                        </div>
+                                    </div><span
+                                        class="flex w-full items-center justify-center gap-2 bg-primaryBlack-200 py-2 text-center text-xs font-normal leading-5 text-primaryBlack-700"><svg
+                                            xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                            stroke-width="1.5" stroke="currentColor" class="inline-block size-4">
+                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z">
+                                            </path>
+                                        </svg>Update Portfolio to save any changes to the DTE or Qty Multiplier </span>
+                                </div>
+                                <div
+                                    class="no-scrollbar fixed bottom-0 right-0 top-12 z-30 flex h-verticalBarHeight w-1/5 max-w-[680px] flex-col overflow-auto bg-primaryBlack-50 shadow-card transition-all !duration-300 ease-in-out  !-right-3/4">
+                                    <div class=" flex items-center justify-between border-b px-4 py-3">
+                                        <h3 class="font-semibold">Recent Backtests</h3><button><svg
+                                                xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                                stroke-width="1.5" stroke="currentColor" class="h-6 w-6">
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M6 18L18 6M6 6l12 12">
+                                                </path>
+                                            </svg></button>
+                                    </div>
+                                    <div class="relative h-full w-full grow">
+                                        <div class="absolute bottom-0 left-0 right-0 top-0">
+                                            <div
+                                                class="no-scrollbar  flex h-full  max-h-full flex-1 flex-col overflow-auto">
+                                                <div
+                                                    class=" mx-auto my-auto flex flex-col gap-2 text-sm text-primaryBlack-700">
+                                                    <svg width="135" height="56" viewBox="0 0 135 56" fill="none"
+                                                        xmlns="http://www.w3.org/2000/svg">
+                                                        <path fill-rule="evenodd" clip-rule="evenodd"
+                                                            d="M128.6 0C131.693 0 134.2 2.50721 134.2 5.6C134.2 8.69279 131.693 11.2 128.6 11.2H96.6C99.6928 11.2 102.2 13.7072 102.2 16.8C102.2 19.8928 99.6928 22.4 96.6 22.4H114.2C117.293 22.4 119.8 24.9072 119.8 28C119.8 31.0928 117.293 33.6 114.2 33.6H106.061C102.161 33.6 99 36.1072 99 39.2C99 41.2619 100.6 43.1285 103.8 44.8C106.893 44.8 109.4 47.3072 109.4 50.4C109.4 53.4928 106.893 56 103.8 56H37.4C34.3072 56 31.8 53.4928 31.8 50.4C31.8 47.3072 34.3072 44.8 37.4 44.8H6.20001C3.10721 44.8 0.600006 42.2928 0.600006 39.2C0.600006 36.1072 3.10721 33.6 6.20001 33.6H38.2C41.2928 33.6 43.8 31.0928 43.8 28C43.8 24.9072 41.2928 22.4 38.2 22.4H18.2C15.1072 22.4 12.6 19.8928 12.6 16.8C12.6 13.7072 15.1072 11.2 18.2 11.2H50.2C47.1072 11.2 44.6 8.69279 44.6 5.6C44.6 2.50721 47.1072 0 50.2 0H128.6ZM128.6 22.4C131.693 22.4 134.2 24.9072 134.2 28C134.2 31.0928 131.693 33.6 128.6 33.6C125.507 33.6 123 31.0928 123 28C123 24.9072 125.507 22.4 128.6 22.4Z"
+                                                            fill="#F3F3F3"></path>
+                                                    </svg>No Recent Backtests Found
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="fixed bottom-0 z-10 flex w-full" style=""></div>
+                </div>
+                <section aria-label="Notifications alt+T" tabindex="-1" aria-live="polite"
+                    aria-relevant="additions text" aria-atomic="false"></section>
+            </div>
+
+
+
+
+
+
+        </section>
+
+
+</body>
+<script src="./assets/js/script.js"></script>
+<script src="./assets/js/algo-stream-sockets.js"></script>
+<script src="./assets/js/app-header.js"></script>
+<script src="./assets/js/portfolio-activation.js"></script>
+
+
+</html>

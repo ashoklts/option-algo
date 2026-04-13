@@ -1,0 +1,314 @@
+ /* ── bar wrapper ── */
+ .tcp-bar {
+     display: flex;
+     flex-direction: column;
+     background: #f8fafc;
+     border-top: 1px solid #dde3ed;
+     border-bottom: 2px solid #dde3ed;
+     padding: 0;
+     gap: 0;
+     font-family: inherit;
+ }
+
+ /* ── row inside bar ── */
+ .tcp-row {
+     display: flex;
+     flex-direction: row;
+     align-items: stretch;
+     flex-wrap: nowrap;
+     min-height: 58px;
+     overflow-x: auto;
+ }
+
+ .tcp-row+.tcp-row {
+     border-top: 1px solid #dde3ed;
+ }
+
+ /* ── card ── */
+ .tcp-card {
+     display: flex;
+     flex-direction: column;
+     justify-content: center;
+     gap: 3px;
+     padding: 6px 12px;
+     border-right: 1px solid #dde3ed;
+     flex-shrink: 0;
+     position: relative;
+ }
+
+ .tcp-card:last-child {
+     border-right: none;
+ }
+
+ /* header: toggle + title */
+ .tcp-card-hdr {
+     display: flex;
+     align-items: center;
+     gap: 6px;
+ }
+
+ .tcp-card-title {
+     font-size: 10px;
+     font-weight: 700;
+     color: #64748b;
+     text-transform: uppercase;
+     letter-spacing: 0.6px;
+     white-space: nowrap;
+     line-height: 1;
+ }
+
+ /* body: controls in a row */
+ .tcp-card-body {
+     display: flex;
+     flex-direction: row;
+     flex-wrap: nowrap;
+     align-items: center;
+     gap: 4px;
+ }
+
+ /* ── shared atoms ── */
+ .tcp-sel {
+     border: 1px solid #cbd5e1;
+     border-radius: 4px;
+     padding: 3px 6px;
+     font-size: 12px;
+     color: #1e293b;
+     background: #fff;
+     cursor: pointer;
+     outline: none;
+     height: 26px;
+     -webkit-appearance: auto;
+ }
+
+ .tcp-sel:focus {
+     border-color: #3b82f6;
+     box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+ }
+
+ .tcp-sel:disabled,
+ .tcp-num:disabled {
+     background: #f1f5f9;
+     color: #94a3b8;
+     cursor: not-allowed;
+     border-color: #e2e8f0;
+ }
+
+ .tcp-num {
+     border: 1px solid #cbd5e1;
+     border-radius: 4px;
+     padding: 3px 4px;
+     font-size: 12px;
+     color: #1e293b;
+     background: #fff;
+     height: 26px;
+     width: 55px;
+     outline: none;
+     text-align: center;
+ }
+
+ .tcp-num:focus {
+     border-color: #3b82f6;
+     box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+ }
+
+ .tcp-num.tcp-err {
+     border-color: #ef4444;
+     background: #fef2f2;
+ }
+
+ .tcp-xy-lbl {
+     font-size: 10px;
+     font-weight: 800;
+     color: #94a3b8;
+     margin: 0 1px;
+ }
+
+ /* specific widths */
+ .tcp-lot-sel {
+     width: 78px;
+ }
+
+ .tcp-tf-sel {
+     width: 70px;
+ }
+
+ .tcp-strat-sel {
+     min-width: 120px;
+ }
+
+ .tcp-expiry-sel {
+     min-width: 122px;
+ }
+
+ .tcp-unit-sel {
+     min-width: 102px;
+ }
+
+ .tcp-mode-sel {
+     min-width: 158px;
+ }
+
+ /* pause button */
+ .tcp-pause-btn {
+     height: 26px;
+     padding: 0 11px;
+     border-radius: 4px;
+     border: none;
+     font-size: 11px;
+     font-weight: 700;
+     cursor: pointer;
+     white-space: nowrap;
+     background: #3b82f6;
+     color: #fff;
+     letter-spacing: 0.3px;
+     transition: background .15s;
+ }
+
+ .tcp-pause-btn.is-paused {
+     background: #22c55e;
+ }
+
+ /* validation error tooltip */
+ .tcp-val-tip {
+     display: none;
+     position: absolute;
+     bottom: calc(100% + 5px);
+     left: 50%;
+     transform: translateX(-50%);
+     background: #ef4444;
+     color: #fff;
+     font-size: 10px;
+     font-weight: 600;
+     padding: 3px 8px;
+     border-radius: 4px;
+     white-space: nowrap;
+     z-index: 200;
+     pointer-events: none;
+     box-shadow: 0 2px 6px rgba(0, 0, 0, .15);
+ }
+
+ .tcp-val-tip::after {
+     content: '';
+     position: absolute;
+     top: 100%;
+     left: 50%;
+     transform: translateX(-50%);
+     border: 4px solid transparent;
+     border-top-color: #ef4444;
+ }
+
+ .tcp-val-tip.show {
+     display: block;
+ }
+
+ /* iOS-style toggle */
+ .tcp-tog {
+     position: relative;
+     display: inline-block;
+     width: 32px;
+     height: 17px;
+     margin: 0;
+     flex-shrink: 0;
+     cursor: pointer;
+ }
+
+ .tcp-tog input {
+     opacity: 0;
+     width: 0;
+     height: 0;
+     position: absolute;
+ }
+
+ .tcp-tog-track {
+     position: absolute;
+     inset: 0;
+     background: #cbd5e1;
+     border-radius: 17px;
+     transition: background .2s;
+ }
+
+ .tcp-tog-track::before {
+     content: '';
+     position: absolute;
+     width: 11px;
+     height: 11px;
+     left: 3px;
+     top: 3px;
+     background: #fff;
+     border-radius: 50%;
+     transition: transform .2s;
+     box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+ }
+
+ .tcp-tog input:checked+.tcp-tog-track {
+     background: #3b82f6;
+ }
+
+ .tcp-tog input:checked+.tcp-tog-track::before {
+     transform: translateX(15px);
+ }
+
+ /* ── time pickers ── */
+ .tcp-time {
+     border: 1px solid #cbd5e1;
+     border-radius: 4px;
+     padding: 3px 5px;
+     font-size: 12px;
+     color: #1e293b;
+     background: #fff;
+     height: 26px;
+     outline: none;
+     cursor: pointer;
+ }
+
+ .tcp-time:focus {
+     border-color: #3b82f6;
+     box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+ }
+
+ .tcp-time:disabled {
+     background: #f1f5f9;
+     color: #94a3b8;
+     cursor: not-allowed;
+     border-color: #e2e8f0;
+ }
+
+ .tcp-time-lbl {
+     font-size: 10px;
+     font-weight: 700;
+     color: #64748b;
+     white-space: nowrap;
+     margin-right: 2px;
+ }
+
+ /* ── strike-type selector ── */
+ .tcp-strike-mode-sel {
+     min-width: 140px;
+ }
+
+ .tcp-strike-val {
+     width: 72px;
+ }
+
+ .tcp-strike-drop {
+     min-width: 110px;
+ }
+
+ /* styled strike dropdown — trading platform strike picker */
+ .tcp-strike-drop {
+     font-size: 12px;
+ }
+
+ .tcp-strike-drop option[value="ATM"] {
+     font-weight: 800;
+     background: #eff6ff;
+     color: #1d4ed8;
+ }
+
+ .tcp-strike-drop option[data-dir="otm"] {
+     color: #16a34a;
+ }
+
+ .tcp-strike-drop option[data-dir="itm"] {
+     color: #dc2626;
+ }

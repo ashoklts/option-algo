@@ -1,0 +1,26 @@
+{
+    "legs": [
+        {
+            "id": "hlj06ct2",
+            "status": 1,
+            "position": "PositionType.Sell",
+            "option": "CE",
+            "expiry_kind": "ExpiryType.Weekly",
+            "strike_parameter": "{'Multiplier': 0.6, 'StrikeKind': 'StrikeType.ATM'}",
+            "entry_kind": "EntryType.EntryByPremiumCloseToStraddle",
+            "entry_trade": null,
+            "quantity": 0,
+            "lot_config_value": 1,
+            "last_saw_price": 0,
+            "current_sl_price": null,
+            "strike": null,
+            "expiry_date": null,
+            "token": null,
+            "triggered_by": "",
+            "queued_at": "2025-11-03T09:40:00",
+            "is_lazy": false,
+            "leg_type": "leg_1"
+        },
+        "69d89c98728243aa4ca56064"
+    ]
+}

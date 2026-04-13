@@ -1,0 +1,122 @@
+/* iPads (portrait and landscape) ----------- */
+
+.all__mobile__only {
+    display: none !important;
+}
+
+@media (max-width: 1024px) {
+    .all__mobile__only {
+        display: inherit !important;
+    }
+}
+
+@media only screen and (min-device-width: 768px) and (max-device-width: 1180px) {
+    .__main__box .content__box:first-child {
+        padding-top: 126px;
+        padding-bottom: 0;
+    }
+
+    .navbar__bg.show {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 999;
+        width: 100vw;
+        height: 100vh;
+        background-color: #000;
+        opacity: .5;
+    }
+
+    .__user__name {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: none !important;
+        border: 0 !important;
+    }
+
+    .__logout {
+        padding: 0 !important;
+        border: 0 !important;
+    }
+
+    .modal-dialog {
+        max-width: 90%;
+    }
+
+    .tour__playlist__container {
+        flex-direction: column-reverse;
+        height: unset;
+    }
+
+    .tour__video__container .yt__video__box {
+        min-height: 300px;
+    }
+
+    .yt__video__box {
+        height: 500px;
+    }
+
+    .__donate__button.web__only {
+        display: none;
+    }
+
+    .simulator_card .eod__message>div {
+        padding: 0 6px;
+    }
+
+    .builder_actions_box a.simulator_link, .builder .builder_actions_box .simulator_link {
+        min-width: unset;
+    }
+
+    .mr-50 {
+        margin-right: 25px;
+    }
+
+    .snapshot_link span {
+        display: none;
+    }
+
+    .advance__setting {
+        height: unset;
+        justify-content: center;
+    }
+
+    .advance__setting .d-flex {
+        padding: 10px 6px !important;
+    }
+
+    .position_table {
+        overflow: auto;
+    }
+
+    .position_table tr.sticky-top {
+        top: 0;
+    }
+
+    .builder_actions {
+        width: 178px;
+        margin-left: unset;
+    }
+
+    .hideOnSmallDevice {
+        display: none;
+    }
+}
+
+/* ----------- iPad Pro ----------- */
+
+/* Portrait */
+
+@media only screen and (min-width: 1024px) and (max-height: 1366px) and (orientation: portrait) and (-webkit-min-device-pixel-ratio: 1.5) {
+    .collapse:not(.show) {
+        display: none !important;
+    }
+
+    .__donate__button.web__only {
+        display: none;
+    }
+
+    .__donate__button {
+        margin: auto 25px auto auto;
+    }
+}

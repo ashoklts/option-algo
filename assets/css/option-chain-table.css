@@ -1,0 +1,313 @@
+/* ── layout ── */
+/* position_table sticky header fix — <tr> can't reliably sticky; use relative */
+.position_table .sticky-top {
+    position: relative !important;
+    top: auto !important;
+    z-index: auto !important;
+    background: #fff;
+}
+
+/* make individual <th> cells sticky so header stays visible on scroll */
+.position_table .sticky-top th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: #fff;
+}
+
+.oc-custom-table {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 480px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+}
+
+.oc-custom-table table {
+    min-width: 560px;
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.oc-custom-table thead tr {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f1f5f9;
+}
+
+.oc-custom-table th {
+    padding: 8px 10px;
+    font-weight: 600;
+    font-size: 12px;
+    color: #475569;
+    border-bottom: 2px solid #e2e8f0;
+    letter-spacing: 0.03em;
+}
+
+.oc-call-head {
+    text-align: right;
+    color: #16a34a !important;
+    width: 25%;
+}
+
+.oc-call-oi-head {
+    text-align: right;
+    color: #ef4444 !important;
+    width: 12%;
+    font-size: 11px;
+}
+
+.oc-iv-head {
+    text-align: center;
+    color: #7c3aed !important;
+    width: 10%;
+    font-size: 11px;
+}
+
+.oc-strike-head {
+    text-align: center;
+    width: 16%;
+    color: #1e293b !important;
+}
+
+.oc-put-oi-head {
+    text-align: left;
+    color: #22c55e !important;
+    width: 12%;
+    font-size: 11px;
+}
+
+.oc-put-head {
+    text-align: left;
+    color: #dc2626 !important;
+    width: 25%;
+}
+
+/* ── IV cell ── */
+.oc-iv {
+    text-align: center;
+    padding: 4px 4px !important;
+}
+
+.oc-iv-value {
+    font-size: 11px;
+    font-weight: 200;
+    color: #1e293b;
+    white-space: nowrap;
+}
+
+.oc-row.oc-atm .oc-iv {
+    background: #EBFBFF !important;
+}
+
+.oc-head-delta {
+    font-weight: 400;
+    opacity: 0.7;
+    font-size: 11px;
+}
+
+/* ── rows ── */
+.oc-row td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+
+.oc-call {
+    text-align: right;
+}
+
+.oc-put {
+    text-align: left;
+}
+
+.oc-strike {
+    text-align: center;
+    font-weight: 300;
+    font-size: 13px;
+    color: #334155;
+    background: #f8fafc;
+}
+
+/* ── text ── */
+.oc-ltp {
+    font-weight: 300;
+    color: #1e293b;
+    margin-right: 3px;
+}
+
+.oc-delta {
+    font-size: 11px;
+    color: #64748b;
+}
+
+/* ── row hover → bold strike + ltp only ── */
+.oc-row:hover .oc-strike,
+.oc-row:hover .oc-ltp {
+    font-weight: 600;
+}
+
+.oc-empty {
+    color: #94a3b8;
+}
+
+/* ── ATM row ── */
+.oc-row.oc-atm td {
+    background: #EBFBFF !important;
+}
+
+.oc-row.oc-atm .oc-strike {
+    background: #c7f2ff !important;
+    font-weight: 300;
+}
+
+/* ── ITM highlights — LTP cells only ── */
+.oc-row.oc-call-itm .oc-call {
+    background: #fefce8 !important;
+}
+
+/* yellow – call ITM */
+.oc-row.oc-put-itm .oc-put {
+    background: #fefce8 !important;
+}
+
+/* yellow – put  ITM */
+
+/* ── OI cells ── */
+.oc-call-oi {
+    text-align: right;
+    padding: 4px 6px !important;
+}
+
+.oc-put-oi {
+    text-align: left;
+    padding: 4px 6px !important;
+}
+
+.oc-oi-value {
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+    opacity: 0.6;
+}
+
+.oc-oi-call {
+    color: #ef4444;
+}
+
+.oc-oi-put {
+    color: #22c55e;
+}
+
+/* progress bar wrapper */
+.oc-oi-bar-wrap {
+    height: 3px;
+    background: #e2e8f0;
+    border-radius: 2px;
+    margin-top: 3px;
+    overflow: hidden;
+    opacity: 0.4;
+}
+
+/* call OI bar fills from the right */
+.oc-call-oi .oc-oi-bar-wrap {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.oc-oi-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+}
+
+.oc-oi-bar-call {
+    background: #ef4444;
+}
+
+.oc-oi-bar-put {
+    background: #22c55e;
+}
+
+/* ── Buy / Sell hover buttons ── */
+/* hidden by default — JS mouseenter/mouseleave controls visibility */
+.oc-actions {
+    display: none;
+    /* fully removed from layout until hover  */
+    align-items: center;
+    gap: 3px;
+}
+
+/* default button style */
+.oc-custom-table .action_button button {
+    background: #fff;
+    color: #999;
+    border: 1px solid;
+    opacity: 1;
+}
+
+/* B button hover — green text */
+.oc-custom-table .buy_button:hover {
+    color: #03B760 !important;
+    transition: 0.3s;
+    opacity: 1 !important;
+}
+
+/* S button hover — red text */
+.oc-custom-table .sell_button:hover {
+    color: #EF6161 !important;
+    transition: 0.3s;
+    opacity: 1 !important;
+}
+
+/* call cell: full width flex row — buttons pinned to LEFT corner, text to right */
+.oc-call .oc-cell-inner {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.oc-call .oc-actions {
+    margin-right: auto;
+    /* push B/S to the far left */
+}
+
+/* put cell: full width flex row — text to left, buttons pinned to RIGHT corner */
+.oc-put .oc-cell-inner {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.oc-put .oc-actions {
+    margin-left: auto;
+    /* push B/S to the far right */
+}
+
+/* Active button states — filled when a position is open */
+.oc-custom-table .buy_button.oc-btn-active {
+    background: #03B760 !important;
+    color: #fff !important;
+    border-color: #03B760 !important;
+}
+
+.oc-custom-table .sell_button.oc-btn-active {
+    background: #EF6161 !important;
+    color: #fff !important;
+    border-color: #EF6161 !important;
+}
+
+/* Keep the whole action wrapper visible when any button is active */
+.oc-actions.has-active {
+    display: inline-flex !important;
+}

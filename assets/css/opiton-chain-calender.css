@@ -1,0 +1,125 @@
+.oc-cal-popup {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 272px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .2);
+    z-index: 9999;
+    overflow: hidden;
+    user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.oc-cal-hdr {
+    background: #2c3e50;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    gap: 6px;
+}
+
+.oc-cal-nav-btn {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    opacity: .8;
+}
+
+.oc-cal-nav-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, .15);
+}
+
+.oc-cal-title {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 600;
+    font-size: 14px;
+    flex: 1;
+    justify-content: center;
+}
+
+.oc-cal-yr-wrap {
+    display: flex;
+    flex-direction: column;
+    margin-left: 2px;
+}
+
+.oc-cal-yr-btn {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 9px;
+    line-height: 1.2;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: .7;
+}
+
+.oc-cal-yr-btn:hover {
+    opacity: 1;
+}
+
+.oc-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    padding: 8px 6px 10px;
+    gap: 1px;
+}
+
+.oc-cal-dow {
+    text-align: center;
+    color: #bbb;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 0 4px;
+}
+
+.oc-cal-day {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    color: #333;
+    transition: background .1s;
+}
+
+.oc-cal-day:hover:not(.oc-cal-other) {
+    background: #eef6fb;
+}
+
+.oc-cal-other {
+    color: #ddd;
+    cursor: default;
+    pointer-events: none;
+}
+
+.oc-cal-sel {
+    background: #2c3e50 !important;
+    color: #fff !important;
+    font-weight: 600;
+}
+
+.oc-cal-sun,
+.oc-cal-sat {
+    color: #4da1c7;
+}
+
+.oc-cal-sel.oc-cal-sun,
+.oc-cal-sel.oc-cal-sat {
+    color: #fff;
+}

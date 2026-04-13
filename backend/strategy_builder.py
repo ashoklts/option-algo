@@ -73,13 +73,15 @@ class Ticker(str, Enum):
 
 
 class OverallSLType(str, Enum):
-    POINTS     = "OverallSLType.Points"
-    PERCENTAGE = "OverallSLType.Percentage"
+    MTM                = "OverallTgtSLType.MTM"
+    PREMIUM_PERCENTAGE = "OverallTgtSLType.PremiumPercentage"
+    PERCENTAGE         = "OverallTgtSLType.PremiumPercentage"
 
 
 class OverallTgtType(str, Enum):
-    POINTS     = "OverallTgtType.Points"
-    PERCENTAGE = "OverallTgtType.Percentage"
+    MTM                = "OverallTgtSLType.MTM"
+    PREMIUM_PERCENTAGE = "OverallTgtSLType.PremiumPercentage"
+    PERCENTAGE         = "OverallTgtSLType.PremiumPercentage"
 
 
 class OverallTrailSLType(str, Enum):
@@ -95,12 +97,12 @@ _DISABLED_OVERALL_OBJECT = {"Type": "None", "Value": {}}  # OverallTrailSL, Lock
 
 
 def overall_sl(sl_type: OverallSLType, value: float) -> dict:
-    """e.g. overall_sl(OverallSLType.PERCENTAGE, 20)"""
+    """e.g. overall_sl(OverallSLType.MTM, 2500)"""
     return {"Type": sl_type.value, "Value": value}
 
 
 def overall_target(tgt_type: OverallTgtType, value: float) -> dict:
-    """e.g. overall_target(OverallTgtType.PERCENTAGE, 15)"""
+    """e.g. overall_target(OverallTgtType.MTM, 5000)"""
     return {"Type": tgt_type.value, "Value": value}
 
 

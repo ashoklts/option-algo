@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- saved from url=(0059)https://algotest.in/portfolio/edit/67f266c9f609fd9d96ce10b4 -->
+<!-- saved from url=(0042)https://algotest.in/forward-test/dashboard -->
 <html class="light" lang="en" style="">
 
 <head>
@@ -8,620 +8,681 @@
         href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&amp;display=swap"
         crossorigin="">
     <link rel="stylesheet" href="./assets/css/style.css   " data-n-g="">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <title>₹ 0 | Forward Testing - AlgoTest - Best Algo Trading, Paper Trading and Backtesting Software in India -
+        AlgoTest</title>
+
     <style>
-        .portfolio-modal-overlay {
-            position: fixed;
-            inset: 0;
-            z-index: 120;
-            display: none;
-            align-items: center;
+        .ff-market-countdown-wrap {
+            display: flex;
             justify-content: center;
-            background: rgba(17, 24, 39, 0.62);
-            padding: 24px;
+            margin: 20px 0 12px;
         }
 
-        .portfolio-modal-overlay.is-open {
-            display: flex;
-        }
-
-        .portfolio-modal {
-            width: min(100%, 752px);
-            max-height: min(90vh, 760px);
-            overflow: hidden;
-            border-radius: 10px;
-            background: #fff;
-            box-shadow: 0 30px 60px rgba(15, 23, 42, 0.24);
-            color: #1f2937;
-        }
-
-        .portfolio-modal-header,
-        .portfolio-modal-footer {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 16px 20px;
-        }
-
-        .portfolio-modal-header {
-            border-bottom: 1px solid #e5e7eb;
-        }
-
-        .portfolio-modal-header h2 {
-            margin: 0;
-            font-size: 1.05rem;
-            font-weight: 700;
-        }
-
-        .portfolio-modal-close {
+        .ff-market-countdown {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            width: 32px;
-            height: 32px;
-            border: 0;
-            background: transparent;
-            color: #6b7280;
-            cursor: pointer;
+            min-width: 300px;
+            min-height: 48px;
+            padding: 12px 24px;
+            border-radius: 6px;
+            background: #f7efe4;
+            color: #1f2937;
+            font-size: 18px;
+            font-weight: 700;
+            line-height: 1;
+            text-align: center;
         }
 
-        .portfolio-modal-body {
-            padding: 16px 20px 12px;
+        .ff-deployed-section {
+            margin: 28px 16px 0;
         }
 
-        .portfolio-modal-field {
-            display: grid;
-            grid-template-columns: 110px minmax(0, 1fr);
-            gap: 12px;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
-        .portfolio-modal-field label {
-            font-size: 0.95rem;
-            color: #4b5563;
-        }
-
-        .portfolio-modal-input,
-        .portfolio-search-input {
-            width: 100%;
-            border: 1px solid #d1d5db;
-            border-radius: 4px;
-            padding: 10px 12px;
-            font-size: 0.95rem;
-            outline: none;
-        }
-
-        .portfolio-modal-input:focus,
-        .portfolio-search-input:focus {
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-        }
-
-        .portfolio-strategy-header {
+        .ff-deployed-header {
             display: flex;
             align-items: center;
-            justify-content: space-between;
             gap: 12px;
-            margin-bottom: 8px;
+            margin-bottom: 18px;
+            color: #1f3347;
         }
 
-        .portfolio-strategy-header p {
-            margin: 0;
-            font-size: 0.95rem;
+        .ff-deployed-title {
+            font-size: 20px;
+            font-weight: 500;
+            line-height: 1.2;
+        }
+
+        .ff-deployed-chevron {
+            width: 22px;
+            height: 22px;
+            color: #31485f;
+            flex: 0 0 auto;
+        }
+
+        .ff-deployed-table {
+            width: 100%;
+        }
+
+        .ff-deployed-columns {
+            display: grid;
+            grid-template-columns: minmax(240px, 1.45fr) minmax(150px, 0.9fr) minmax(120px, 0.8fr) minmax(170px, 1fr) minmax(280px, 1.2fr);
+            gap: 24px;
+            align-items: center;
+            padding: 10px 14px;
+            border-radius: 6px;
+            background: #fafbfc;
+            color: #5b7086;
+            font-size: 12px;
             font-weight: 500;
         }
 
-        .portfolio-add-link {
-            border: 0;
-            background: transparent;
-            color: #8a8f98;
-            font-size: 0.95rem;
-            cursor: pointer;
+        .ff-deployed-row {
+            display: grid;
+            grid-template-columns: minmax(240px, 1.45fr) minmax(150px, 0.9fr) minmax(120px, 0.8fr) minmax(170px, 1fr) minmax(280px, 1.2fr);
+            gap: 24px;
+            align-items: center;
+            margin-top: 16px;
+            padding: 14px 12px;
+            border: 1px solid #dbe4ee;
+            border-radius: 8px;
+            background: #fff;
         }
 
-        .portfolio-tabs {
-            display: flex;
-            gap: 8px;
-            border-bottom: 1px solid #e5e7eb;
-            margin-bottom: 14px;
-            overflow-x: auto;
+        .ff-deployed-name {
+            color: #22384e;
+            font-size: 14px;
+            font-weight: 500;
         }
 
-        .portfolio-tab {
-            border: 0;
-            border-bottom: 2px solid transparent;
-            background: transparent;
-            color: #6b7280;
-            padding: 0 16px 12px;
-            font-size: 0.95rem;
-            cursor: pointer;
+        .ff-deployed-sub {
+            margin-top: 4px;
+            color: #586d81;
+            font-size: 12px;
+        }
+
+        .ff-deployed-status {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2px 6px;
+            border-radius: 2px;
+            border: 1px solid;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1;
+            text-transform: uppercase;
             white-space: nowrap;
         }
 
-        .portfolio-tab.is-active {
-            border-bottom-color: #1d4ed8;
-            color: #1d4ed8;
+        .ff-deployed-status.running {
+            border-color: #8bd5a9;
+            background: #f2fbf5;
+            color: #1c9b47;
         }
 
-        .portfolio-search-wrap {
-            position: relative;
-            margin-bottom: 12px;
+        .ff-deployed-status.paused {
+            border-color: #f1c188;
+            background: #fff7ef;
+            color: #d07a16;
         }
 
-        .portfolio-search-wrap svg {
-            position: absolute;
-            left: 10px;
-            top: 50%;
-            width: 18px;
-            height: 18px;
-            transform: translateY(-50%);
-            color: #6b7280;
-            pointer-events: none;
+        .ff-deployed-status.stopped {
+            border-color: #9e9d9d;
+            background: #fff;
+            color: #9e9d9d;
         }
 
-        .portfolio-search-input {
-            padding-left: 38px;
+        .ff-deployed-mtm {
+            color: #02924b;
+            font-size: 14px;
+            font-weight: 700;
+            white-space: nowrap;
         }
 
-        .portfolio-selection-bar {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 14px;
-            color: #4b5563;
-        }
-
-        .portfolio-checkbox {
-            width: 18px;
-            height: 18px;
-            margin: 0;
-            accent-color: #1d7cf2;
-            cursor: pointer;
-        }
-
-        .portfolio-selection-pill {
+        .ff-deployed-broker {
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            border: 1px solid #1d7cf2;
-            border-radius: 999px;
-            padding: 6px 10px;
-            color: #1d4ed8;
-            font-size: 0.9rem;
-            line-height: 1;
+            color: #22384e;
+            font-size: 14px;
         }
 
-        .portfolio-selection-pill button {
-            border: 0;
-            background: transparent;
-            color: inherit;
-            cursor: pointer;
-            padding: 0;
-            line-height: 1;
-        }
-
-        .portfolio-strategy-list {
-            max-height: 300px;
-            overflow: auto;
-            border: 1px solid #dbe1ea;
-            border-radius: 4px;
-        }
-
-        .portfolio-strategy-row {
-            display: flex;
+        .ff-deployed-broker-badge {
+            display: inline-flex;
             align-items: center;
-            gap: 12px;
-            padding: 14px 14px;
-            border-bottom: 1px solid #edf1f5;
-            cursor: pointer;
-            transition: background 0.15s ease;
-        }
-
-        .portfolio-strategy-row:last-child {
-            border-bottom: 0;
-        }
-
-        .portfolio-strategy-row:hover {
-            background: #f8fbff;
-        }
-
-        .portfolio-strategy-row.is-selected {
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
             background: #eef6ff;
-        }
-
-        .portfolio-strategy-name {
-            flex: 1;
-            font-size: 0.95rem;
-            color: #2f3541;
-        }
-
-        .portfolio-empty-state {
-            padding: 32px 16px;
+            color: #3b82f6;
+            font-size: 8px;
+            font-weight: 700;
+            line-height: 1;
             text-align: center;
-            color: #6b7280;
-            font-size: 0.95rem;
         }
 
-        .portfolio-modal-status {
-            min-height: 24px;
-            margin-bottom: 10px;
-            font-size: 0.9rem;
-        }
-
-        .portfolio-modal-status.is-error {
-            color: #b91c1c;
-        }
-
-        .portfolio-modal-status.is-success {
-            color: #15803d;
-        }
-
-        .portfolio-grid-status {
-            padding: 32px 16px;
-            text-align: center;
-            color: #6b7280;
-            font-size: 0.95rem;
-            background: #fff;
-            border: 1px dashed #d1d5db;
-            border-radius: 8px;
-        }
-
-        .portfolio-view-link {
+        .ff-deployed-actions {
             display: flex;
-            width: 100%;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .ff-deployed-btn {
+            min-width: 128px;
+            height: 30px;
+            padding: 0 14px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            border: 1px solid #d1d5db;
-            border-radius: 4px;
-            background: #fff;
-            padding: 8px 12px;
-            color: #0f4c81 !important;
-            font-size: 12px;
-            font-weight: 500;
-            line-height: 16px;
             text-decoration: none;
+            white-space: nowrap;
         }
 
-        .portfolio-view-link:hover {
-            background: #f8fafc;
+        .ff-deployed-btn-outline {
+            border: 1px solid #174f72;
+            background: #fff;
+            color: #174f72;
         }
 
-        .portfolio-modal-footer {
-            justify-content: center;
-            gap: 20px;
-            border-top: 1px solid #e5e7eb;
-            padding-top: 14px;
-        }
-
-        .portfolio-secondary-btn,
-        .portfolio-primary-btn {
-            min-width: 160px;
-            border-radius: 4px;
-            padding: 10px 18px;
-            font-size: 0.95rem;
-            cursor: pointer;
-        }
-
-        .portfolio-secondary-btn {
-            border: 0;
-            background: transparent;
-            color: #1d4ed8;
-        }
-
-        .portfolio-primary-btn {
-            border: 1px solid #0f4f76;
-            background: #0f4f76;
+        .ff-deployed-btn-solid {
+            border: 1px solid #174f72;
+            background: #174f72;
             color: #fff;
         }
 
-        .portfolio-primary-btn:disabled {
-            cursor: not-allowed;
-            opacity: 0.6;
+        .ff-strategy-table {
+            padding-top: 4px;
         }
 
-        body.portfolio-modal-open {
+        .ff-strategy-table+div {
+            display: none;
+        }
+
+        .ff-strategy-head {
+            display: none;
+        }
+
+        .ff-strategy-row {
+            display: grid;
+            grid-template-columns: minmax(270px, 1.7fr) 1fr 1fr 1.1fr 320px;
+            gap: 24px;
+            align-items: center;
+            margin-bottom: 12px;
+            padding: 12px 16px;
+            border: 1px solid #d8e1ea;
+            border-radius: 4px;
+            background: #fff;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+
+        .ff-strategy-info {
+            min-width: 0;
+        }
+
+        .ff-strategy-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 7px;
+            color: #253b53;
+        }
+
+        .ff-strategy-title-text {
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .ff-edit-icon {
+            width: 18px;
+            height: 18px;
+            color: #1976d2;
+            flex: 0 0 auto;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+
+        .ff-strategy-row:hover .ff-edit-icon {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .ff-strategy-meta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12px;
+            color: #43586e;
+        }
+
+        .ff-status-pill {
+            width: 198px;
+            padding: 5px 12px;
+            border: 1px solid #16a34a;
+            border-radius: 3px;
+            background: #edf9f0;
+            color: #16a34a;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .ff-instance-chip {
+            display: inline-flex;
+            align-items: center;
+            min-width: 104px;
+            padding: 4px 8px;
+            border: 1px solid #edf1f5;
+            border-radius: 2px;
+            background: #fbfcfd;
+            color: #5a6f84;
+            font-size: 12px;
+        }
+
+        .ff-days {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .ff-day {
+            width: 30px;
+            height: 30px;
+            border: 1px solid #d8e1ea;
+            border-radius: 999px;
+            background: #fff;
+            color: #31485f;
+            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .ff-day.th {
+            width: 34px;
+        }
+
+        .ff-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .ff-pagination {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0 12px;
+        }
+
+        .ff-pagination-btn {
+            min-width: 34px;
+            height: 32px;
+            border: 1px solid #d8e1ea;
+            border-radius: 4px;
+            background: #fff;
+            color: #174f72;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .ff-pagination-btn.active {
+            border-color: #174f72;
+            background: #174f72;
+            color: #fff;
+        }
+
+        .ff-pagination-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+        }
+
+        .ff-setup-modal[hidden] {
+            display: none;
+        }
+
+        .ff-setup-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 999999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            overflow: auto;
+        }
+
+        .ff-setup-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.45);
+        }
+
+        .ff-setup-dialog {
+            position: relative;
+            width: 100%;
+            max-width: 320px;
+            border-radius: 8px;
+            background: #fff;
+            box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
             overflow: hidden;
         }
 
-        @media (max-width: 640px) {
-            .portfolio-modal-overlay {
-                padding: 12px;
-                align-items: flex-start;
+        .ff-setup-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            border-bottom: 1px solid #e5ebf2;
+        }
+
+        .ff-setup-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1f3347;
+        }
+
+        .ff-setup-close {
+            border: 0;
+            background: transparent;
+            color: #596d81;
+            font-size: 28px;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .ff-setup-body {
+            padding: 16px;
+            color: #30485f;
+        }
+
+        .ff-setup-text {
+            margin-bottom: 18px;
+            font-size: 14px;
+        }
+
+        .ff-setup-text strong {
+            color: #15283b;
+        }
+
+        .ff-setup-label {
+            display: block;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #6b7f92;
+        }
+
+        .ff-stepper {
+            display: inline-flex;
+            align-items: center;
+            overflow: hidden;
+            border: 1px solid #d9e2ec;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .ff-stepper-btn,
+        .ff-stepper-value {
+            width: 36px;
+            height: 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #fff;
+            color: #22384e;
+            font-size: 18px;
+        }
+
+        .ff-stepper-btn {
+            border: 0;
+            cursor: pointer;
+        }
+
+        .ff-stepper-value {
+            width: 42px;
+            font-size: 14px;
+            font-weight: 600;
+            border-left: 1px solid #d9e2ec;
+            border-right: 1px solid #d9e2ec;
+        }
+
+        .ff-toggle-pills,
+        .ff-day-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .ff-toggle-pill,
+        .ff-day-pill {
+            border: 1px solid #d8e1ea;
+            border-radius: 999px;
+            background: #fff;
+            color: #576c81;
+            font-size: 12px;
+        }
+
+        .ff-toggle-pill {
+            padding: 8px 14px;
+        }
+
+        .ff-toggle-pill.active {
+            border-color: #1681f0;
+            background: #edf5ff;
+            color: #1681f0;
+            font-weight: 600;
+        }
+
+        .ff-inline-link {
+            display: inline-block;
+            margin: 12px 0 20px;
+            color: #174f72;
+            font-size: 12px;
+            text-decoration: underline;
+        }
+
+        .ff-segmented {
+            display: inline-flex;
+            margin-bottom: 12px;
+            border: 1px solid #d8e1ea;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .ff-segment {
+            padding: 7px 14px;
+            border: 0;
+            background: #fff;
+            color: #31485f;
+            font-size: 12px;
+        }
+
+        .ff-segment.active {
+            background: #edf5ff;
+            color: #1681f0;
+            font-weight: 600;
+        }
+
+        .ff-day-pill {
+            width: 30px;
+            height: 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .ff-dte-panel[hidden],
+        .ff-weekday-panel[hidden] {
+            display: none;
+        }
+
+        .ff-dte-select {
+            width: 114px;
+            height: 30px;
+            padding: 0 10px;
+            border: 1px solid #1681f0;
+            border-radius: 4px;
+            background: #fff;
+            color: #22384e;
+            font-size: 12px;
+            outline: none;
+        }
+
+        .ff-dte-list {
+            max-height: 132px;
+            overflow-y: auto;
+            margin-top: 10px;
+            padding-right: 8px;
+        }
+
+        .ff-dte-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #30485f;
+        }
+
+        .ff-dte-item input {
+            width: 18px;
+            height: 18px;
+            accent-color: #1681f0;
+        }
+
+        .ff-setup-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 22px;
+        }
+
+        .ff-setup-cancel {
+            border: 0;
+            background: transparent;
+            color: #22384e;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        @media (min-width: 901px) {
+            .ff-actions {
+                visibility: hidden;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.15s ease;
             }
 
-            .portfolio-modal {
-                max-height: calc(100vh - 24px);
+            .ff-strategy-row:hover .ff-actions {
+                visibility: visible;
+                opacity: 1;
+                pointer-events: auto;
             }
+        }
 
-            .portfolio-modal-field {
+        .ff-btn {
+            min-width: 136px;
+            height: 34px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+        }
+
+        .ff-btn-secondary {
+            border: 1px solid #174f72;
+            background: #fff;
+            color: #174f72;
+        }
+
+        .ff-btn-primary {
+            border: 1px solid #174f72;
+            background: #174f72;
+            color: #fff;
+        }
+
+        @media (min-width: 768px) {
+            .ff-strategy-head {
+                display: grid;
+                grid-template-columns: minmax(270px, 1.7fr) 1fr 1fr 1.1fr 320px;
+                gap: 24px;
+                align-items: center;
+                padding: 0 12px 12px;
+                border-bottom: 1px solid #e4ebf2;
+                color: #586d81;
+                font-size: 12px;
+            }
+        }
+
+        @media (max-width: 1200px) {
+
+            .ff-strategy-row,
+            .ff-strategy-head {
+                grid-template-columns: minmax(240px, 1.5fr) 0.9fr 0.9fr 1fr 280px;
+                gap: 16px;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .ff-strategy-row {
                 grid-template-columns: 1fr;
-                gap: 8px;
+                gap: 14px;
             }
 
-            .portfolio-modal-footer {
-                flex-direction: column-reverse;
+            .ff-status-pill,
+            .ff-instance-chip {
+                width: fit-content;
             }
 
-            .portfolio-secondary-btn,
-            .portfolio-primary-btn {
+            .ff-actions {
+                justify-content: flex-start;
+            }
+
+            .ff-deployed-columns,
+            .ff-deployed-row {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            .ff-deployed-columns {
+                display: none;
+            }
+
+            .ff-deployed-actions {
+                justify-content: flex-start;
+                flex-wrap: wrap;
+            }
+        }
+
+        @media (max-width: 767px) {
+            .ff-market-countdown {
                 width: 100%;
+                min-width: 0;
+                font-size: 16px;
             }
         }
     </style>
-
-
-    <title>Edit Portfolio - AlgoTest - Best Algo Trading, Paper Trading and Backtesting Software in India - AlgoTest
-    </title>
 
 </head>
 
 <body>
     <div id="__next">
         <div class="relative text-primaryBlack-800">
-            <nav
-                class="sticky top-0 z-30 flex h-12 w-full items-center justify-between bg-primaryBlack-750 px-4 text-white shadow-xl dark:bg-[#3A3A3A] print:hidden !bg-Algotest-navBg">
-                <a class="flex items-center gap-1 py-3 text-base font-medium text-white lg:gap-2"
-                    href="https://algotest.in/dashboard"><svg width="24" height="24" viewBox="0 0 24 25" fill="none"
-                        xmlns="http://www.w3.org/2000/svg">
-                        <ellipse cx="11.9516" cy="12.9727" rx="7.85" ry="12" fill="#2E5FDF"></ellipse>
-                        <circle cx="12" cy="12.9727" r="12" fill="#2E5FDF"></circle>
-                        <path
-                            d="M12 0.972656C5.37258 0.972656 0 6.34524 0 12.9727C0 14.5201 0.292894 15.9991 0.826267 17.3573L8.30769 11.3573L13.6154 17.3573L18.8 12.2727L21.7 9.32266L22.4 6.97266C20.5 3.37266 16.3939 0.972656 12 0.972656Z"
-                            fill="#5EC7DE"></path>
-                        <path fill-rule="evenodd" clip-rule="evenodd"
-                            d="M22.8974 8.62141L13.7387 18.0107L8.2678 11.725L1.14371 17.736L0.697266 17.2068L8.34242 10.7563L13.7177 16.9321L22.358 8.1875L22.8974 8.62141Z"
-                            fill="white"></path>
-                        <path
-                            d="M0.687698 15.7412C1.57955 15.7414 2.30272 16.4646 2.30293 17.3564C2.30293 17.9575 1.97353 18.4806 1.48653 18.7588C0.976393 17.8339 0.585925 16.8347 0.333206 15.7812C0.447227 15.7557 0.565981 15.7412 0.687698 15.7412Z"
-                            fill="white"></path>
-                        <path
-                            d="M22.4011 7.00098C22.9274 7.91646 23.3389 8.90617 23.6101 9.95312C23.3667 10.1002 23.0822 10.1865 22.7771 10.1865C21.885 10.1864 21.1619 9.46335 21.1619 8.57129C21.1619 7.80873 21.6905 7.17057 22.4011 7.00098Z"
-                            fill="white"></path>
-                        <circle cx="1.61538" cy="1.61538" r="1.61538" transform="matrix(-1 0 0 1 9.91992 9.74121)"
-                            fill="white"></circle>
-                        <circle cx="1.61538" cy="1.61538" r="1.61538" transform="matrix(-1 0 0 1 15.2285 15.7412)"
-                            fill="white"></circle>
-                    </svg>
-                    <h1 class="tracking-heading">AlgoTest</h1>
-                </a>
-                <div class="hidden items-center gap-5 md:flex">
-                    <nav class="flex items-center gap-1 ">
-                        <div class="hidden text-white lg:flex lg:items-center lg:gap-8 lg:text-base">
-                            <div class="relative" data-headlessui-state=""><button
-                                    class="flex items-center justify-center gap-1 px-2 py-2   hover:bg-primaryBlack-800 focus:outline-none dark:hover:bg-primaryBlack-100"
-                                    type="button" aria-expanded="false" data-headlessui-state=""
-                                    id="headlessui-popover-button-«rdd»">
-                                    <p class="text-sm font-normal tracking-heading">Backtest</p><svg
-                                        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                        stroke="currentColor" class="size-4">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M19 9l-7 7-7-7"></path>
-                                    </svg>
-                                </button></div>
-                            <div hidden=""
-                                style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
-                            </div>
-                        </div>
-                        <div class="hidden text-white lg:flex lg:items-center lg:gap-8 lg:text-base">
-                            <div class="relative" data-headlessui-state=""><button
-                                    class="flex items-center justify-center gap-1 px-2 py-2   hover:bg-primaryBlack-800 focus:outline-none dark:hover:bg-primaryBlack-100"
-                                    type="button" aria-expanded="false" data-headlessui-state=""
-                                    id="headlessui-popover-button-«rdf»">
-                                    <p class="text-sm font-normal tracking-heading">Algo Trade</p><svg
-                                        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                        stroke="currentColor" class="size-4">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M19 9l-7 7-7-7"></path>
-                                    </svg>
-                                </button></div>
-                            <div hidden=""
-                                style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
-                            </div>
-                        </div>
-                        <div class="hidden text-white lg:flex lg:items-center lg:gap-8 lg:text-base">
-                            <div class="relative" data-headlessui-state=""><button
-                                    class="flex items-center justify-center gap-1 px-2 py-2   hover:bg-primaryBlack-800 focus:outline-none dark:hover:bg-primaryBlack-100"
-                                    type="button" aria-expanded="false" data-headlessui-state=""
-                                    id="headlessui-popover-button-«rdh»">
-                                    <p class="text-sm font-normal tracking-heading">Signals</p><svg
-                                        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                        stroke="currentColor" class="size-4">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M19 9l-7 7-7-7"></path>
-                                    </svg>
-                                </button></div>
-                            <div hidden=""
-                                style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
-                            </div>
-                        </div>
-                        <div class="hidden text-white lg:flex lg:items-center lg:gap-8 lg:text-base">
-                            <div class="relative" data-headlessui-state=""><button
-                                    class="flex items-center justify-center gap-1 px-2 py-2   hover:bg-primaryBlack-800 focus:outline-none dark:hover:bg-primaryBlack-100"
-                                    type="button" aria-expanded="false" data-headlessui-state=""
-                                    id="headlessui-popover-button-«rdj»">
-                                    <p class="text-sm font-normal tracking-heading">Marketplace</p><svg
-                                        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                        stroke="currentColor" class="size-4">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M19 9l-7 7-7-7"></path>
-                                    </svg>
-                                </button></div>
-                            <div hidden=""
-                                style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
-                            </div>
-                        </div>
-                        <div class="hidden text-white lg:flex lg:items-center lg:gap-8 lg:text-base">
-                            <div class="relative" data-headlessui-state=""><button
-                                    class="flex items-center justify-center gap-1 px-2 py-2   hover:bg-primaryBlack-800 focus:outline-none dark:hover:bg-primaryBlack-100"
-                                    type="button" aria-expanded="false" data-headlessui-state=""
-                                    id="headlessui-popover-button-«rdl»">
-                                    <p class="text-sm font-normal tracking-heading">ClickTrade</p><svg
-                                        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                        stroke="currentColor" class="size-4">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M19 9l-7 7-7-7"></path>
-                                    </svg>
-                                </button></div>
-                            <div hidden=""
-                                style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
-                            </div>
-                        </div>
-                        <div class="hidden text-white lg:flex lg:items-center lg:gap-8 lg:text-base">
-                            <div class="relative" data-headlessui-state=""><button
-                                    class="flex items-center justify-center gap-1 px-2 py-2   hover:bg-primaryBlack-800 focus:outline-none dark:hover:bg-primaryBlack-100"
-                                    type="button" aria-expanded="false" data-headlessui-state=""
-                                    id="headlessui-popover-button-«rdn»">
-                                    <p class="text-sm font-normal tracking-heading">Webinars</p><svg
-                                        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                        stroke="currentColor" class="size-4">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M19 9l-7 7-7-7"></path>
-                                    </svg>
-                                </button></div>
-                            <div hidden=""
-                                style="position: fixed; top: 1px; left: 1px; width: 1px; height: 0px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; border-width: 0px; display: none;">
-                            </div>
-                        </div>
-                    </nav>
-                </div>
-                <div class="flex items-center gap-2">
-                    <div class="hidden items-center md:flex"><a
-                            class="px-2 py-1 lg:block lg:hover:bg-primaryBlack-800 dark:lg:hover:bg-primaryBlack-100"
-                            href="https://algotest.in/billing"><span class=" text-sm">Pricing</span></a><a
-                            class="px-2 py-1 lg:block lg:hover:bg-primaryBlack-800 dark:lg:hover:bg-primaryBlack-100"
-                            href="https://algotest.in/broker"><span class=" text-sm">Broker Setup</span></a></div>
-                    <div class="relative flex cursor-pointer items-center gap-2">
-                        <div class="mr-4 flex items-center gap-1 border-r border-r-primaryBlack-600 px-4 md:hidden"><svg
-                                xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
-                                stroke="currentColor" class="size-5 text-primaryBlack-600 dark:text-primaryBlack-900">
-                                <path stroke-linecap="round" stroke-linejoin="round"
-                                    d="M21 12a2.25 2.25 0 0 0-2.25-2.25H15a3 3 0 1 1-6 0H5.25A2.25 2.25 0 0 0 3 12m18 0v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 9m18 0V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v3">
-                                </path>
-                            </svg>
-                            <p class="text-xs font-medium">265</p>
-                        </div><button
-                            class="bg-primaryBlack-25 flex items-center gap-2.5 rounded-full border border-primaryBlack-350 p-0.5 hover:bg-primaryBlack-800 dark:border-primaryBlack-500 dark:hover:bg-primaryBlack-200 pr-2.5">
-                            <div
-                                class="relative flex items-center justify-center overflow-hidden rounded bg-branding-500 text-3xl text-branding-500 !size-7 !rounded-full !bg-branding-500 !text-sm text-primaryBlack-0">
-                                <span class="p-1  font-medium uppercase ">As</span>
-                            </div>
-                            <div class="gap- hidden items-center md:flex">
-                                <p class="text-xs text-primaryBlack-200 dark:text-primaryBlack-900">Credits:</p>
-                                <p class="text-xs font-medium">265</p>
-                            </div>
-                            <div class="md:hidden"><svg xmlns="http://www.w3.org/2000/svg" fill="none"
-                                    viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"
-                                    data-slot="icon" class="size-5 text-primaryBlack-200 dark:text-primaryBlack-900">
-                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                        d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path>
-                                </svg></div>
-                        </button>
-                        <div
-                            class=" absolute -right-4 -top-2 h-[100vh] w-[90vw] transform shadow-2xl transition-all duration-300 md:right-0 md:top-full md:h-auto md:w-60 invisible hidden opacity-0">
-                            <div
-                                class="dropdown-shadow absolute flex h-full w-full flex-col overflow-auto rounded-md bg-primaryBlack-250 pt-2 shadow-md dark:bg-primaryBlack-350 md:h-auto md:max-h-navDropHeight md:bg-primaryBlack-0">
-                                <div
-                                    class="flex w-full items-center gap-2 border-b px-6 pb-4 pt-2 md:border-none md:hover:bg-primaryBlack-200">
-                                    <a class="flex cursor-pointer items-center gap-2"
-                                        href="https://algotest.in/profile">
-                                        <div class="size-7">
-                                            <div
-                                                class="relative flex items-center justify-center overflow-hidden rounded bg-branding-500 text-3xl text-branding-500 !bg-branding-900 !size-7 !rounded-full !text-sm !text-white">
-                                                <span class="p-1  font-medium uppercase ">As</span>
-                                            </div>
-                                        </div>
-                                        <p class="whitespace-nowrap text-base font-medium text-primaryBlack-750">
-                                            <div class="group relative" data-testid="special-text-tooltip">Ashok Kumar A
-                                            </div>
-                                        </p>
-                                    </a>
-                                    <div class="ml-auto w-10"><svg xmlns="http://www.w3.org/2000/svg" fill="none"
-                                            viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
-                                            class="ml-auto size-4 text-primaryBlack-700 md:hidden">
-                                            <path stroke-linecap="round" stroke-linejoin="round"
-                                                d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg></div>
-                                </div>
-                                <div class="flex items-center justify-between gap-16  px-6  pb-4 text-primaryBlack-700">
-                                    <p class="text-xs">Theme</p>
-                                    <div class="flex items-center justify-center">
-                                        <div class="relative h-7 w-24">
-                                            <div
-                                                class="absolute inset-0 rounded-full border border-primaryBlack-500 bg-white">
-                                                <div
-                                                    class="relative z-5 flex h-full w-full items-center justify-center gap-7 px-2">
-                                                    <button
-                                                        class="absolute inset-0 flex items-center focus:outline-none"
-                                                        aria-label="Toggle theme">
-                                                        <div
-                                                            class="mx-1 h-5 w-10 rounded-full transition-all duration-300  mr-auto border border-amber-700 bg-yellow-700/10">
-                                                        </div>
-                                                    </button>
-                                                    <div class="flex size-5 items-center justify-center text-amber-700">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none"
-                                                            viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
-                                                            aria-hidden="true" data-slot="icon" class="size-4">
-                                                            <path stroke-linecap="round" stroke-linejoin="round"
-                                                                d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z">
-                                                            </path>
-                                                        </svg>
-                                                    </div>
-                                                    <div
-                                                        class="flex size-5 items-center justify-center text-primaryBlack-500">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none"
-                                                            viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
-                                                            aria-hidden="true" data-slot="icon" class="size-4">
-                                                            <path stroke-linecap="round" stroke-linejoin="round"
-                                                                d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z">
-                                                            </path>
-                                                        </svg>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="flex flex-col border-t"><a target="" rel=""
-                                        class="rounded p-3 px-6 text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:hover:bg-primaryBlack-0"
-                                        href="https://algotest.in/onboarding"><span class="">Take Product
-                                            Tour</span></a><a target="" rel=""
-                                        class="rounded p-3 px-6 text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:hover:bg-primaryBlack-0"
-                                        href="https://algotest.in/profile"><span class="">Customer Support</span></a><a
-                                        target="_blank" rel="noreferrer"
-                                        class="rounded p-3 px-6 text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:hover:bg-primaryBlack-0"
-                                        href="https://algotest.in/forum"><span class="">Community</span></a><a
-                                        target="_blank" rel="noreferrer"
-                                        class="rounded p-3 px-6 text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:hover:bg-primaryBlack-0"
-                                        href="https://docs.algotest.in/"><span class="">Docs</span></a><a
-                                        target="_blank" rel="noreferrer"
-                                        class="rounded p-3 px-6 text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:hover:bg-primaryBlack-0"
-                                        href="https://algotest.in/blog"><span class="">Blog</span></a><a target="_blank"
-                                        rel="noreferrer"
-                                        class="rounded p-3 px-6 text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:hover:bg-primaryBlack-0"
-                                        href="https://algotest.in/chart"><span class="">Charts</span></a><a
-                                        target="_blank" rel="noreferrer"
-                                        class="rounded p-3 px-6 text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:hover:bg-primaryBlack-0"
-                                        href="https://algotest.in/margin-calculator"><span class="">Margin
-                                            Calculator</span></a><a target="_blank" rel="noreferrer"
-                                        class="rounded p-3 px-6 text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:hover:bg-primaryBlack-0"
-                                        href="https://algotest.in/courses"><span class="">Courses</span></a></div>
-                                <div class="flex flex-col border-t"></div><button
-                                    class="flex items-center justify-between gap-2 border-t  bg-primaryBlack-0  p-3 px-6  text-sm text-primaryBlack-750 hover:bg-primaryBlack-200 dark:bg-primaryBlack-400">Logout
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                        stroke-width="1.5" stroke="currentColor" class="size-4">
-                                        <path stroke-linecap="round" stroke-linejoin="round"
-                                            d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75">
-                                        </path>
-                                    </svg></button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </nav>
+            <div id="algo-common-header"></div>
+            <script src="./common-header.js"></script>
+            <script>window.renderAlgoCommonHeader && window.renderAlgoCommonHeader();</script>
             <div class="relative bg-primaryBlack-100">
                 <div
                     class="no-scrollbar group fixed top-12 z-30  flex h-verticalBarHeight flex-col items-center gap-4 rounded border border-primaryBlack-400 bg-white py-4 text-primaryBlack-750 dark:bg-primaryBlack-0  ">
@@ -980,6 +1041,83 @@
                                     <div class="flex gap-2 *:!flex-1"></div>
                                 </div>
                             </div>
+                            <div class="ff-market-countdown-wrap">
+                                <div id="ff-market-countdown" class="ff-market-countdown">
+                                    0h 00m 00s till market opens
+                                </div>
+                            </div>
+                            <div class="ff-deployed-section">
+                                <div class="ff-deployed-header">
+                                    <span class="ff-deployed-title">Deployed Portfolios</span>
+                                    <svg class="ff-deployed-chevron" xmlns="http://www.w3.org/2000/svg" fill="none"
+                                        viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path>
+                                    </svg>
+                                </div>
+                                <div class="ff-deployed-table">
+                                    <div class="ff-deployed-columns">
+                                        <span>Name</span>
+                                        <span>Status</span>
+                                        <span>MTM</span>
+                                        <span>Broker</span>
+                                        <span>Actions</span>
+                                    </div>
+                                    <div class="ff-deployed-row">
+                                        <div>
+                                            <div class="ff-deployed-name">chan Sensex stra (1)</div>
+                                            <div class="ff-deployed-sub">Open Pos: 0</div>
+                                        </div>
+                                        <div><span class="ff-deployed-status running">RUNNING 2/2</span></div>
+                                        <div class="ff-deployed-mtm">₹ 0</div>
+                                        <div class="ff-deployed-broker">
+                                            <span class="ff-deployed-broker-badge">FT</span>
+                                            <span>Forward Test</span>
+                                        </div>
+                                        <div class="ff-deployed-actions">
+                                            <button type="button" class="ff-deployed-btn ff-deployed-btn-outline">Cancel
+                                                Deployment</button>
+                                            <button type="button"
+                                                class="ff-deployed-btn ff-deployed-btn-solid">Open</button>
+                                        </div>
+                                    </div>
+                                    <div class="ff-deployed-row">
+                                        <div>
+                                            <div class="ff-deployed-name">Chan stra (1)</div>
+                                            <div class="ff-deployed-sub">Open Pos: 0</div>
+                                        </div>
+                                        <div><span class="ff-deployed-status paused">PAUSED 1/1</span></div>
+                                        <div class="ff-deployed-mtm">₹ 0</div>
+                                        <div class="ff-deployed-broker">
+                                            <span class="ff-deployed-broker-badge">FT</span>
+                                            <span>Forward Test</span>
+                                        </div>
+                                        <div class="ff-deployed-actions">
+                                            <button type="button" class="ff-deployed-btn ff-deployed-btn-outline">Cancel
+                                                Deployment</button>
+                                            <button type="button"
+                                                class="ff-deployed-btn ff-deployed-btn-solid">Open</button>
+                                        </div>
+                                    </div>
+                                    <div class="ff-deployed-row">
+                                        <div>
+                                            <div class="ff-deployed-name">Chan stra (1)</div>
+                                            <div class="ff-deployed-sub">Open Pos: 0</div>
+                                        </div>
+                                        <div><span class="ff-deployed-status stopped">STOPPED 1/1</span></div>
+                                        <div class="ff-deployed-mtm">₹ 0</div>
+                                        <div class="ff-deployed-broker">
+                                            <span class="ff-deployed-broker-badge">FT</span>
+                                            <span>Forward Test</span>
+                                        </div>
+                                        <div class="ff-deployed-actions">
+                                            <button type="button"
+                                                class="ff-deployed-btn ff-deployed-btn-outline">Archive</button>
+                                            <button type="button"
+                                                class="ff-deployed-btn ff-deployed-btn-solid">Open</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                             <div class="mt-4 flex items-center gap-6 whitespace-nowrap text-sm">
                                 <hr class="w-full">
                                 <p class="">No strategies found</p>
@@ -1000,14 +1138,16 @@
                                             class="flex w-full  !p-0.5 !no-scrollbar !w-full !overflow-x-scroll md:!w-fit md:!overscroll-x-none rounded border border-primaryBlack-400  ">
                                             <label for="toggle--input__0_01KMZNRCDQDT3C871N02RMYY4Z"
                                                 class="cursor-pointer whitespace-nowrap bg-primaryBlack-0 px-4 py-2 text-center text-xs text-primaryBlack-800 dark:bg-primaryBlack-200   md:text-xs/4 md:w-fit  !rounded !py-1 !pt-2 !text-sm md:!w-max  md:!pt-1 !bg-secondaryBlue-50 !font-bold !text-secondaryBlue-500  rounded-l w-full"
-                                                data-testid="Strategies-button"><input hidden=""
-                                                    id="toggle--input__0_01KMZNRCDQDT3C871N02RMYY4Z" class="hidden"
-                                                    type="radio" value="Strategies" checked="">Strategies</label><label
+                                                data-ff-tab="strategies" data-testid="Strategies-button"><input
+                                                    hidden="" id="toggle--input__0_01KMZNRCDQDT3C871N02RMYY4Z"
+                                                    class="hidden" type="radio" value="Strategies"
+                                                    checked="">Strategies</label><label
                                                 for="toggle--input__1_01KMZNRCDQDT3C871N02RMYY4Z"
                                                 class="cursor-pointer whitespace-nowrap bg-primaryBlack-0 px-4 py-2 text-center text-xs text-primaryBlack-800 dark:bg-primaryBlack-200   md:text-xs/4 md:w-fit  !rounded !py-1 !pt-2 !text-sm md:!w-max  md:!pt-1 w-full"
-                                                data-testid="Portfolios-button"><input hidden=""
-                                                    id="toggle--input__1_01KMZNRCDQDT3C871N02RMYY4Z" class="hidden"
-                                                    type="radio" value="Portfolios">Portfolios</label><label
+                                                data-ff-tab="portfolios" data-testid="Portfolios-button"><input
+                                                    hidden="" id="toggle--input__1_01KMZNRCDQDT3C871N02RMYY4Z"
+                                                    class="hidden" type="radio"
+                                                    value="Portfolios">Portfolios</label><label
                                                 for="toggle--input__2_01KMZNRCDQDT3C871N02RMYY4Z"
                                                 class="cursor-pointer whitespace-nowrap bg-primaryBlack-0 px-4 py-2 text-center text-xs text-primaryBlack-800 dark:bg-primaryBlack-200   md:text-xs/4 md:w-fit  !rounded !py-1 !pt-2 !text-sm md:!w-max  md:!pt-1 w-full"
                                                 data-testid="RA Algos-button"><input hidden=""
@@ -1029,7 +1169,7 @@
                                                         d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z">
                                                     </path>
                                                 </svg></div>
-                                            <div class="flex w-full flex-col gap-2"><input
+                                            <div class="flex w-full flex-col gap-2"><input id="ff-list-search"
                                                     placeholder="Search Strategies"
                                                     class="rounded border border-primaryBlack-350 px-2 py-1 text-xs font-medium text-primaryBlack-700 placeholder:font-medium placeholder:text-primaryBlack-700 dark:border-primaryBlack-550 dark:bg-primaryBlack-0 py-2 pl-7 dark:bg-primaryBlack-200"
                                                     title="" type="text" value="" name="search_Search Strategies"></div>
@@ -1123,7 +1263,399 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div>
+                                <div class="ff-strategy-table">
+                                    <div class="ff-strategy-head">
+                                        <span id="ff-strategy-count">Strategy (0)</span>
+                                        <span>Status</span>
+                                        <span>Instances</span>
+                                        <span>Execution On</span>
+                                        <span></span>
+                                    </div>
+                                    <div id="ff-strategy-rows"></div>
+                                    <div id="ff-strategy-pagination" class="ff-pagination"></div>
+                                </div>
+                                <div id="ff-setup-modal" class="ff-setup-modal" hidden>
+                                    <div class="ff-setup-backdrop" data-close-setup></div>
+                                    <div class="ff-setup-dialog" role="dialog" aria-modal="true"
+                                        aria-labelledby="ff-setup-modal-title">
+                                        <div class="ff-setup-header">
+                                            <div id="ff-setup-modal-title" class="ff-setup-title">Edit Setup</div>
+                                            <button type="button" class="ff-setup-close" data-close-setup
+                                                aria-label="Close popup">&times;</button>
+                                        </div>
+                                        <div class="ff-setup-body">
+                                            <div class="ff-setup-text">Setup for <strong
+                                                    id="ff-setup-strategy-name">Strategy</strong></div>
+                                            <label class="ff-setup-label">Quantity Multiplier</label>
+                                            <div class="ff-stepper">
+                                                <button type="button" class="ff-stepper-btn">-</button>
+                                                <span class="ff-stepper-value">1</span>
+                                                <button type="button" class="ff-stepper-btn">+</button>
+                                            </div>
+                                            <label class="ff-setup-label">Trade monitoring</label>
+                                            <div class="ff-toggle-pills">
+                                                <button type="button" class="ff-toggle-pill">on Mid Candle</button>
+                                                <button type="button" class="ff-toggle-pill active">on Candle
+                                                    Close</button>
+                                            </div>
+                                            <a href="#" class="ff-inline-link">Know more</a>
+                                            <label class="ff-setup-label">Execution Days</label>
+                                            <div class="ff-segmented">
+                                                <button type="button" class="ff-segment active"
+                                                    data-execution-mode="weekdays">Weekdays</button>
+                                                <button type="button" class="ff-segment"
+                                                    data-execution-mode="dte">DTE</button>
+                                            </div>
+                                            <div id="ff-weekday-panel" class="ff-weekday-panel">
+                                                <div class="ff-day-pills">
+                                                    <span class="ff-day-pill">M</span>
+                                                    <span class="ff-day-pill">T</span>
+                                                    <span class="ff-day-pill">W</span>
+                                                    <span class="ff-day-pill">Th</span>
+                                                    <span class="ff-day-pill">F</span>
+                                                    <span class="ff-day-pill">Sa</span>
+                                                    <span class="ff-day-pill">Su</span>
+                                                </div>
+                                            </div>
+                                            <div id="ff-dte-panel" class="ff-dte-panel" hidden>
+                                                <select class="ff-dte-select">
+                                                    <option>Select DTE</option>
+                                                    <option>1 DTE</option>
+                                                    <option>2 DTE</option>
+                                                    <option>3 DTE</option>
+                                                    <option>4 DTE</option>
+                                                    <option>5 DTE</option>
+                                                    <option>6 DTE</option>
+                                                </select>
+                                                <div class="ff-dte-list">
+                                                    <label class="ff-dte-item"><input id="ff-dte-select-all"
+                                                            type="checkbox"> <span>Select All</span></label>
+                                                    <label class="ff-dte-item"><input class="ff-dte-option"
+                                                            type="checkbox" value="1"> <span>1 DTE</span></label>
+                                                    <label class="ff-dte-item"><input class="ff-dte-option"
+                                                            type="checkbox" value="2"> <span>2 DTE</span></label>
+                                                    <label class="ff-dte-item"><input class="ff-dte-option"
+                                                            type="checkbox" value="3"> <span>3 DTE</span></label>
+                                                    <label class="ff-dte-item"><input class="ff-dte-option"
+                                                            type="checkbox" value="4"> <span>4 DTE</span></label>
+                                                    <label class="ff-dte-item"><input class="ff-dte-option"
+                                                            type="checkbox" value="5"> <span>5 DTE</span></label>
+                                                    <label class="ff-dte-item"><input class="ff-dte-option"
+                                                            type="checkbox" value="6"> <span>6 DTE</span></label>
+                                                </div>
+                                            </div>
+                                            <div class="ff-setup-footer">
+                                                <button type="button" class="ff-setup-cancel"
+                                                    data-close-setup>Cancel</button>
+                                                <button type="button" class="ff-btn ff-btn-primary">Edit Setup</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <script>
+                                    (function () {
+                                        var table = document.querySelector('.ff-strategy-table');
+                                        var rowsHost = document.getElementById('ff-strategy-rows');
+                                        var countLabel = document.getElementById('ff-strategy-count');
+                                        var paginationHost = document.getElementById('ff-strategy-pagination');
+                                        var searchInput = document.getElementById('ff-list-search');
+                                        var marketCountdownEl = document.getElementById('ff-market-countdown');
+                                        var tabButtons = Array.prototype.slice.call(document.querySelectorAll('[data-ff-tab]'));
+                                        var setupModal = document.getElementById('ff-setup-modal');
+                                        var setupStrategyName = document.getElementById('ff-setup-strategy-name');
+                                        var weekdayPanel = document.getElementById('ff-weekday-panel');
+                                        var dtePanel = document.getElementById('ff-dte-panel');
+                                        var dteSelectAll = document.getElementById('ff-dte-select-all');
+                                        var marketCountdownEndTime = '09:15';
+                                        var perPage = 20;
+                                        var currentPage = 1;
+
+                                        function updateMarketCountdown() {
+                                            if (!marketCountdownEl) {
+                                                return;
+                                            }
+
+                                            var now = new Date();
+                                            var timeParts = String(marketCountdownEndTime || '09:15').split(':');
+                                            var targetHour = parseInt(timeParts[0] || '9', 10);
+                                            var targetMinute = parseInt(timeParts[1] || '15', 10);
+                                            var target = new Date(now);
+                                            target.setHours(targetHour, targetMinute, 0, 0);
+
+                                            var diffMs = target.getTime() - now.getTime();
+                                            if (diffMs <= 0) {
+                                                marketCountdownEl.textContent = 'Market is open';
+                                                return;
+                                            }
+
+                                            var totalSeconds = Math.floor(diffMs / 1000);
+                                            var hours = Math.floor(totalSeconds / 3600);
+                                            var minutes = Math.floor((totalSeconds % 3600) / 60);
+                                            var seconds = totalSeconds % 60;
+
+                                            marketCountdownEl.textContent = hours + 'h '
+                                                + String(minutes).padStart(2, '0') + 'm '
+                                                + String(seconds).padStart(2, '0') + 's till market opens';
+                                        }
+
+                                        updateMarketCountdown();
+                                        window.setInterval(updateMarketCountdown, 1000);
+                                        var activeTab = 'strategies';
+                                        var allItems = [];
+                                        if (!table || !rowsHost || !countLabel || !paginationHost || !searchInput || !tabButtons.length || !setupModal || !setupStrategyName || !weekdayPanel || !dtePanel || !dteSelectAll) {
+                                            return;
+                                        }
+
+                                        var dteOptions = Array.prototype.slice.call(setupModal.querySelectorAll('.ff-dte-option'));
+
+                                        document.body.appendChild(setupModal);
+
+                                        function escapeHtml(value) {
+                                            return String(value == null ? '' : value)
+                                                .replace(/&/g, '&amp;')
+                                                .replace(/</g, '&lt;')
+                                                .replace(/>/g, '&gt;')
+                                                .replace(/"/g, '&quot;')
+                                                .replace(/'/g, '&#39;');
+                                        }
+
+                                        function inferUnderlying(name) {
+                                            var upper = String(name || '').toUpperCase();
+                                            if (upper.indexOf('SENSEX') !== -1 || upper.indexOf('SNX') !== -1) {
+                                                return 'SENSEX';
+                                            }
+                                            if (upper.indexOf('BANKNIFTY') !== -1 || upper.indexOf('BANKNIFT') !== -1) {
+                                                return 'BANKNIFTY';
+                                            }
+                                            if (upper.indexOf('FINNIFTY') !== -1 || upper.indexOf('FIN') !== -1) {
+                                                return 'FINNIFTY';
+                                            }
+                                            if (upper.indexOf('MIDCP') !== -1) {
+                                                return 'MIDCPNIFTY';
+                                            }
+                                            if (upper.indexOf('BANKEX') !== -1) {
+                                                return 'BANKEX';
+                                            }
+                                            return 'NIFTY';
+                                        }
+
+                                        function setActiveTabUi() {
+                                            tabButtons.forEach(function (button) {
+                                                var isActive = button.getAttribute('data-ff-tab') === activeTab;
+                                                button.classList.toggle('!bg-secondaryBlue-50', isActive);
+                                                button.classList.toggle('!font-bold', isActive);
+                                                button.classList.toggle('!text-secondaryBlue-500', isActive);
+                                            });
+                                            searchInput.placeholder = activeTab === 'portfolios' ? 'Search Portfolios' : 'Search Strategies';
+                                        }
+
+                                        function renderPagination(totalItems) {
+                                            var totalPages = Math.ceil(totalItems / perPage);
+                                            if (totalPages <= 1) {
+                                                paginationHost.innerHTML = '';
+                                                return;
+                                            }
+
+                                            var items = [];
+                                            items.push('<button class="ff-pagination-btn" data-page="' + (currentPage - 1) + '"' + (currentPage === 1 ? ' disabled' : '') + '>Prev</button>');
+                                            for (var page = 1; page <= totalPages; page += 1) {
+                                                items.push('<button class="ff-pagination-btn' + (page === currentPage ? ' active' : '') + '" data-page="' + page + '">' + page + '</button>');
+                                            }
+                                            items.push('<button class="ff-pagination-btn" data-page="' + (currentPage + 1) + '"' + (currentPage === totalPages ? ' disabled' : '') + '>Next</button>');
+                                            paginationHost.innerHTML = items.join('');
+                                        }
+
+                                        function renderRows() {
+                                            var itemLabel = activeTab === 'portfolios' ? 'Portfolio' : 'Strategy';
+                                            countLabel.textContent = itemLabel + ' (' + allItems.length + ')';
+
+                                            if (!allItems.length) {
+                                                rowsHost.innerHTML = '<div class="ff-strategy-row"><div class="ff-strategy-info"><div class="ff-strategy-title"><span class="ff-strategy-title-text">No saved ' + itemLabel.toLowerCase() + 's found</span></div></div><div></div><div></div><div></div><div></div></div>';
+                                                paginationHost.innerHTML = '';
+                                                return;
+                                            }
+
+                                            var start = (currentPage - 1) * perPage;
+                                            var visibleItems = allItems.slice(start, start + perPage);
+
+                                            rowsHost.innerHTML = visibleItems.map(function (item) {
+                                                var itemName = escapeHtml(item.name || 'Untitled ' + itemLabel);
+                                                var metaPrimary = activeTab === 'portfolios'
+                                                    ? 'PORTFOLIO'
+                                                    : escapeHtml(item.underlying || inferUnderlying(item.name));
+                                                var metaSecondary = activeTab === 'portfolios'
+                                                    ? ((item.strategy_ids && item.strategy_ids.length) ? item.strategy_ids.length + ' Strategies' : '0 Strategies')
+                                                    : 'INTRADAY';
+                                                return '' +
+                                                    '<div class="ff-strategy-row">' +
+                                                    '    <div class="ff-strategy-info">' +
+                                                    '        <div class="ff-strategy-title">' +
+                                                    '            <span class="ff-strategy-title-text">' + itemName + '</span>' +
+                                                    '            <svg class="ff-edit-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" data-edit-icon="' + (activeTab === 'portfolios' ? 'portfolio' : 'strategy') + '" data-item-id="' + encodeURIComponent(item._id || '') + '">' +
+                                                    '                <path d="M16.862 3.487 20.513 7.138M9 20H5v-4L16.044 4.956a2.25 2.25 0 1 1 3.182 3.182L9 20Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path>' +
+                                                    '            </svg>' +
+                                                    '        </div>' +
+                                                    '        <div class="ff-strategy-meta">' +
+                                                    '            <span>' + metaPrimary + '</span>' +
+                                                    '            <span>&bull;</span>' +
+                                                    '            <span>' + escapeHtml(metaSecondary) + '</span>' +
+                                                    '        </div>' +
+                                                    '    </div>' +
+                                                    '    <div><div class="ff-status-pill">Ready to deploy</div></div>' +
+                                                    '    <div><div class="ff-instance-chip">0 Deployed</div></div>' +
+                                                    '    <div class="ff-days">' +
+                                                    '        <span class="ff-day">M</span>' +
+                                                    '        <span class="ff-day">T</span>' +
+                                                    '        <span class="ff-day">W</span>' +
+                                                    '        <span class="ff-day th">TH</span>' +
+                                                    '        <span class="ff-day">F</span>' +
+                                                    '        <span class="ff-day">-</span>' +
+                                                    '        <span class="ff-day">-</span>' +
+                                                    '    </div>' +
+                                                    '    <div class="ff-actions">' +
+                                                    '        <a class="ff-btn ff-btn-secondary" href="#" data-edit-setup="true" data-strategy-name="' + itemName + '" data-strategy-id="' + encodeURIComponent(item._id || '') + '">Edit Setup</a>' +
+                                                    '        <button class="ff-btn ff-btn-primary" data-activate-item="' + (activeTab === 'portfolios' ? 'portfolio' : 'strategy') + '" data-item-id="' + encodeURIComponent(item._id || '') + '">Activate</button>' +
+                                                    '    </div>' +
+                                                    '</div>';
+                                            }).join('');
+
+                                            renderPagination(allItems.length);
+                                        }
+
+                                        function renderError(message) {
+                                            countLabel.textContent = (activeTab === 'portfolios' ? 'Portfolio' : 'Strategy') + ' (0)';
+                                            rowsHost.innerHTML = '<div class="ff-strategy-row"><div class="ff-strategy-info"><div class="ff-strategy-title"><span class="ff-strategy-title-text">' + escapeHtml(message) + '</span></div></div><div></div><div></div><div></div><div></div></div>';
+                                            paginationHost.innerHTML = '';
+                                        }
+
+                                        function openSetupModal(strategyName) {
+                                            setupStrategyName.textContent = strategyName || 'Strategy';
+                                            weekdayPanel.hidden = false;
+                                            dtePanel.hidden = true;
+                                            setupModal.querySelectorAll('[data-execution-mode]').forEach(function (button) {
+                                                button.classList.toggle('active', button.getAttribute('data-execution-mode') === 'weekdays');
+                                            });
+                                            setupModal.hidden = false;
+                                            document.body.style.overflow = 'hidden';
+                                            document.documentElement.style.overflow = 'hidden';
+                                        }
+
+                                        function closeSetupModal() {
+                                            setupModal.hidden = true;
+                                            document.body.style.overflow = '';
+                                            document.documentElement.style.overflow = '';
+                                        }
+
+                                        paginationHost.addEventListener('click', function (event) {
+                                            var button = event.target.closest('[data-page]');
+                                            if (!button || button.disabled) {
+                                                return;
+                                            }
+                                            currentPage = Number(button.getAttribute('data-page')) || 1;
+                                            renderRows();
+                                        });
+
+                                        rowsHost.addEventListener('click', function (event) {
+                                            var editIcon = event.target.closest('[data-edit-icon="portfolio"]');
+                                            if (editIcon) {
+                                                var portfolioId = editIcon.getAttribute('data-item-id');
+                                                if (portfolioId) {
+                                                    window.open('file:///home/ashok-innoppl/Documents/option-algo/portfolio.html?strategy_id=' + portfolioId, '_blank');
+                                                }
+                                                return;
+                                            }
+                                            var activateButton = event.target.closest('[data-activate-item="portfolio"]');
+                                            if (activateButton) {
+                                                var activationPortfolioId = activateButton.getAttribute('data-item-id');
+                                                if (activationPortfolioId) {
+                                                    window.location.href = 'file:///home/ashok-innoppl/Documents/option-algo/portfolio-activation.html?strategy_id=' + activationPortfolioId;
+                                                }
+                                                return;
+                                            }
+                                            var setupButton = event.target.closest('[data-edit-setup]');
+                                            if (!setupButton) {
+                                                return;
+                                            }
+                                            event.preventDefault();
+                                            openSetupModal(setupButton.getAttribute('data-strategy-name'));
+                                        });
+
+                                        setupModal.addEventListener('click', function (event) {
+                                            var modeButton = event.target.closest('[data-execution-mode]');
+                                            if (modeButton) {
+                                                var mode = modeButton.getAttribute('data-execution-mode');
+                                                weekdayPanel.hidden = mode !== 'weekdays';
+                                                dtePanel.hidden = mode !== 'dte';
+                                                setupModal.querySelectorAll('[data-execution-mode]').forEach(function (button) {
+                                                    button.classList.toggle('active', button === modeButton);
+                                                });
+                                                return;
+                                            }
+                                            if (event.target.closest('[data-close-setup]')) {
+                                                closeSetupModal();
+                                            }
+                                        });
+
+                                        document.addEventListener('keydown', function (event) {
+                                            if (event.key === 'Escape' && !setupModal.hidden) {
+                                                closeSetupModal();
+                                            }
+                                        });
+
+                                        dteSelectAll.addEventListener('change', function () {
+                                            dteOptions.forEach(function (option) {
+                                                option.checked = dteSelectAll.checked;
+                                            });
+                                        });
+
+                                        dteOptions.forEach(function (option) {
+                                            option.addEventListener('change', function () {
+                                                dteSelectAll.checked = dteOptions.every(function (item) {
+                                                    return item.checked;
+                                                });
+                                            });
+                                        });
+
+                                        function fetchActiveTabData() {
+                                            var url = activeTab === 'portfolios'
+                                                ? 'http://127.0.0.1:8000/algo/portfolio/list'
+                                                : 'http://127.0.0.1:8000/algo/strategy/list';
+                                            fetch(url)
+                                                .then(function (response) {
+                                                    if (!response.ok) {
+                                                        throw new Error('Failed to load items');
+                                                    }
+                                                    return response.json();
+                                                })
+                                                .then(function (data) {
+                                                    allItems = activeTab === 'portfolios'
+                                                        ? (Array.isArray(data && data.portfolios) ? data.portfolios : [])
+                                                        : (Array.isArray(data && data.strategies) ? data.strategies : []);
+                                                    currentPage = 1;
+                                                    renderRows();
+                                                })
+                                                .catch(function () {
+                                                    renderError('Unable to load saved ' + (activeTab === 'portfolios' ? 'portfolios' : 'strategies'));
+                                                });
+                                        }
+
+                                        tabButtons.forEach(function (button) {
+                                            button.addEventListener('click', function () {
+                                                var nextTab = button.getAttribute('data-ff-tab');
+                                                if (!nextTab || nextTab === activeTab) {
+                                                    return;
+                                                }
+                                                activeTab = nextTab;
+                                                setActiveTabUi();
+                                                fetchActiveTabData();
+                                            });
+                                        });
+
+                                        setActiveTabUi();
+                                        fetchActiveTabData();
+                                    })();
+                                </script>
+                                <div style="display:none;">
                                     <div
                                         class="top-12 z-10 hidden grid-cols-8 items-center border-y border-primaryBlack-350 bg-primaryBlack-100 p-2 text-center text-xs font-normal leading-4 text-primaryBlack-700  md:sticky md:grid ">
                                         <span class="col-span-2 text-left">Strategy (624)</span><span

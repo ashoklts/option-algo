@@ -19,8 +19,15 @@ http://localhost:8000/algo/backtest/status/bd26c779
 
 cd /home/ashok-innoppl/Documents/option-algo/backend
 uvicorn api:app --reload --port 8000
+uvicorn api:app --reload --port 8000
 
 FOR CACHE DATA
 
 cd /home/ashok-innoppl/Documents/option-algo/backend
-python3 warm_cache.py --underlying NIFTY --start 2026-01-01 --end 2026-12-31
+python3 warm_cache.py --underlying NIFTY --start 2025-01-01 --end 2026-12-31
+
+
+python3 /home/ashok-innoppl/Documents/option_simulator/option-chain-update.py --date 2025-11-03
+
+
+python3 /home/ashok-innoppl/Documents/option_simulator/option-chain-update-monthly.py --month 2025-11

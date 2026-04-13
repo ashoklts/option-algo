@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Strategy Event History</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --card-border: #e3e8f0;
+    --text: #1a1d2e;
+    --muted: #7b85a3;
+    --accent: #3b5bdb;
+    --accent-light: #e8edff;
+    --green: #2f9e44;
+    --green-bg: #ebfbee;
+    --red: #e03131;
+    --red-bg: #fff5f5;
+    --orange: #d9480f;
+    --blue: #1971c2;
+    --blue-bg: #e8f4fd;
+    --purple: #862e9c;
+    --teal: #0c8599;
+    --pill-bg: #edf2ff;
+    --step-bg: #f8faff;
+    --divider: #e9ecef;
+    --header-bg: #fff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+
+  /* ── Top filter bar ── */
+  .topbar { background: var(--header-bg); border-bottom: 1px solid var(--card-border); padding: 12px 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; position: sticky; top: 0; z-index: 100; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+  .topbar h1 { font-size: 16px; font-weight: 700; color: var(--text); flex-shrink: 0; }
+  .topbar input, .topbar select { background: var(--bg); color: var(--text); border: 1px solid var(--card-border); border-radius: 7px; padding: 7px 11px; font-size: 13px; outline: none; }
+  .topbar input:focus, .topbar select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,91,219,.1); }
+  .topbar button { background: var(--accent); color: #fff; border: none; border-radius: 7px; padding: 8px 18px; font-size: 13px; cursor: pointer; font-weight: 600; }
+  .topbar button:hover { background: #2f4ac4; }
+  .topbar .spacer { flex: 1; }
+  .topbar .count-badge { background: var(--pill-bg); color: var(--accent); border-radius: 20px; padding: 4px 13px; font-size: 12px; font-weight: 600; }
+
+  /* ── Strategy tabs ── */
+  .tab-bar { background: var(--header-bg); border-bottom: 1px solid var(--card-border); padding: 0 20px; display: flex; gap: 8px; overflow-x: auto; flex-wrap: wrap; padding-bottom: 10px; padding-top: 10px; position: sticky; top: 57px; z-index: 99; }
+  .tab-bar::-webkit-scrollbar { height: 4px; }
+  .tab-bar::-webkit-scrollbar-track { background: transparent; }
+  .tab-bar::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 4px; }
+
+  .strat-tab { border: 1.5px solid var(--card-border); color: var(--text); background: #fff; border-radius: 20px; padding: 5px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: all .15s; user-select: none; }
+  .strat-tab:hover { border-color: var(--accent); color: var(--accent); }
+  .strat-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .tab-bar:empty { display: none; }
+
+  /* ── Steps area ── */
+  .steps-area { max-width: 860px; margin: 0 auto; padding: 24px 20px 48px; }
+
+  /* ── Step card ── */
+  .step-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 12px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+
+  .step-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 0; }
+  .step-badge { background: var(--accent); color: #fff; border-radius: 20px; font-size: 12px; font-weight: 700; padding: 3px 14px; }
+  .step-time { font-size: 12px; color: var(--muted); font-weight: 500; }
+
+  .step-body { padding: 14px 16px 16px; }
+
+  /* ── Info grid 4-col ── */
+  .info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+  @media (max-width: 700px) { .info-grid { grid-template-columns: repeat(2, 1fr); } }
+  .info-cell { background: var(--step-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; }
+  .info-cell .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 4px; }
+  .info-cell .value { font-size: 13px; font-weight: 600; }
+
+  /* ── MTM row ── */
+  .mtm-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .mtm-cell { background: var(--step-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; }
+  .mtm-cell .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 4px; }
+  .mtm-cell .value { font-size: 16px; font-weight: 700; }
+
+  /* ── What happened ── */
+  .what-happened { background: var(--step-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+  .section-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .wh-desc { font-size: 13px; color: #444; line-height: 1.6; }
+  .hi        { font-weight: 700; color: var(--text); }
+  .hi-green  { font-weight: 700; color: var(--green); }
+  .hi-red    { font-weight: 700; color: var(--red); }
+  .hi-blue   { font-weight: 700; color: var(--blue); }
+  .hi-orange { font-weight: 700; color: var(--orange); }
+
+  /* ── MTM Breakdown ── */
+  .mtm-breakdown { background: var(--step-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 14px; }
+  .breakdown-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+  @media (max-width: 700px) { .breakdown-grid { grid-template-columns: repeat(2, 1fr); } }
+  .bd-cell { background: #fff; border: 1px solid var(--card-border); border-radius: 7px; padding: 9px 11px; }
+  .bd-cell .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 4px; }
+  .bd-cell .value { font-size: 13px; font-weight: 600; }
+
+  /* realized / unrealized leg table */
+  .leg-table { width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 6px; }
+  .leg-table th { text-align: left; font-weight: 600; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--divider); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .leg-table td { padding: 5px 8px; border-bottom: 1px solid var(--divider); }
+  .leg-table tr:last-child td { border-bottom: none; }
+  .subsection { margin-top: 8px; }
+  .subsection-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 6px; }
+
+  /* event type colors */
+  .et-entry   { color: var(--blue); }
+  .et-sl      { color: var(--red); }
+  .et-target  { color: var(--green); }
+  .et-trail   { color: var(--orange); }
+  .et-reentry { color: var(--purple); }
+  .et-force   { color: var(--muted); }
+  .et-overall { color: var(--red); }
+  .et-lock    { color: var(--teal); }
+
+  /* val colors */
+  .val-green { color: var(--green); }
+  .val-red   { color: var(--red); }
+  .val-muted { color: var(--muted); }
+
+  /* loading */
+  .loading { text-align: center; color: var(--muted); padding: 64px 20px; font-size: 15px; }
+  .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid var(--card-border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; margin-right: 8px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { text-align: center; padding: 64px 20px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- Filter bar -->
+<div class="topbar">
+  <h1>Strategy Event History</h1>
+  <input id="inp-date" type="date" title="Trade date" />
+  <input id="inp-trade" type="text" placeholder="Trade ID (optional)" style="width:220px" />
+  <select id="inp-event">
+    <option value="">All events</option>
+    <option value="entry_taken">entry_taken</option>
+    <option value="sl_hit">sl_hit</option>
+    <option value="target_hit">target_hit</option>
+    <option value="trail_sl_changed">trail_sl_changed</option>
+    <option value="reentry_queued">reentry_queued</option>
+    <option value="overall_sl_hit">overall_sl_hit</option>
+    <option value="overall_target_hit">overall_target_hit</option>
+    <option value="overall_trail_sl_changed">overall_trail_sl_changed</option>
+    <option value="lock_and_trail_exit">lock_and_trail_exit</option>
+    <option value="overall_reentry_queued">overall_reentry_queued</option>
+    <option value="force_exit">force_exit</option>
+  </select>
+  <button onclick="load()">Load</button>
+  <span class="spacer"></span>
+  <span class="count-badge" id="count-badge">0 events</span>
+</div>
+
+<!-- Strategy tabs -->
+<div class="tab-bar" id="tab-bar"></div>
+
+<!-- Steps -->
+<div class="steps-area" id="steps-area">
+  <div class="loading">Enter a trade date and click Load</div>
+</div>
+
+<script>
+const API = 'http://localhost:8000/algo';
+
+let allNotifications = [];
+let selectedTradeId   = null;
+
+// ── Formatters ───────────────────────────────────────────────────────────────
+
+function fmt(v) { return (v === null || v === undefined || v === '') ? '—' : v; }
+
+function fmtPrice(v, showSign = false) {
+  const n = parseFloat(v);
+  if (isNaN(n)) return '—';
+  const abs = Math.abs(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const sign = n < 0 ? '-' : (showSign && n > 0 ? '+' : '');
+  return `${sign}₹${abs}`;
+}
+
+function fmtMTM(v) {
+  const n = parseFloat(v);
+  if (isNaN(n)) return '<span class="val-muted">₹0.00</span>';
+  const cls = n > 0 ? 'val-green' : n < 0 ? 'val-red' : 'val-muted';
+  return `<span class="${cls}">${fmtPrice(n)}</span>`;
+}
+
+function timeOf(ts) {
+  if (!ts) return '';
+  const m = String(ts).match(/T?(\d{2}:\d{2})/);
+  return m ? m[1] : '';
+}
+
+// ── Event metadata ───────────────────────────────────────────────────────────
+
+const EVENT_META = {
+  entry_taken:              { label: 'entry',           kind: 'Strategy entry',         css: 'et-entry' },
+  sl_hit:                   { label: 'sl_hit',          kind: 'Stop Loss hit',           css: 'et-sl' },
+  target_hit:               { label: 'target_hit',      kind: 'Target hit',              css: 'et-target' },
+  trail_sl_changed:         { label: 'trail_update',    kind: 'Trailing SL changing',    css: 'et-trail' },
+  reentry_queued:           { label: 'reentry',         kind: 'Re-entry queued',         css: 'et-reentry' },
+  overall_sl_hit:           { label: 'overall_sl',      kind: 'Overall SL hit',          css: 'et-overall' },
+  overall_target_hit:       { label: 'overall_target',  kind: 'Overall Target hit',      css: 'et-target' },
+  overall_trail_sl_changed: { label: 'overall_trail',   kind: 'Overall Trail SL update', css: 'et-trail' },
+  lock_and_trail_exit:      { label: 'lock_exit',       kind: 'Lock & Trail exit',       css: 'et-lock' },
+  overall_reentry_queued:   { label: 'overall_reentry', kind: 'Overall Re-entry queued', css: 'et-reentry' },
+  force_exit:               { label: 'force_exit',      kind: 'Force exit',              css: 'et-force' },
+};
+
+function eventMeta(et) { return EVENT_META[et] || { label: et, kind: et, css: '' }; }
+
+// ── Leg label ────────────────────────────────────────────────────────────────
+
+function legLabel(legId, optType, legIndex) {
+  if (!legId) return '—';
+  const opt = optType ? ` (${optType})` : '';
+  // Try to produce "Leg N (CE/PE)" style from leg_type or leg index
+  const numMatch = String(legId).match(/leg_?(\d+)/i);
+  if (numMatch) return `Leg ${numMatch[1]}${opt}`;
+  if (legIndex !== undefined) return `Leg ${legIndex + 1}${opt}`;
+  return legId + opt;
+}
+
+// Build leg display from notification
+function buildLegLabels(n) {
+  const d = n.data || {};
+  const opt = d.option_type || '';
+  const lid = n.leg_id || '';
+  const parent = d.triggered_by_leg_id || lid;
+  return {
+    cur:    lid  ? legLabel(lid,    opt) : '—',
+    parent: parent ? legLabel(parent, opt) : '—',
+  };
+}
+
+// ── "What happened" description ──────────────────────────────────────────────
+
+function buildDescription(n) {
+  const d = n.data || {};
+  const et = n.event_type;
+
+  if (et === 'entry_taken') {
+    const pos = String(d.position || '').replace('PositionType.', '');
+    const trail = (d.trail_sl_type && d.trail_sl_type !== 'None')
+      ? `, Trail SL: every <span class="hi">${d.trail_instrument_move}pts</span> → SL shifts <span class="hi">${d.trail_sl_move}pts</span>`
+      : '';
+    const tp = d.tp_type && d.tp_type !== 'None'
+      ? `, TP @ <span class="hi-green">${fmtPrice(d.tp_price)}</span>` : '';
+    return `<span class="hi">${pos}</span> ${fmt(d.strike)} ${fmt(d.option_type)} @ <span class="hi-blue">${fmtPrice(d.entry_price)}</span>, spot ${fmt(d.spot_at_entry)}, SL set @ <span class="hi-red">${fmtPrice(d.sl_price)}</span>${tp}${trail}`;
+  }
+  if (et === 'sl_hit') {
+    return `Stop Loss triggered. Exited <span class="hi">${fmt(d.strike)} ${fmt(d.option_type)}</span> @ <span class="hi-red">${fmtPrice(d.exit_price)}</span> (SL was ${fmtPrice(d.sl_price)}, entry ${fmtPrice(d.entry_price)}). Leg P&amp;L: <span class="${(d.pnl||0)>=0?'hi-green':'hi-red'}">${fmtPrice(d.pnl, true)}</span>`;
+  }
+  if (et === 'target_hit') {
+    return `Target reached. Exited <span class="hi">${fmt(d.strike)} ${fmt(d.option_type)}</span> @ <span class="hi-green">${fmtPrice(d.exit_price)}</span> (TP ${fmtPrice(d.tp_price)}, entry ${fmtPrice(d.entry_price)}). Leg P&amp;L: <span class="${(d.pnl||0)>=0?'hi-green':'hi-red'}">${fmtPrice(d.pnl, true)}</span>`;
+  }
+  if (et === 'trail_sl_changed') {
+    const instr = d.trail_instrument_move || '?';
+    const slmv  = d.trail_sl_move || '?';
+    const steps = (slmv > 0 && d.sl_moved_by) ? Math.round(Math.abs(d.sl_moved_by) / slmv) : 1;
+    return `Trail SL moved from <span class="hi-red">${fmtPrice(d.old_sl)}</span> to <span class="hi-green">${fmtPrice(d.new_sl)}</span> after favorable move <span class="hi">${fmtPrice(Math.abs(d.sl_moved_by || 0))}</span>. Rule: every <span class="hi">${instr}</span> favorable move, SL shifts by <span class="hi">${slmv}</span>. Steps reached: <span class="hi">${steps}</span>.`;
+  }
+  if (et === 'reentry_queued') {
+    return `Re-entry queued (<span class="hi">${d.reentry_kind || d.reentry_type || '?'}</span>) from leg <span class="hi-blue">${fmt(d.triggered_by_leg_id)}</span>. New leg: <span class="hi">${fmt(d.new_leg_id)}</span>. Reason: <span class="hi">${fmt(d.reason)}</span>.`;
+  }
+  if (et === 'overall_sl_hit') {
+    return `<span class="hi-red">Overall Stop Loss hit.</span> MTM reached <span class="hi-red">${fmtPrice(d.current_mtm)}</span> (limit: ${fmt(d.overall_sl_type)} ${fmtPrice(d.overall_sl_value)}). All open legs closed.`;
+  }
+  if (et === 'overall_target_hit') {
+    return `<span class="hi-green">Overall Target reached.</span> MTM <span class="hi-green">${fmtPrice(d.current_mtm)}</span> (target: ${fmt(d.overall_tgt_type)} ${fmtPrice(d.overall_tgt_value)}). All open legs closed.`;
+  }
+  if (et === 'overall_trail_sl_changed') {
+    return `Overall Trail SL tightened from <span class="hi-red">-${fmtPrice(d.old_sl_threshold)}</span> to <span class="hi-green">-${fmtPrice(d.new_sl_threshold)}</span>. Peak MTM: <span class="hi">${fmtPrice(d.peak_mtm)}</span>, current MTM: <span class="hi">${fmtPrice(d.current_mtm)}</span>.`;
+  }
+  if (et === 'lock_and_trail_exit') {
+    return `<span class="hi-orange">Lock &amp; Trail exit.</span> MTM <span class="hi-red">${fmtPrice(d.current_mtm)}</span> dropped below profit floor <span class="hi">${fmtPrice(d.floor)}</span>. All open legs closed.`;
+  }
+  if (et === 'overall_reentry_queued') {
+    return `Overall re-entry after <span class="hi">${fmt(d.reason)}</span> (${fmt(d.reentry_type)}, count: <span class="hi">${fmt(d.reentry_count)}</span>). New legs: <span class="hi-blue">${(d.legs_queued || []).join(', ') || '—'}</span>.`;
+  }
+  if (et === 'force_exit') {
+    return `Force exit (<span class="hi">${fmt(d.exit_reason)}</span>). Closed <span class="hi">${fmt(d.strike)} ${fmt(d.option_type)}</span> @ <span class="hi">${fmtPrice(d.exit_price)}</span>. Entry: ${fmtPrice(d.entry_price)}. Leg P&amp;L: <span class="${(d.pnl||0)>=0?'hi-green':'hi-red'}">${fmtPrice(d.pnl, true)}</span>`;
+  }
+  return JSON.stringify(d).substring(0, 180);
+}
+
+// ── Build running MTM state per-notification ─────────────────────────────────
+
+function buildRunningState(notifications) {
+  // For each notification, compute running realized/unrealized state
+  let realized = 0;
+  // open leg pnl snapshot: {leg_id: last_known_pnl}
+  // We track entries and exits to show realized legs in breakdown table
+  const openLegs   = {}; // leg_id → {strike, option, position, entry_price}
+  const closedLegs = []; // [{leg_id, reason, pnl, exit_price, strike, option}]
+  const states = [];
+
+  for (const n of notifications) {
+    const d = n.data || {};
+    const et = n.event_type;
+    const lid = n.leg_id || '';
+
+    if (et === 'entry_taken') {
+      openLegs[lid] = {
+        leg_id:      lid,
+        strike:      d.strike,
+        option:      d.option_type,
+        position:    d.position,
+        entry_price: d.entry_price,
+      };
+    }
+    else if (et === 'sl_hit' || et === 'target_hit') {
+      const pnl = parseFloat(d.pnl) || 0;
+      realized += pnl;
+      closedLegs.push({ leg_id: lid, reason: et === 'sl_hit' ? 'SL' : 'Target', pnl, exit_price: d.exit_price, strike: d.strike, option: d.option_type });
+      delete openLegs[lid];
+    }
+    else if (et === 'force_exit') {
+      const pnl = parseFloat(d.pnl) || 0;
+      realized += pnl;
+      closedLegs.push({ leg_id: lid, reason: d.exit_reason || 'force', pnl, exit_price: d.exit_price, strike: d.strike, option: d.option_type });
+      delete openLegs[lid];
+    }
+    else if (et === 'overall_sl_hit' || et === 'overall_target_hit') {
+      // Close all from legs_pnl
+      for (const lp of (d.legs_pnl || [])) {
+        const pnl = parseFloat(lp.pnl) || 0;
+        realized += pnl;
+        const ol = openLegs[lp.leg_id] || {};
+        closedLegs.push({ leg_id: lp.leg_id, reason: et === 'overall_sl_hit' ? 'Overall SL' : 'Overall Tgt', pnl, strike: ol.strike, option: ol.option });
+        delete openLegs[lp.leg_id];
+      }
+    }
+    else if (et === 'lock_and_trail_exit') {
+      for (const lp of (d.legs_pnl || [])) {
+        const pnl = parseFloat(lp.pnl) || 0;
+        realized += pnl;
+        const ol = openLegs[lp.leg_id] || {};
+        closedLegs.push({ leg_id: lp.leg_id, reason: 'Lock&Trail', pnl, strike: ol.strike, option: ol.option });
+        delete openLegs[lp.leg_id];
+      }
+    }
+
+    states.push({
+      realized:    realized,
+      unrealized:  0,   // would need live tick data; not available from notifications
+      combined:    realized,
+      openLegs:    { ...openLegs },
+      closedLegs:  [...closedLegs],
+    });
+  }
+  return states;
+}
+
+// ── Build step card HTML ──────────────────────────────────────────────────────
+
+function buildStepCard(n, stepNum, state) {
+  const meta    = eventMeta(n.event_type);
+  const d       = n.data || {};
+  const time    = timeOf(n.timestamp);
+  const labels  = buildLegLabels(n);
+
+  // Overall SL limit display
+  let osl = '—';
+  if (d.overall_sl_value > 0)   osl = `-${fmtPrice(d.overall_sl_value)}`;
+  else if (d.overall_sl_type && d.overall_sl_type !== 'None') osl = d.overall_sl_type;
+
+  // Combined MTM display (event-level)
+  const combinedVal = (d.current_mtm !== undefined && d.current_mtm !== null)
+    ? parseFloat(d.current_mtm)
+    : (d.pnl !== undefined ? parseFloat(d.pnl) : null);
+
+  const combinedDisplay = combinedVal !== null
+    ? fmtMTM(combinedVal)
+    : fmtMTM(state.combined);
+
+  // Realized legs table rows
+  const realizedRows = state.closedLegs.map(cl =>
+    `<tr>
+      <td>${cl.leg_id || '—'}</td>
+      <td>${cl.strike || '—'} ${cl.option || ''}</td>
+      <td>${cl.reason}</td>
+      <td class="${(cl.pnl||0)>=0?'val-green':'val-red'}">${fmtPrice(cl.pnl, true)}</td>
+     </tr>`
+  ).join('');
+
+  // Open legs rows
+  const openRows = Object.values(state.openLegs).map(ol =>
+    `<tr>
+      <td>${ol.leg_id || '—'}</td>
+      <td>${ol.strike || '—'} ${ol.option || ''}</td>
+      <td>${String(ol.position||'').replace('PositionType.','')}</td>
+      <td class="val-muted">Open</td>
+     </tr>`
+  ).join('');
+
+  const hasRealizedRows = realizedRows.length > 0;
+  const hasOpenRows     = openRows.length > 0;
+
+  return `
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-badge">Step ${stepNum}</span>
+    <span class="step-time">${time}</span>
+  </div>
+  <div class="step-body">
+
+    <div class="info-grid">
+      <div class="info-cell">
+        <div class="label">Event Type</div>
+        <div class="value ${meta.css}">${meta.label}</div>
+      </div>
+      <div class="info-cell">
+        <div class="label">Parent Leg</div>
+        <div class="value">${labels.parent}</div>
+      </div>
+      <div class="info-cell">
+        <div class="label">Leg</div>
+        <div class="value">${labels.cur}</div>
+      </div>
+      <div class="info-cell">
+        <div class="label">Kind</div>
+        <div class="value">${meta.kind}</div>
+      </div>
+    </div>
+
+    <div class="mtm-row">
+      <div class="mtm-cell">
+        <div class="label">Combined MTM</div>
+        <div class="value">${combinedDisplay}</div>
+      </div>
+      <div class="mtm-cell">
+        <div class="label">Overall SL Limit</div>
+        <div class="value val-red">${osl}</div>
+      </div>
+    </div>
+
+    <div class="what-happened">
+      <div class="section-title">What happened</div>
+      <div class="wh-desc">${n.what_happened || buildDescription(n)}</div>
+    </div>
+
+    <div class="mtm-breakdown">
+      <div class="section-title">Combined MTM Breakdown</div>
+      <div class="breakdown-grid">
+        <div class="bd-cell">
+          <div class="label">Candle Time</div>
+          <div class="value">${time || '—'}</div>
+        </div>
+        <div class="bd-cell">
+          <div class="label">Realized Total</div>
+          <div class="value ${state.realized >= 0 ? 'val-green' : 'val-red'}">${fmtPrice(state.realized)}</div>
+        </div>
+        <div class="bd-cell">
+          <div class="label">Unrealized Total</div>
+          <div class="value val-muted">${fmtPrice(state.unrealized)}</div>
+        </div>
+        <div class="bd-cell">
+          <div class="label">Combined MTM</div>
+          <div class="value ${state.combined >= 0 ? 'val-green' : 'val-red'}">${fmtPrice(state.combined)}</div>
+        </div>
+      </div>
+
+      ${hasRealizedRows ? `
+      <div class="subsection">
+        <div class="subsection-title">Realized</div>
+        <table class="leg-table">
+          <thead><tr><th>Leg</th><th>Strike</th><th>Exit reason</th><th>P&amp;L</th></tr></thead>
+          <tbody>${realizedRows}</tbody>
+        </table>
+      </div>` : ''}
+
+      ${hasOpenRows ? `
+      <div class="subsection">
+        <div class="subsection-title">Open legs</div>
+        <table class="leg-table">
+          <thead><tr><th>Leg</th><th>Strike</th><th>Position</th><th>Status</th></tr></thead>
+          <tbody>${openRows}</tbody>
+        </table>
+      </div>` : ''}
+
+    </div>
+  </div>
+</div>`;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function renderSteps(notifications) {
+  const area = document.getElementById('steps-area');
+  if (!notifications || notifications.length === 0) {
+    area.innerHTML = '<div class="empty">No events found for this selection</div>';
+    return;
+  }
+  const states = buildRunningState(notifications);
+  area.innerHTML = notifications.map((n, i) => buildStepCard(n, i + 1, states[i])).join('');
+}
+
+// ── Build strategy tabs ───────────────────────────────────────────────────────
+
+function buildTabs(notifications) {
+  const bar = document.getElementById('tab-bar');
+
+  // Group by trade_id → {name, ticker, count}
+  const groups = {};
+  for (const n of notifications) {
+    const tid = n.trade_id || '?';
+    if (!groups[tid]) groups[tid] = { name: n.strategy_name || tid, ticker: n.ticker || '', count: 0 };
+    groups[tid].count++;
+  }
+  const entries = Object.entries(groups);
+  if (entries.length === 0) { bar.innerHTML = ''; return; }
+
+  let html = `<span class="strat-tab ${!selectedTradeId ? 'active' : ''}" data-tid="__all__">All (${notifications.length})</span>`;
+  for (const [tid, g] of entries) {
+    html += `<span class="strat-tab ${selectedTradeId === tid ? 'active' : ''}" data-tid="${tid}">${g.name}</span>`;
+  }
+  bar.innerHTML = html;
+
+  bar.querySelectorAll('.strat-tab').forEach(el => {
+    el.addEventListener('click', () => {
+      const tid = el.dataset.tid;
+      selectedTradeId = tid === '__all__' ? null : tid;
+      bar.querySelectorAll('.strat-tab').forEach(x => x.classList.remove('active'));
+      el.classList.add('active');
+      applyFilter();
+    });
+  });
+}
+
+// ── Filter ────────────────────────────────────────────────────────────────────
+
+function applyFilter() {
+  const evtFilter = document.getElementById('inp-event').value;
+  let filtered = allNotifications;
+  if (selectedTradeId) filtered = filtered.filter(n => n.trade_id === selectedTradeId);
+  if (evtFilter)       filtered = filtered.filter(n => n.event_type === evtFilter);
+  document.getElementById('count-badge').textContent = `${filtered.length} events`;
+  renderSteps(filtered);
+}
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+
+async function load() {
+  const date    = document.getElementById('inp-date').value;
+  const tradeId = document.getElementById('inp-trade').value.trim();
+  const evtType = document.getElementById('inp-event').value;
+
+  document.getElementById('steps-area').innerHTML =
+    '<div class="loading"><span class="spinner"></span>Loading events…</div>';
+  document.getElementById('tab-bar').innerHTML = '';
+
+  const params = new URLSearchParams();
+  if (date)    params.set('trade_date', date);
+  if (tradeId) params.set('trade_id', tradeId);
+  if (evtType) params.set('event_type', evtType);
+  params.set('limit', '500');
+
+  try {
+    const res  = await fetch(`${API}/notifications?${params}`);
+    const json = await res.json();
+    allNotifications = json.notifications || [];
+    selectedTradeId  = null;
+
+    buildTabs(allNotifications);
+    applyFilter();
+  } catch (e) {
+    document.getElementById('steps-area').innerHTML =
+      `<div class="loading" style="color:var(--red)">Error: ${e.message}</div>`;
+  }
+}
+
+// Auto-set today's date
+(function () {
+  const t = new Date();
+  document.getElementById('inp-date').value =
+    `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+})();
+</script>
+</body>
+</html>

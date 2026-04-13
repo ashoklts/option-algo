@@ -1,0 +1,2523 @@
+<div id="root">
+    <!--    NAV SECTION -->
+    <div class="app_header __no__print">
+        <div class="mobile_nav_button">
+            <button type="button" class="toggle_icon icon-burger--active"
+                style="width: 30px; background: inherit; border: 0px">
+                <div class="icon-burger">
+                    <span class="icon-burger__bar"></span><span class="icon-burger__bar"></span><span
+                        class="icon-burger__bar"></span>
+                </div>
+            </button>
+            <div class="page_title_header">Simulator</div>
+        </div>
+        <a href="https://www.stockmock.in/#/home" class="navbar-brand nontab_only"><img
+                src="assets/images/StockMock_New.svg" alt="logo" /></a>
+        <div class="header-nav">
+            <div class="header-nav-link-container show">
+                <div>
+                    <div class="header_group backtest_group">
+                        <div class="group_title">Backtest</div>
+                    </div>
+                    <div class="header_group analytics_group">
+                        <div class="group_title">Analytics</div>
+                    </div>
+                    <a href="https://www.stockmock.in/#!/home" class="header_nav_link"><span>Home</span></a><a
+                        href="https://www.stockmock.in/#!/basket" class="header_nav_link"><span>Basket</span></a><a
+                        href="https://www.stockmock.in/#!/simulator"
+                        class="header_nav_link __active"><span>Simulator</span></a><a
+                        href="https://www.stockmock.in/#!/builder" class="header_nav_link"><span>Builder</span></a><a
+                        href="https://www.stockmock.in/#!/portfolio"
+                        class="header_nav_link"><span>Portfolio</span></a><a
+                        href="https://www.stockmock.in/#!/option_chain" class="header_nav_link"><span>Option
+                            Chain</span></a><a href="paper_trade.html" class="header_nav_link"
+                        style="color:#1a56db;font-weight:700;"><span>⚡ Paper
+                            Trade</span></a>
+                    <div class="header_nav_group">
+                        <a data-toggle="dropdown"
+                            class="header_nav_link d-flex align-items-center"><span>Charts</span><i
+                                class="fa fa-chevron-down" style="font-size: 10px"></i></a>
+                        <div class="dropdown-menu dropdown-menu-right">
+                            <a href="https://www.stockmock.in/#!/chart/rolling_straddle" class="dropdown-item sub_menu">
+                                <div class="d-flex align-items-start">
+                                    <img src="assets/images/straddle.svg" />
+                                    <div>
+                                        <div class="title">Rolling Straddle Chart</div>
+                                        <div class="sub_title">
+                                            Track rolling ATM straddle in live market
+                                        </div>
+                                    </div>
+                                </div>
+                            </a><a href="https://www.stockmock.in/#!/chart/multi_strategy"
+                                class="dropdown-item sub_menu">
+                                <div class="d-flex align-items-start">
+                                    <img src="assets/images/strategy.svg" />
+                                    <div>
+                                        <div class="title">Multi Strategy Chart</div>
+                                        <div class="sub_title">
+                                            Track multiple strategies combined chart
+                                        </div>
+                                    </div>
+                                </div>
+                            </a><a href="https://www.stockmock.in/#!/chart/multi_chart" class="dropdown-item sub_menu">
+                                <div class="d-flex align-items-start">
+                                    <img src="assets/images/multi_strategy.svg" />
+                                    <div>
+                                        <div class="title">4 in 1 Charts</div>
+                                        <div class="sub_title">Track multiple chart</div>
+                                    </div>
+                                </div>
+                            </a><a href="https://www.stockmock.in/#!/chart/oi_chart" class="dropdown-item sub_menu">
+                                <div class="d-flex align-items-start">
+                                    <img src="assets/images/oi_chart.svg" />
+                                    <div>
+                                        <div class="title">OI Chart</div>
+                                        <div class="sub_title">
+                                            Track Live OI Bar Charts for All Strikes
+                                        </div>
+                                    </div>
+                                </div>
+                            </a><a href="https://www.stockmock.in/#!/chart/multi_strike_oi_chart"
+                                class="dropdown-item sub_menu">
+                                <div class="d-flex align-items-start">
+                                    <img src="assets/images/multi_strike_oi_chart.svg" />
+                                    <div>
+                                        <div class="title">Multi Strike OI Chart</div>
+                                        <div class="sub_title">
+                                            Track OI Line Chart for entire day
+                                        </div>
+                                    </div>
+                                </div>
+                            </a>
+                        </div>
+                    </div>
+                    <div class="header_nav_group">
+                        <a data-toggle="dropdown"
+                            class="header_nav_link d-flex align-items-center"><span>Learning</span><i
+                                class="fa fa-chevron-down" style="font-size: 10px"></i></a>
+                        <div class="dropdown-menu dropdown-menu-right">
+                            <a class="dropdown-item sub_menu">
+                                <div class="d-flex align-items-start">
+                                    <div>
+                                        <div class="title">Education</div>
+                                    </div>
+                                </div>
+                            </a><a class="dropdown-item sub_menu">
+                                <div class="d-flex align-items-start">
+                                    <div>
+                                        <div class="title">Podcast</div>
+                                    </div>
+                                </div>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="dark_mode_button">
+                        <input type="checkbox" id="darkmode-toggle" /><label for="darkmode-toggle"><svg width="18"
+                                height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg"
+                                class="sun">
+                                <g clip-path="url(#clip0_2343_53)">
+                                    <path
+                                        d="M9 13.875C11.6924 13.875 13.875 11.6924 13.875 9C13.875 6.30761 11.6924 4.125 9 4.125C6.30761 4.125 4.125 6.30761 4.125 9C4.125 11.6924 6.30761 13.875 9 13.875Z"
+                                        fill="transparent" stroke="white" stroke-linecap="round"
+                                        stroke-linejoin="round"></path>
+                                    <path
+                                        d="M14.355 14.355L14.2575 14.2575M14.2575 3.7425L14.355 3.645L14.2575 3.7425ZM3.645 14.355L3.7425 14.2575L3.645 14.355ZM9 1.56V1.5V1.56ZM9 16.5V16.44V16.5ZM1.56 9H1.5H1.56ZM16.5 9H16.44H16.5ZM3.7425 3.7425L3.645 3.645L3.7425 3.7425Z"
+                                        stroke="white" stroke-width="1.3" stroke-linecap="round"
+                                        stroke-linejoin="round"></path>
+                                </g>
+                                <defs>
+                                    <clippath id="clip0_2343_53">
+                                        <rect width="18" height="18" fill="white"></rect>
+                                    </clippath>
+                                </defs>
+                            </svg><svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                                xmlns="http://www.w3.org/2000/svg" class="moon">
+                                <path
+                                    d="M1.18381 7.24476C1.39381 10.2489 3.94298 12.6931 6.99382 12.8273C9.14632 12.9206 11.0713 11.9173 12.2263 10.3364C12.7047 9.68892 12.448 9.25726 11.6488 9.40309C11.258 9.47309 10.8555 9.50226 10.4355 9.48476C7.58298 9.36809 5.24965 6.98226 5.23798 4.16473C5.23215 3.4064 5.38965 2.6889 5.67548 2.03557C5.99048 1.31223 5.61131 0.968067 4.88214 1.27723C2.57214 2.2514 0.991312 4.5789 1.18381 7.24476Z"
+                                    fill="transparent" stroke="#7e7e7e" stroke-linecap="round" stroke-linejoin="round">
+                                </path>
+                            </svg></label>
+                    </div>
+                    <div class="nontab_only">
+                        <div class="credit__button">
+                            <div>
+                                <div>
+                                    <img src="assets/images/credit.svg" style="filter: grayscale(1)" /><span
+                                        class="pl-2 pr-2" style="color: rgb(177, 177, 177)">20</span>
+                                </div>
+                                <div class="credit_type" style="color: rgb(177, 177, 177)">
+                                    Free Credits
+                                </div>
+                            </div>
+                            <a href="https://www.stockmock.in/#!/subscription"
+                                class="__button __donate__button"><span>Buy
+                                    Plans</span></a>
+                        </div>
+                    </div>
+                    <a class="header_nav_link nav_user_name ml-3"><span class="tool__tip">Hi, Ashok
+                            <div class="tool__tip__text">Ashok kumar</div>
+                        </span></a>
+                    <div class="nontab_only dropdown">
+                        <a data-toggle="dropdown" class="header_nav_link d-flex align-items-center pr-0"><i
+                                class="fa fa-user" style="font-size: 20px"></i><i class="fa fa-chevron-down"
+                                style="font-size: 10px"></i></a>
+                        <div class="dropdown-menu">
+                            <a href="https://www.stockmock.in/#!/profile" class="dropdown-item">Profile</a><a
+                                class="dropdown-item">Chart Line Colors</a><a class="dropdown-item">Log Out</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="mobile_nav_button">
+                <div class="credit__button">
+                    <div>
+                        <div>
+                            <img src="assets/images/credit.svg" style="filter: grayscale(1)" /><span class="pl-2 pr-2"
+                                style="color: rgb(177, 177, 177)">20</span>
+                        </div>
+                        <div class="credit_type" style="color: rgb(177, 177, 177)">
+                            Free Credits
+                        </div>
+                    </div>
+                    <a href="https://www.stockmock.in/#!/subscription" class="__button __donate__button"><span>Buy
+                            Plans</span></a>
+                </div>
+                <div class="dropdown">
+                    <a data-toggle="dropdown" class="header_nav_link d-flex align-items-center pr-0"><i
+                            class="fa fa-user" style="font-size: 20px"></i><i class="fa fa-chevron-down"
+                            style="font-size: 10px"></i></a>
+                    <div class="dropdown-menu">
+                        <a href="https://www.stockmock.in/#!/profile" class="dropdown-item">Profile</a><a
+                            class="dropdown-item">Chart Line Colors</a><a class="dropdown-item">Log Out</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- <div id="navbarBg" class="navbar__bg show"></div> -->
+    <div hidefooter="" class="__page simulator_page">
+        <div class="container __main__box">
+            <div class="__page__container">
+                <div class="simulator__config__box __no__print">
+                    <div class="simulator_dateTime_bg">
+                        <div class="simulator_dateTime">
+                            <div class="col d-flex">
+                                <div class="switch_button">
+                                    <div class="dropdown searchable-select text-capitalize">
+                                        <div data-toggle="dropdown" class="dropdown-toggle" aria-expanded="false">
+                                            nifty
+                                        </div>
+                                        <div class="dropdown-menu" x-placement="bottom-start" style="
+                            position: absolute;
+                            transform: translate3d(0px, 30px, 0px);
+                            top: 0px;
+                            left: 0px;
+                            will-change: transform;
+                          ">
+                                            <ul>
+                                                <li class="selected">nifty</li>
+                                                <li class="">banknifty</li>
+                                                <li class="">finnifty</li>
+                                                <li class="">midcpnifty</li>
+                                                <li class="">sensex</li>
+                                                <li class="">bankex</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col time_box">
+                                <div class="time_interval">
+                                    <button class="arrow_button">
+                                        <span>&lt;&lt; Day</span></button><button
+                                        class="arrow_button"><span>SOD</span></button><button
+                                        class="arrow_button hideOnSmallDevice">
+                                        <span>-2h</span></button><button
+                                        class="arrow_button"><span>-30m</span></button><button
+                                        class="arrow_button hideOnSmallDevice">
+                                        <span>-15m</span></button><button
+                                        class="arrow_button"><span>-5m</span></button><button
+                                        class="arrow_button"><span>-1m</span></button>
+                                </div>
+                                <div class="time_interval mx-1">
+                                    <div class="mithril-date-picker-container" style="position:relative;">
+                                        <div class="mithril-date-picker">
+                                            <div class="button current-date" id="currentDateDisplay">
+                                                Wed, Mar 11, 2026
+                                            </div>
+                                        </div>
+                                        <div id="ocCalendarPopup" class="oc-cal-popup" style="display:none;"></div>
+                                    </div>
+                                    <select class="__box__input mr-1" id="currentHourSelect">
+                                        <option value="9">9</option>
+                                        <option value="10">10</option>
+                                        <option value="11">11</option>
+                                        <option value="12">12</option>
+                                        <option value="13">13</option>
+                                        <option value="14">14</option>
+                                        <option value="15">15</option>
+                                    </select><select class="__box__input" id="currentMinuteSelect">
+                                        <option value="00">00</option>
+                                        <option value="01">01</option>
+                                        <option value="02">02</option>
+                                        <option value="03">03</option>
+                                        <option value="04">04</option>
+                                        <option value="05">05</option>
+                                        <option value="06">06</option>
+                                        <option value="07">07</option>
+                                        <option value="08">08</option>
+                                        <option value="09">09</option>
+                                        <option value="10">10</option>
+                                        <option value="11">11</option>
+                                        <option value="12">12</option>
+                                        <option value="13">13</option>
+                                        <option value="14">14</option>
+                                        <option value="15">15</option>
+                                        <option value="16">16</option>
+                                        <option value="17">17</option>
+                                        <option value="18">18</option>
+                                        <option value="19">19</option>
+                                        <option value="20">20</option>
+                                        <option value="21">21</option>
+                                        <option value="22">22</option>
+                                        <option value="23">23</option>
+                                        <option value="24">24</option>
+                                        <option value="25">25</option>
+                                        <option value="26">26</option>
+                                        <option value="27">27</option>
+                                        <option value="28">28</option>
+                                        <option value="29">29</option>
+                                        <option value="30">30</option>
+                                        <option value="31">31</option>
+                                        <option value="32">32</option>
+                                        <option value="33">33</option>
+                                        <option value="34">34</option>
+                                        <option value="35">35</option>
+                                        <option value="36">36</option>
+                                        <option value="37">37</option>
+                                        <option value="38">38</option>
+                                        <option value="39">39</option>
+                                        <option value="40">40</option>
+                                        <option value="41">41</option>
+                                        <option value="42">42</option>
+                                        <option value="43">43</option>
+                                        <option value="44">44</option>
+                                        <option value="45">45</option>
+                                        <option value="46">46</option>
+                                        <option value="47">47</option>
+                                        <option value="48">48</option>
+                                        <option value="49">49</option>
+                                        <option value="50">50</option>
+                                        <option value="51">51</option>
+                                        <option value="52">52</option>
+                                        <option value="53">53</option>
+                                        <option value="54">54</option>
+                                        <option value="55">55</option>
+                                        <option value="56">56</option>
+                                        <option value="57">57</option>
+                                        <option value="58">58</option>
+                                        <option value="59">59</option>
+                                    </select>
+                                </div>
+                                <div class="time_interval">
+                                    <button class="arrow_button"><span>1m+</span></button><button
+                                        class="arrow_button"><span>5m+</span></button><button
+                                        class="arrow_button hideOnSmallDevice">
+                                        <span>15m+</span></button><button
+                                        class="arrow_button"><span>30m+</span></button><button
+                                        class="arrow_button hideOnSmallDevice">
+                                        <span>2h+</span></button><button
+                                        class="arrow_button"><span>EOD</span></button><button class="arrow_button">
+                                        <span>Day &gt;&gt;</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+                <div class="simulator__result__box">
+                    <div class="builder_actions_box __no__print">
+                        <div class="add_future_box">
+                            <a class="simulator_link" style="opacity: 1"><span class="fa fa-plus-circle"></span>Add
+                                Futures</a>
+                        </div>
+                        <div class="eod__message">
+                            <div class="d-flex mr-50">
+                                <div>Day Open:</div>
+                                <div class="oc_stats_value ml-1">
+                                    <div>24231.8</div>
+                                    <span class="expiry_indicator tr__red"><span>
+                                            (</span><span>-30pt</span><span>,</span>&nbsp;<span>-0.1</span><span>%)</span></span>
+                                </div>
+                            </div>
+                            <div class="d-flex mr-50 position-relative">
+                                <div>Spot:</div>
+                                <div class="oc_stats_value ml-1">
+                                    <div>24145.9</div>
+                                    <span class="expiry_indicator tr__red"><span>
+                                            (</span><span>-86pt</span><span>,</span>&nbsp;<span>-0.4</span><span>%)</span></span>
+                                </div>
+                            </div>
+                            <div class="d-flex position-relative mr-50">
+                                <div>Fut:</div>
+                                <div class="oc_stats_value ml-1">24226.0</div>
+                            </div>
+                            <div class="d-flex position-relative">
+                                <div>Synth Fut:</div>
+                                <div class="oc_stats_value ml-1">
+                                    24170.2<span class="expiry_indicator"><span> (</span>17 MAR<span>)</span></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ══ Trading Control Bar ══════════════════════════════════ -->
+                    <style>
+                        /* ══════════════════════════════════════════════════════════
+                 Trading Control Bar  (single horizontal row of cards)
+                 Lives immediately below .builder_actions_box.__no__print
+              ══════════════════════════════════════════════════════════ */
+
+                        /* ── bar wrapper ── */
+                        .tcp-bar {
+                            display: flex;
+                            flex-direction: column;
+                            background: #f8fafc;
+                            border-top: 1px solid #dde3ed;
+                            border-bottom: 2px solid #dde3ed;
+                            padding: 0;
+                            gap: 0;
+                            font-family: inherit;
+                        }
+
+                        /* ── row inside bar ── */
+                        .tcp-row {
+                            display: flex;
+                            flex-direction: row;
+                            align-items: stretch;
+                            flex-wrap: nowrap;
+                            min-height: 58px;
+                            overflow-x: auto;
+                        }
+
+                        .tcp-row+.tcp-row {
+                            border-top: 1px solid #dde3ed;
+                        }
+
+                        /* ── card ── */
+                        .tcp-card {
+                            display: flex;
+                            flex-direction: column;
+                            justify-content: center;
+                            gap: 3px;
+                            padding: 6px 12px;
+                            border-right: 1px solid #dde3ed;
+                            flex-shrink: 0;
+                            position: relative;
+                        }
+
+                        .tcp-card:last-child {
+                            border-right: none;
+                        }
+
+                        /* header: toggle + title */
+                        .tcp-card-hdr {
+                            display: flex;
+                            align-items: center;
+                            gap: 6px;
+                        }
+
+                        .tcp-card-title {
+                            font-size: 10px;
+                            font-weight: 700;
+                            color: #64748b;
+                            text-transform: uppercase;
+                            letter-spacing: 0.6px;
+                            white-space: nowrap;
+                            line-height: 1;
+                        }
+
+                        /* body: controls in a row */
+                        .tcp-card-body {
+                            display: flex;
+                            flex-direction: row;
+                            flex-wrap: nowrap;
+                            align-items: center;
+                            gap: 4px;
+                        }
+
+                        /* ── shared atoms ── */
+                        .tcp-sel {
+                            border: 1px solid #cbd5e1;
+                            border-radius: 4px;
+                            padding: 3px 6px;
+                            font-size: 12px;
+                            color: #1e293b;
+                            background: #fff;
+                            cursor: pointer;
+                            outline: none;
+                            height: 26px;
+                            -webkit-appearance: auto;
+                        }
+
+                        .tcp-sel:focus {
+                            border-color: #3b82f6;
+                            box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+                        }
+
+                        .tcp-sel:disabled,
+                        .tcp-num:disabled {
+                            background: #f1f5f9;
+                            color: #94a3b8;
+                            cursor: not-allowed;
+                            border-color: #e2e8f0;
+                        }
+
+                        .tcp-num {
+                            border: 1px solid #cbd5e1;
+                            border-radius: 4px;
+                            padding: 3px 4px;
+                            font-size: 12px;
+                            color: #1e293b;
+                            background: #fff;
+                            height: 26px;
+                            width: 55px;
+                            outline: none;
+                            text-align: center;
+                        }
+
+                        .tcp-num:focus {
+                            border-color: #3b82f6;
+                            box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+                        }
+
+                        .tcp-num.tcp-err {
+                            border-color: #ef4444;
+                            background: #fef2f2;
+                        }
+
+                        .tcp-xy-lbl {
+                            font-size: 10px;
+                            font-weight: 800;
+                            color: #94a3b8;
+                            margin: 0 1px;
+                        }
+
+                        /* specific widths */
+                        .tcp-lot-sel {
+                            width: 78px;
+                        }
+
+                        .tcp-tf-sel {
+                            width: 70px;
+                        }
+
+                        .tcp-strat-sel {
+                            min-width: 120px;
+                        }
+
+                        .tcp-expiry-sel {
+                            min-width: 122px;
+                        }
+
+                        .tcp-unit-sel {
+                            min-width: 102px;
+                        }
+
+                        .tcp-mode-sel {
+                            min-width: 158px;
+                        }
+
+                        /* pause button */
+                        .tcp-pause-btn {
+                            height: 26px;
+                            padding: 0 11px;
+                            border-radius: 4px;
+                            border: none;
+                            font-size: 11px;
+                            font-weight: 700;
+                            cursor: pointer;
+                            white-space: nowrap;
+                            background: #3b82f6;
+                            color: #fff;
+                            letter-spacing: 0.3px;
+                            transition: background .15s;
+                        }
+
+                        .tcp-pause-btn.is-paused {
+                            background: #22c55e;
+                        }
+
+                        /* validation error tooltip */
+                        .tcp-val-tip {
+                            display: none;
+                            position: absolute;
+                            bottom: calc(100% + 5px);
+                            left: 50%;
+                            transform: translateX(-50%);
+                            background: #ef4444;
+                            color: #fff;
+                            font-size: 10px;
+                            font-weight: 600;
+                            padding: 3px 8px;
+                            border-radius: 4px;
+                            white-space: nowrap;
+                            z-index: 200;
+                            pointer-events: none;
+                            box-shadow: 0 2px 6px rgba(0, 0, 0, .15);
+                        }
+
+                        .tcp-val-tip::after {
+                            content: '';
+                            position: absolute;
+                            top: 100%;
+                            left: 50%;
+                            transform: translateX(-50%);
+                            border: 4px solid transparent;
+                            border-top-color: #ef4444;
+                        }
+
+                        .tcp-val-tip.show {
+                            display: block;
+                        }
+
+                        /* iOS-style toggle */
+                        .tcp-tog {
+                            position: relative;
+                            display: inline-block;
+                            width: 32px;
+                            height: 17px;
+                            margin: 0;
+                            flex-shrink: 0;
+                            cursor: pointer;
+                        }
+
+                        .tcp-tog input {
+                            opacity: 0;
+                            width: 0;
+                            height: 0;
+                            position: absolute;
+                        }
+
+                        .tcp-tog-track {
+                            position: absolute;
+                            inset: 0;
+                            background: #cbd5e1;
+                            border-radius: 17px;
+                            transition: background .2s;
+                        }
+
+                        .tcp-tog-track::before {
+                            content: '';
+                            position: absolute;
+                            width: 11px;
+                            height: 11px;
+                            left: 3px;
+                            top: 3px;
+                            background: #fff;
+                            border-radius: 50%;
+                            transition: transform .2s;
+                            box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+                        }
+
+                        .tcp-tog input:checked+.tcp-tog-track {
+                            background: #3b82f6;
+                        }
+
+                        .tcp-tog input:checked+.tcp-tog-track::before {
+                            transform: translateX(15px);
+                        }
+
+                        /* ── time pickers ── */
+                        .tcp-time {
+                            border: 1px solid #cbd5e1;
+                            border-radius: 4px;
+                            padding: 3px 5px;
+                            font-size: 12px;
+                            color: #1e293b;
+                            background: #fff;
+                            height: 26px;
+                            outline: none;
+                            cursor: pointer;
+                        }
+
+                        .tcp-time:focus {
+                            border-color: #3b82f6;
+                            box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+                        }
+
+                        .tcp-time:disabled {
+                            background: #f1f5f9;
+                            color: #94a3b8;
+                            cursor: not-allowed;
+                            border-color: #e2e8f0;
+                        }
+
+                        .tcp-time-lbl {
+                            font-size: 10px;
+                            font-weight: 700;
+                            color: #64748b;
+                            white-space: nowrap;
+                            margin-right: 2px;
+                        }
+
+                        /* ── strike-type selector ── */
+                        .tcp-strike-mode-sel {
+                            min-width: 140px;
+                        }
+
+                        .tcp-strike-val {
+                            width: 72px;
+                        }
+
+                        .tcp-strike-drop {
+                            min-width: 110px;
+                        }
+
+                        /* styled strike dropdown — trading platform strike picker */
+                        .tcp-strike-drop {
+                            font-size: 12px;
+                        }
+
+                        .tcp-strike-drop option[value="ATM"] {
+                            font-weight: 800;
+                            background: #eff6ff;
+                            color: #1d4ed8;
+                        }
+
+                        .tcp-strike-drop option[data-dir="otm"] {
+                            color: #16a34a;
+                        }
+
+                        .tcp-strike-drop option[data-dir="itm"] {
+                            color: #dc2626;
+                        }
+                    </style>
+
+                    <div class="tcp-bar" id="tradingControlPanel">
+
+                        <!-- ══ Row 1: main controls ══════════════════════════════════ -->
+                        <div class="tcp-row tcp-row-1">
+
+                            <!-- ① Lots ─────────────────────────────────────────── -->
+                            <div class="tcp-card">
+                                <div class="tcp-card-title">Lots</div>
+                                <div class="tcp-card-body">
+                                    <select id="tcpLotSelector" class="tcp-sel tcp-lot-sel"></select>
+                                </div>
+                            </div>
+
+                            <!-- ② Timeframe ─────────────────────────────────────── -->
+                            <div class="tcp-card">
+                                <div class="tcp-card-title">Timeframe</div>
+                                <div class="tcp-card-body">
+                                    <select id="tcpTimeframe" class="tcp-sel tcp-tf-sel">
+                                        <option value="1m">1m</option>
+                                        <option value="3m">3m</option>
+                                        <option value="5m" selected>5m</option>
+                                        <option value="15m">15m</option>
+                                        <option value="30m">30m</option>
+                                        <option value="1h">1h</option>
+                                        <option value="2h">2h</option>
+                                        <option value="4h">4h</option>
+                                        <option value="day">Day</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- ③ Strategy Type ──────────────────────────────────── -->
+                            <div class="tcp-card">
+                                <div class="tcp-card-title">Strategy Type</div>
+                                <div class="tcp-card-body">
+                                    <select id="strategySelector" class="tcp-sel tcp-strat-sel">
+                                        <option value="mini_strangle">Mini Strangle</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- ④ Expiry Type ───────────────────────────────────── -->
+                            <div class="tcp-card">
+                                <div class="tcp-card-title">Expiry Type</div>
+                                <div class="tcp-card-body">
+                                    <select id="strategyExpirySelector" class="tcp-sel tcp-expiry-sel">
+                                        <option value="CURRENT_WEEK" selected>CURRENT_WEEK</option>
+                                        <option value="NEXT_WEEK">NEXT_WEEK</option>
+                                        <option value="MONTHLY_EXPIRY">MONTHLY_EXPIRY</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- ④b Lookback Minutes ──────────────────────────────── -->
+                            <div class="tcp-card">
+                                <div class="tcp-card-title">Validate Behind</div>
+                                <div class="tcp-card-body">
+                                    <select id="tcpLookbackMinutes" class="tcp-sel">
+                                        <option value="0" selected>Off</option>
+                                        <option value="1">1 min</option>
+                                        <option value="2">2 min</option>
+                                        <option value="3">3 min</option>
+                                        <option value="4">4 min</option>
+                                        <option value="5">5 min</option>
+                                        <option value="6">6 min</option>
+                                        <option value="7">7 min</option>
+                                        <option value="8">8 min</option>
+                                        <option value="9">9 min</option>
+                                        <option value="10">10 min</option>
+                                        <option value="12">12 min</option>
+                                        <option value="15">15 min</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- ⑤ Stop Loss ──────────────────────────────────────── -->
+                            <div class="tcp-card">
+                                <div class="tcp-card-hdr">
+                                    <label class="tcp-tog">
+                                        <input type="checkbox" id="tcpSlEnabled">
+                                        <span class="tcp-tog-track"></span>
+                                    </label>
+                                    <span class="tcp-card-title">Stop Loss</span>
+                                </div>
+                                <div class="tcp-card-body">
+                                    <select id="tcpSlUnit" class="tcp-sel tcp-unit-sel" disabled>
+                                        <option value="points">Points</option>
+                                        <option value="pct">Percentage</option>
+                                    </select>
+                                    <input type="number" id="tcpSlValue" class="tcp-num" value="0" min="0" disabled>
+                                </div>
+                            </div>
+
+                            <!-- ⑥ Target ─────────────────────────────────────────── -->
+                            <div class="tcp-card">
+                                <div class="tcp-card-hdr">
+                                    <label class="tcp-tog">
+                                        <input type="checkbox" id="tcpTgtEnabled">
+                                        <span class="tcp-tog-track"></span>
+                                    </label>
+                                    <span class="tcp-card-title">Target</span>
+                                </div>
+                                <div class="tcp-card-body">
+                                    <select id="tcpTgtUnit" class="tcp-sel tcp-unit-sel" disabled>
+                                        <option value="points">Points</option>
+                                        <option value="pct">Percentage</option>
+                                    </select>
+                                    <input type="number" id="tcpTgtValue" class="tcp-num" value="0" min="0" disabled>
+                                </div>
+                            </div>
+
+                            <!-- ⑦ Trailing SL (X lock, Y trail — Y must be < X) ── -->
+                            <div class="tcp-card" id="tcpTslCard">
+                                <div class="tcp-card-hdr">
+                                    <label class="tcp-tog">
+                                        <input type="checkbox" id="tcpTslEnabled">
+                                        <span class="tcp-tog-track"></span>
+                                    </label>
+                                    <span class="tcp-card-title">Trail SL</span>
+                                </div>
+                                <div class="tcp-card-body">
+                                    <select id="tcpTslUnit" class="tcp-sel tcp-unit-sel" disabled>
+                                        <option value="points">Points</option>
+                                        <option value="pct">Percentage</option>
+                                    </select>
+                                    <span class="tcp-xy-lbl">X</span>
+                                    <input type="number" id="tcpTslX" class="tcp-num" value="0" min="0"
+                                        placeholder="Lock" title="Lock profit at X" disabled>
+                                    <span class="tcp-xy-lbl">Y</span>
+                                    <input type="number" id="tcpTslY" class="tcp-num" value="0" min="0"
+                                        placeholder="Trail" title="Trail by Y (must be < X)" disabled>
+                                </div>
+                                <span class="tcp-val-tip" id="tcpTslErr">Y must be &lt; X</span>
+                            </div>
+
+                            <!-- ⑧ Trading Mode ───────────────────────────────────── -->
+                            <div class="tcp-card" style="border-right:none;">
+                                <div class="tcp-card-title">Trading Mode</div>
+                                <div class="tcp-card-body">
+                                    <select id="tcpTradeMode" class="tcp-sel tcp-mode-sel">
+                                        <option value="manual">Manual Trade</option>
+                                        <option value="semi_auto">Semi Automatic Trade</option>
+                                        <option value="auto">Automatic Trade</option>
+                                    </select>
+                                    <button id="tcpPauseBtn" class="tcp-pause-btn" style="display:none;">Pause</button>
+                                </div>
+                            </div>
+
+                        </div><!-- /tcp-row-1 -->
+
+                        <!-- ══ Row 2: time control + run strategy ═══════════════════ -->
+                        <div class="tcp-row tcp-row-2">
+
+                            <!-- ⑨ Strike Type ───────────────────────────────────── -->
+                            <div class="tcp-card">
+                                <!-- heading row: toggle + title -->
+                                <div class="tcp-card-hdr">
+                                    <label class="tcp-tog">
+                                        <input type="checkbox" id="tcpStrikeEnabled">
+                                        <span class="tcp-tog-track"></span>
+                                    </label>
+                                    <span class="tcp-card-title">Strike Type</span>
+                                </div>
+                                <!-- body: mode + value in the same row, always visible -->
+                                <div id="tcpStrikeBody" class="tcp-card-body" style="flex-wrap:nowrap;">
+                                    <select id="tcpStrikeMode" class="tcp-sel tcp-strike-mode-sel" disabled>
+                                        <option value="delta">Delta</option>
+                                        <option value="closest_premium">Closest Premium</option>
+                                        <option value="strike">Strike</option>
+                                    </select>
+                                    <!-- value container: textbox OR strike dropdown -->
+                                    <div class="tcp-card-body" id="tcpStrikeValue" style="padding:0; margin:0;">
+                                        <input type="number" id="tcpStrikeInput" class="tcp-num tcp-strike-val"
+                                            placeholder="Value" min="0" step="0.01" disabled>
+                                        <select id="tcpStrikeDrop" class="tcp-sel tcp-strike-drop"
+                                            style="display:none; min-width:110px;" disabled>
+                                            <!-- populated by JS: OTM 30 … OTM 1, ATM, ITM 1 … ITM 30 -->
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ⑩ Time Control ─────────────────────────────────── -->
+                            <div class="tcp-card">
+                                <div class="tcp-card-hdr">
+                                    <label class="tcp-tog">
+                                        <input type="checkbox" id="tcpTimeEnabled">
+                                        <span class="tcp-tog-track"></span>
+                                    </label>
+                                    <span class="tcp-card-title">Time Control</span>
+                                </div>
+                                <div class="tcp-card-body" id="tcpTimePickers">
+                                    <span class="tcp-time-lbl">Entry Time</span>
+                                    <input type="time" id="tcpEntryTime" class="tcp-time" value="09:15" disabled>
+                                    <span class="tcp-time-lbl" style="margin-left:10px;">Exit Time</span>
+                                    <input type="time" id="tcpExitTime" class="tcp-time" value="15:30" disabled>
+                                </div>
+                            </div>
+
+                            <!-- ⑩ Run Strategy ───────────────────────────────────── -->
+                            <div class="tcp-card" style="justify-content:center; padding:0 14px;">
+                                <button class="btn btn-outline-secondary btn-sm strategy_button"
+                                    style="white-space:nowrap;">
+                                    Run Strategy
+                                </button>
+                            </div>
+
+                            <!-- ⑪ Next Adjustment Deduct ─────────────────────────── -->
+                            <div class="tcp-card" style="justify-content:center; padding:0 14px;">
+                                <button id="nextAdjDeductBtn" class="btn btn-outline-primary btn-sm"
+                                    style="white-space:nowrap;">
+                                    Next Adjustment Deduct
+                                </button>
+                            </div>
+
+                            <!-- ⑫ NAD Inline Result (same row, expands rightward) ──── -->
+                            <div id="nadInlineResult" style="display:none; align-items:center; gap:8px;
+                       padding:0 12px; flex-shrink:0; white-space:nowrap; border-left:1px solid #dde3ed;"></div>
+
+                        </div><!-- /tcp-row-2 -->
+
+                    </div><!-- /tcp-bar -->
+
+                    <script>
+                        (function () {
+                            'use strict';
+
+                            /* ── 1. Lot selector 1–50 ─────────────────────────── */
+                            var lotSel = document.getElementById('tcpLotSelector');
+                            if (lotSel) {
+                                for (var i = 1; i <= 50; i++) {
+                                    var o = document.createElement('option');
+                                    o.value = i;
+                                    o.textContent = i + (i === 1 ? ' Lot' : ' Lots');
+                                    lotSel.appendChild(o);
+                                }
+                            }
+
+                            /* ── 2a. Toggle helper → enable / disable its inputs ── */
+                            function wireToggle(cbId, fieldIds) {
+                                var cb = document.getElementById(cbId);
+                                if (!cb) return;
+                                function sync() {
+                                    fieldIds.forEach(function (id) {
+                                        var el = document.getElementById(id);
+                                        if (el) el.disabled = !cb.checked;
+                                    });
+                                }
+                                cb.addEventListener('change', sync);
+                                sync(); // run once on load
+                            }
+                            wireToggle('tcpSlEnabled', ['tcpSlUnit', 'tcpSlValue']);
+                            wireToggle('tcpTgtEnabled', ['tcpTgtUnit', 'tcpTgtValue']);
+                            wireToggle('tcpTslEnabled', ['tcpTslUnit', 'tcpTslX', 'tcpTslY']);
+
+                            /* ── 2b. Toggle helper → show / hide a container div ── */
+                            function wireToggleShow(cbId, containerId) {
+                                var cb = document.getElementById(cbId);
+                                var container = document.getElementById(containerId);
+                                if (!cb || !container) return;
+                                function sync() {
+                                    container.style.display = cb.checked ? 'flex' : 'none';
+                                }
+                                cb.addEventListener('change', sync);
+                                sync(); // run once on load
+                            }
+                            /* Time Control: enable/disable inputs (never hide) */
+                            (function () {
+                                var cb = document.getElementById('tcpTimeEnabled');
+                                var entry = document.getElementById('tcpEntryTime');
+                                var exit = document.getElementById('tcpExitTime');
+                                if (!cb) return;
+                                function syncTime() {
+                                    var on = cb.checked;
+                                    if (entry) entry.disabled = !on;
+                                    if (exit) exit.disabled = !on;
+                                }
+                                cb.addEventListener('change', syncTime);
+                                syncTime();
+                            })();
+
+                            /* ── 2c. Strike Type: populate tcpStrikeDrop + enable/disable + swap ── */
+                            (function () {
+                                var cb = document.getElementById('tcpStrikeEnabled');
+                                var modeSel = document.getElementById('tcpStrikeMode');
+                                var valInput = document.getElementById('tcpStrikeInput');
+                                var drop = document.getElementById('tcpStrikeDrop');
+
+                                /* ── populate OTM 30 → OTM 1 → ATM → ITM 1 → ITM 30 ── */
+                                if (drop) {
+                                    var frag = document.createDocumentFragment();
+                                    for (var i = 30; i >= 1; i--) {
+                                        var o = document.createElement('option');
+                                        o.value = 'OTM' + i; o.dataset.dir = 'otm';
+                                        o.textContent = 'OTM ' + i; frag.appendChild(o);
+                                    }
+                                    var atm = document.createElement('option');
+                                    atm.value = 'ATM'; atm.textContent = 'ATM'; atm.selected = true;
+                                    frag.appendChild(atm);
+                                    for (var j = 1; j <= 30; j++) {
+                                        var p = document.createElement('option');
+                                        p.value = 'ITM' + j; p.dataset.dir = 'itm';
+                                        p.textContent = 'ITM ' + j; frag.appendChild(p);
+                                    }
+                                    drop.appendChild(frag);
+                                }
+
+                                /* ── swap textbox ↔ strike dropdown based on mode ── */
+                                function syncStrikeMode() {
+                                    if (!modeSel || !valInput || !drop) return;
+                                    var isStrike = modeSel.value === 'strike';
+                                    valInput.style.display = isStrike ? 'none' : 'inline-block';
+                                    drop.style.display = isStrike ? 'inline-block' : 'none';
+                                    valInput.placeholder = modeSel.value === 'delta' ? 'Delta' : 'Premium';
+                                }
+                                if (modeSel) modeSel.addEventListener('change', syncStrikeMode);
+
+                                /* ── enable/disable all strike controls with toggle ── */
+                                function syncStrikeEnabled() {
+                                    var on = cb && cb.checked;
+                                    if (modeSel) modeSel.disabled = !on;
+                                    if (valInput) valInput.disabled = !on;
+                                    if (drop) drop.disabled = !on;
+                                }
+                                if (cb) cb.addEventListener('change', syncStrikeEnabled);
+
+                                /* run both on load */
+                                syncStrikeMode();
+                                syncStrikeEnabled();
+                            })();
+
+                            /* ── 3. Trail SL: Y < X validation ───────────────── */
+                            function validateTsl() {
+                                var xEl = document.getElementById('tcpTslX');
+                                var yEl = document.getElementById('tcpTslY');
+                                var errEl = document.getElementById('tcpTslErr');
+                                var cb = document.getElementById('tcpTslEnabled');
+                                if (!xEl || !yEl || !errEl) return true;
+                                var x = parseFloat(xEl.value) || 0;
+                                var y = parseFloat(yEl.value) || 0;
+                                var invalid = !!(cb && cb.checked && x > 0 && y >= x);
+                                yEl.classList.toggle('tcp-err', invalid);
+                                errEl.classList.toggle('show', invalid);
+                                return !invalid;
+                            }
+                            var tslX = document.getElementById('tcpTslX');
+                            var tslY = document.getElementById('tcpTslY');
+                            if (tslX) tslX.addEventListener('input', validateTsl);
+                            if (tslY) tslY.addEventListener('input', validateTsl);
+
+                            /* ── 4. Trade mode → show / hide Pause button ─────── */
+                            var modeEl = document.getElementById('tcpTradeMode');
+                            var pauseEl = document.getElementById('tcpPauseBtn');
+                            function syncMode() {
+                                if (!pauseEl) return;
+                                pauseEl.style.display =
+                                    (modeEl && modeEl.value === 'semi_auto') ? 'inline-block' : 'none';
+                            }
+                            if (modeEl) modeEl.addEventListener('change', syncMode);
+                            syncMode();
+
+                            /* ── 5. Pause ↔ Continue ──────────────────────────── */
+                            if (pauseEl) {
+                                pauseEl.addEventListener('click', function () {
+                                    var paused = pauseEl.classList.toggle('is-paused');
+                                    pauseEl.textContent = paused ? 'Continue' : 'Pause';
+                                });
+                            }
+
+                            /* ── 6. Expose settings to strategy / adj engine ─── */
+                            window.tcpGetSettings = function () {
+                                var x = parseFloat(document.getElementById('tcpTslX')?.value || 0);
+                                var y = parseFloat(document.getElementById('tcpTslY')?.value || 0);
+                                return {
+                                    lots: parseInt(document.getElementById('tcpLotSelector')?.value || 1, 10),
+                                    timeframe: document.getElementById('tcpTimeframe')?.value || '5m',
+                                    lookbackMinutes: parseInt(document.getElementById('tcpLookbackMinutes')?.value || 0, 10),
+                                    tradeMode: document.getElementById('tcpTradeMode')?.value || 'manual',
+                                    isRunning: pauseEl ? !pauseEl.classList.contains('is-paused') : true,
+                                    stopLoss: {
+                                        enabled: document.getElementById('tcpSlEnabled')?.checked || false,
+                                        unit: document.getElementById('tcpSlUnit')?.value || 'points',
+                                        value: parseFloat(document.getElementById('tcpSlValue')?.value || 0)
+                                    },
+                                    target: {
+                                        enabled: document.getElementById('tcpTgtEnabled')?.checked || false,
+                                        unit: document.getElementById('tcpTgtUnit')?.value || 'points',
+                                        value: parseFloat(document.getElementById('tcpTgtValue')?.value || 0)
+                                    },
+                                    trailSL: {
+                                        enabled: document.getElementById('tcpTslEnabled')?.checked || false,
+                                        unit: document.getElementById('tcpTslUnit')?.value || 'points',
+                                        x: x,
+                                        y: y,
+                                        valid: !(x > 0 && y >= x)
+                                    },
+                                    timeControl: {
+                                        enabled: document.getElementById('tcpTimeEnabled')?.checked || false,
+                                        entryTime: document.getElementById('tcpEntryTime')?.value || '09:15',
+                                        exitTime: document.getElementById('tcpExitTime')?.value || '15:30'
+                                    },
+                                    strikeType: {
+                                        enabled: document.getElementById('tcpStrikeEnabled')?.checked || false,
+                                        mode: document.getElementById('tcpStrikeMode')?.value || 'delta',
+                                        value: parseFloat(document.getElementById('tcpStrikeInput')?.value || 0),
+                                        strike: document.getElementById('tcpStrikeDrop')?.value || 'ATM'
+                                    }
+                                };
+                            };
+
+                        })();
+                    </script>
+                    <!-- ══ /Trading Control Bar ════════════════════════════════ -->
+
+                    <div class="row simulator_content">
+                        <div class="simulator_box smulator_option_chain_box __no__print">
+                            <div class="simulator_card">
+                                <div class="pcr">
+                                    <div class="dropdown add_ons">
+                                        <div data-toggle="dropdown" class="add_on_button">
+                                            <div class="filter__applied active__filter"></div>
+                                            <img src="assets/images/addon.svg" />Add ons<img
+                                                src="assets/images/arrow_down.svg" />
+                                        </div>
+                                        <div class="dropdown-menu">
+                                            <form>
+                                                <div class="dropdown-item">
+                                                    <label class="checkbox-container">
+                                                        <div class="checkbox-label">
+                                                            <input type="checkbox" /><span
+                                                                class="checkbox-custom"></span>
+                                                        </div>
+                                                        <div class="checkbox__title">
+                                                            Delta(∆)
+                                                        </div>
+                                                    </label>
+                                                </div>
+                                                <div class="dropdown-item">
+                                                    <label class="checkbox-container">
+                                                        <div class="checkbox-label">
+                                                            <input type="checkbox" /><span
+                                                                class="checkbox-custom"></span>
+                                                        </div>
+                                                        <div class="checkbox__title">
+                                                            Call &amp; Put IV
+                                                        </div>
+                                                    </label>
+                                                </div>
+                                                <div class="dropdown-item">
+                                                    <label class="checkbox-container">
+                                                        <div class="checkbox-label">
+                                                            <input type="checkbox" /><span
+                                                                class="checkbox-custom"></span>
+                                                        </div>
+                                                        <div class="checkbox__title">OI</div>
+                                                    </label>
+                                                </div>
+                                                <div class="dropdown-item">
+                                                    <label class="checkbox-container" style="justify-content: center">
+                                                        <div class="checkbox-label">
+                                                            <input type="checkbox" /><span
+                                                                class="checkbox-custom"></span>
+                                                        </div>
+                                                        <div class="checkbox__title">
+                                                            Show All OI
+                                                        </div>
+                                                    </label>
+                                                </div>
+                                                <div class="dropdown-item">
+                                                    <label class="checkbox-container">
+                                                        <div class="checkbox-label">
+                                                            <input type="checkbox" /><span
+                                                                class="checkbox-custom"></span>
+                                                        </div>
+                                                        <div class="checkbox__title">ATM</div>
+                                                    </label>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="__input__type__radio tab__viewer">
+                                    <label style="width: 100%"><input name="expiry_payoff" type="radio" />
+                                        <div>
+                                            <b>Option Chain<span class="option_chain_expiry">(17 MAR 2026)</span><a
+                                                    class="hide_image" style="opacity: 1"><img
+                                                        src="assets/images/hide_left.svg" /></a></b>
+                                        </div>
+                                    </label>
+                                </div>
+                                <div class="expiry__viewer expiry-carousel" data-step="128">
+                                    <button class="expiry-carousel__arrow expiry-carousel__arrow--prev" type="button"
+                                        aria-label="Previous expiries">
+                                        &#8249;
+                                    </button>
+                                    <div class="expiry-carousel__viewport">
+                                        <div class="expiry-carousel__track">
+                                            <div class="expiry_button item selected__oc__expiry">
+                                                <button>17 MAR '26</button>
+                                                <div class="expiry_indicator">(CW: 6 DTE)</div>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>24 MAR '26</button>
+                                                <div class="expiry_indicator">(NW: 13 DTE)</div>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>30 MAR '26</button>
+                                                <div class="expiry_indicator">(CM: 19 DTE)</div>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>7 APR '26</button>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>13 APR '26</button>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>28 APR '26</button>
+                                                <div class="expiry_indicator">(NM: 48 DTE)</div>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>26 MAY '26</button>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>30 JUN '26</button>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>29 SEP '26</button>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>29 DEC '26</button>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>28 DEC '27</button>
+                                            </div>
+                                            <div class="expiry_button item">
+                                                <button>26 DEC '28</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button class="expiry-carousel__arrow expiry-carousel__arrow--next" type="button"
+                                        aria-label="Next expiries">
+                                        &#8250;
+                                    </button>
+                                </div>
+                                <div class="eod__message oc_filter row">
+                                    <div class="d-flex">
+                                        <div>ATM IV:</div>
+                                        <div class="ml-1" style="color: rgb(70, 70, 70)">
+                                            21
+                                        </div>
+                                    </div>
+                                    <div class="d-flex">
+                                        <div>ATM:</div>
+                                        <div class="squar__off__type ml-2">
+                                            <div>
+                                                <label class="checkbox-container">
+                                                    <div class="checkbox-label">
+                                                        <input type="radio" /><span
+                                                            class="checkbox-custom radio__type"></span>
+                                                    </div>
+                                                    <div class="checkbox__title">Spot</div>
+                                                </label><label class="checkbox-container ml-2">
+                                                    <div class="checkbox-label">
+                                                        <input type="radio" /><span
+                                                            class="checkbox-custom radio__type"></span>
+                                                    </div>
+                                                    <div class="checkbox__title">Fut</div>
+                                                </label><label class="checkbox-container ml-2">
+                                                    <div class="checkbox-label">
+                                                        <input type="radio" /><span
+                                                            class="checkbox-custom radio__type"></span>
+                                                    </div>
+                                                    <div class="checkbox__title">
+                                                        Synth Fut
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="d-flex">
+                                        <div>Straddle Prem:</div>
+                                        <div class="ml-1" id="straddlePremValue" style="color: rgb(70, 70, 70)">—
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="eod__message oc_filter row">
+                                    <div class="d-flex">
+                                        <div>PCR:</div>
+                                        <div class="ml-1" style="color: rgb(70, 70, 70)">
+                                            0.73
+                                        </div>
+                                    </div>
+                                    <div class="total_oi">
+                                        <div class="total_call_oi">
+                                            10.8Cr<span class="simulator_green_text">(+4.6Cr)</span>
+                                        </div>
+                                        <div class="progress total_call_progress">
+                                            <div class="progress-bar" style="width: 100%"></div>
+                                        </div>
+                                        OI
+                                        <div class="progress total_put_progress">
+                                            <div class="progress-bar" style="width: 100%"></div>
+                                        </div>
+                                        <div class="total_put_oi">
+                                            7.9Cr<span class="simulator_green_text">(+2.4Cr)</span>
+                                        </div>
+                                    </div>
+                                    <div class="d-flex">
+                                        <div>Max Pain:</div>
+                                        <div class="ml-1" style="color: rgb(70, 70, 70)">
+                                            24250
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="optionChainTable">
+                                    <div class="optionchain_table">
+
+                                    </div>
+                                </div>
+                                <!-- Slot that receives stats + positions when OC is hidden -->
+                                <div id="ocPositionsSlot"
+                                    style="display:none; overflow-y:auto; overflow-x:auto; flex:1 1 0; min-height:0;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="simulator_box simulator_result_box">
+                            <div class="simulator_card">
+                                <div class="table_tabs_container">
+                                    <ul class="nav nav-tab table_tabs">
+                                        <li class="nav-item">
+                                            <a class="nav-link active">Payoff Chart</a>
+                                        </li>
+                                        <li class="nav-item"><a class="nav-link">MTM 📈</a></li>
+                                        <li class="nav-item">
+                                            <a class="nav-link">Strategy 📈</a>
+                                        </li>
+                                        <li class="nav-item"><a class="nav-link">OI 📈</a></li>
+                                        <li class="nav-item">
+                                            <a class="nav-link">Rolling Straddle 📈</a>
+                                        </li>
+                                        <li class="nav-item m-0">
+                                            <div class="time_on_print">
+                                                Wed, Mar 11, 2026 10:01:59
+                                            </div>
+                                        </li>
+                                    </ul>
+
+                                </div>
+                                <div class="eod__message row simulator__stats">
+                                    <div>
+                                        <div>Est. Margin:</div>
+                                        <div class="d-flex align-items-center font-weight-bold"
+                                            style="color: rgb(70, 70, 70)">
+                                            <span id="requiredMarginDisplay">₹1.16L</span><a class="ml-1"><img
+                                                    src="assets/images/refresh.svg"
+                                                    style="width: 12px; height: 12px" /></a>
+                                        </div>
+                                    </div>
+                                    <!-- <div class="stat-card" id="marginCard" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left: 4px solid #f59e0b;">
+                <div class="stat-label" style="color: #92400e;">Required Margin</div>
+                <div class="stat-value" id="requiredMargin" style="color: #78350f; font-size: 15px;">—</div>
+                <div style="font-size: 10px; color: #92400e; margin-top: 4px;" id="marginBreakdown"></div>
+                <div style="font-size: 10px; color: #dc2626; font-weight: 600; margin-top: 2px; display:none;" id="expiryElmNote">⚠ Expiry Day: +2% ELM</div>
+            </div> -->
+                                    <div>
+                                        <div>P&amp;L:</div>
+                                        <div class="simulator_green_text" id="currentPnLContainer">
+                                            <span id="overall_pnl">₹0</span><span class="expiry_indicator"
+                                                id="currentPnLPct"> (0.0%)</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div>Max Profit:</div>
+                                        <div class="simulator_green_text">
+                                            <span id="maxProfit">₹21,285</span><span class="expiry_indicator">
+                                                (18.4%)</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div>Max Loss:</div>
+                                        <div class="simulator_red_text">
+                                            <span id="maxLoss">₹-11,213</span><span class="expiry_indicator">
+                                                (-9.7%)</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div>R:R</div>
+                                        <div class="font-weight-bold" style="color: rgb(70, 70, 70)">
+                                            1 : 1.9
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div>POP:</div>
+                                        <div id="popDisplay" class="font-weight-bold" style="color: rgb(70, 70, 70)">
+                                            —
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div>Net Credit:</div>
+                                        <div id="netCreditDisplay" class="simulator_green_text">—</div>
+                                    </div>
+                                    <div class="breakeven_small">
+                                        <div>Breakevens:</div>
+                                        <div id="breakevenDisplay" class="font-weight-bold breakevan_box"
+                                            style="color: rgb(70, 70, 70)">
+                                            —
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="simulatorStrategyTable" class="payoffStrategyTable">
+                                    <div class="watermark_on_print"></div>
+                                    <div class="payOffChartContainer" id="payOffChartContainer"
+                                        data-highcharts-chart="3" style="overflow: hidden">
+
+
+                                        <!--  PAYOFF GRAPH START  -->
+
+
+
+
+
+
+                                        <div class="main-container">
+                                            <!-- Chart Section -->
+                                            <div class="chart-section">
+                                                <!-- <div class="header">
+                <div class="sd-labels">
+                    <span>-2SD</span>
+                    <span style="margin-left: 120px;">-1SD</span>
+                    <span style="margin-left: 240px;">1SD</span>
+                    <span style="margin-left: 120px;">2SD</span>
+                </div>
+                <div class="current-price">Current price: <strong id="currentPriceDisplay">25670.50</strong></div>
+                <button class="zoom-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                        <line x1="8" y1="11" x2="14" y2="11"></line>
+                    </svg>
+                    Zoom Out
+                </button>
+            </div> -->
+
+                                                <!-- <div class="oi-info">
+                OI data at <strong>25650</strong> | 
+                <span class="put-color">Call OI 761.26L</span> | 
+                <span class="call-color">Put OI 607.50L</span> | 
+                <span style="color: #10b981;">— On Expiry</span> 
+                <span style="color: #3b82f6;">— On Target Date</span>
+            </div> -->
+
+                                                <div class="chart-wrapper">
+                                                    <canvas id="payoffChart"></canvas>
+                                                    <div id="payoffTooltip" class="payoff-tooltip"></div>
+                                                    <div id="adjLineUpper" class="adj-line adj-line-upper"
+                                                        style="display:none;">
+                                                        <div class="adj-line-label" id="adjLabelUpper"></div>
+                                                    </div>
+                                                    <div id="adjLineLower" class="adj-line adj-line-lower"
+                                                        style="display:none;">
+                                                        <div class="adj-line-label" id="adjLabelLower"></div>
+                                                    </div>
+                                                    <div class="spot-line" id="spotLine" style="display: none;">
+                                                    </div>
+                                                    <div class="spot-price-label" id="spotPriceLabel"
+                                                        style="display: none;">₹25500</div>
+                                                    <div class="floating-pnl" id="floatingPnL" style="display: none;">
+                                                        <span id="floatingPnLText">Projected: ₹0</span>
+                                                        <span class="info-icon">ⓘ</span>
+                                                    </div>
+                                                    <div class="zoom-selection" id="zoomSelection"></div>
+                                                    <button class="zoom-reset-btn" id="zoomResetBtn">Reset
+                                                        Zoom</button>
+                                                    <div class="zoom-controls">
+                                                        <button type="button" class="zoom-ctrl-btn" id="zoomInBtn"
+                                                            title="Zoom In">+</button>
+                                                        <button type="button" class="zoom-ctrl-btn" id="zoomOutBtn"
+                                                            title="Zoom Out">−</button>
+                                                    </div>
+                                                    <!-- Stoploss configurator elements -->
+                                                    <button class="sl-config-btn" id="slConfigBtn">&#9889;
+                                                        Stoploss</button>
+                                                    <div class="sl-hover-line" id="slHoverLine" style="display:none;">
+                                                    </div>
+                                                    <div class="sl-marker-line" id="slMarkerLine" style="display:none;">
+                                                    </div>
+                                                    <div class="sl-shade-region" id="slShadeRegion"
+                                                        style="display:none;"></div>
+                                                    <!-- Persistent saved markers (upper >= and lower <=) -->
+                                                    <div class="sl-marker-line sl-marker-upper" id="slMarkerUpper"
+                                                        style="display:none;">
+                                                        <div class="sl-marker-label sl-label-upper" id="slLabelUpper">
+                                                        </div>
+                                                    </div>
+                                                    <div class="sl-marker-line sl-marker-lower" id="slMarkerLower"
+                                                        style="display:none;">
+                                                        <div class="sl-marker-label sl-label-lower" id="slLabelLower">
+                                                        </div>
+                                                    </div>
+                                                    <div class="sl-shade-region" id="slShadeUpper"
+                                                        style="display:none;"></div>
+                                                    <div class="sl-shade-region" id="slShadeLower"
+                                                        style="display:none;"></div>
+                                                    <!-- Floating config panel (inside chart-wrapper so it scrolls with it) -->
+                                                    <div class="sl-config-panel" id="slConfigPanel"
+                                                        style="display:none;">
+                                                        <div class="sl-panel-header">
+                                                            <span class="sl-panel-title">&#9889; Configure
+                                                                Stoploss</span>
+                                                            <button class="sl-panel-close"
+                                                                id="slPanelClose">&times;</button>
+                                                        </div>
+                                                        <div class="sl-panel-body">
+                                                            <div class="sl-instruction" id="slInstruction">Click on
+                                                                the chart to place stoploss
+                                                                level</div>
+                                                            <div class="sl-panel-row">
+                                                                <label>Trigger when NIFTY goes</label>
+                                                                <div class="sl-condition-row">
+                                                                    <select id="slCondition">
+                                                                        <option value="<=">Below &le;</option>
+                                                                        <option value=">=">Above &ge;</option>
+                                                                    </select>
+                                                                    <input type="number" id="slPriceInput"
+                                                                        placeholder="Price" step="50">
+                                                                </div>
+                                                            </div>
+                                                            <div class="sl-panel-row">
+                                                                <label>Current Spot</label>
+                                                                <span id="slSpotDisplay" class="sl-spot-value">—</span>
+                                                            </div>
+                                                            <div class="sl-panel-row">
+                                                                <div class="sl-diff-row">
+                                                                    <span id="slPointsDiff">— pts</span>
+                                                                    <span id="slPctDiff">—%</span>
+                                                                </div>
+                                                            </div>
+                                                            <div class="sl-pnl-box" id="slPnlBox">
+                                                                <div class="sl-pnl-label">Approx P&amp;L at exit
+                                                                </div>
+                                                                <div class="sl-pnl-value" id="slPnlValue">—</div>
+                                                            </div>
+                                                            <div class="sl-panel-actions">
+                                                                <button class="sl-cancel-btn"
+                                                                    id="slCancelBtn">Cancel</button>
+                                                                <button class="sl-save-btn" id="slSaveBtn"
+                                                                    disabled>Save</button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="payoff-bottom">
+                                                    P&amp;L : <span id="payoffPnL">₹0</span>
+                                                </div>
+                                                <div id="slSavedBar" style="display:none;" class="sl-saved-bar">
+                                                    <span id="slSavedText">Stoploss: —</span>
+                                                    <span class="sl-saved-edit" id="slSavedEdit">Edit</span>
+                                                </div>
+
+                                                <!-- <div style="text-align: center;">
+                <div class="projected-profit" id="projectedProfitDiv">
+                    <span id="projectedProfitText"></span>
+                    <span class="info-icon">ⓘ</span>
+                </div>
+            </div>  -->
+                                            </div>
+
+                                            <!-- Stats Panel -->
+                                            <!-- <div class="stats-panel">
+            <div class="stat-card profit">
+                <div class="stat-label">Max Profit</div>
+                <div class="stat-value" id="maxProfit">₹260.00</div>
+            </div>
+            <div class="stat-card loss">
+                <div class="stat-label">Max Loss</div>
+                <div class="stat-value" id="maxLoss">₹-40.00</div>
+            </div>
+            <div class="stat-card current">
+                <div class="stat-label">Current P&L</div>
+                <div class="stat-value" id="currentPnL">₹260.00</div>
+            </div>
+            <div class="stat-card breakeven">
+                <div class="stat-label">Breakeven Points</div>
+                <div class="stat-value" id="breakevenPoints">₹25241, ₹25769</div>
+            </div>
+           <div class="stat-card" id="marginCard" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left: 4px solid #f59e0b;">
+                <div class="stat-label" style="color: #92400e;">Required Margin</div>
+                <div class="stat-value" id="requiredMargin" style="color: #78350f; font-size: 15px;">—</div>
+                <div style="font-size: 10px; color: #92400e; margin-top: 4px;" id="marginBreakdown"></div>
+                <div style="font-size: 10px; color: #dc2626; font-weight: 600; margin-top: 2px; display:none;" id="expiryElmNote">⚠ Expiry Day: +2% ELM</div>
+            </div> 
+        </div>  -->
+                                        </div>
+
+                                        <!-- Option Legs Section -->
+                                        <div class="legs-section" style="display:none">
+                                            <div class="legs-header">
+                                                <h2 class="legs-title">Option Legs</h2>
+                                                <button class="add-leg-btn" onclick="addLeg()">
+                                                    <span>+</span> Add Leg
+                                                </button>
+                                            </div>
+
+                                            <div class="spot-price-slider">
+                                                <div class="spot-label">Current Spot Pricee: ₹<span
+                                                        id="spotPriceValue">25670.50</span></div>
+                                                <div class="slider-container">
+                                                    <input type="range" min="24000" max="27000" value="25670.5"
+                                                        step="10" class="slider" id="spotPriceSlider">
+                                                </div>
+
+                                                <div
+                                                    style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 15px;">
+                                                    <div>
+                                                        <label
+                                                            style="font-size: 12px; color: #92400e; display: block; margin-bottom: 5px;">Target
+                                                            Date (Blue Line)</label>
+                                                        <input type="date" id="targetDate"
+                                                            value="${new Date().toISOString().split('T')[0]}"
+                                                            style="width: 100%; padding: 8px; border: 1px solid #fbbf24; border-radius: 4px; background: white;">
+                                                    </div>
+                                                    <div>
+                                                        <label
+                                                            style="font-size: 12px; color: #92400e; display: block; margin-bottom: 5px;">
+                                                            IV Change (%)
+                                                            <span style="font-weight: normal; opacity: 0.8;"
+                                                                title="Added to ATM IV from option chain data. 0 = use market IV as-is.">ⓘ</span>
+                                                        </label>
+                                                        <input type="number" id="volatility" value="0" min="-20"
+                                                            max="20" step="0.5"
+                                                            style="width: 100%; padding: 8px; border: 1px solid #fbbf24; border-radius: 4px; background: white;">
+                                                    </div>
+                                                    <div>
+                                                        <label
+                                                            style="font-size: 12px; color: #92400e; display: block; margin-bottom: 5px;">Risk-free
+                                                            Rate (%)</label>
+                                                        <input type="number" id="riskFreeRate" value="6" min="0"
+                                                            max="20" step="0.5"
+                                                            style="width: 100%; padding: 8px; border: 1px solid #fbbf24; border-radius: 4px; background: white;">
+                                                    </div>
+                                                </div>
+                                                <div
+                                                    style="margin-top: 10px; font-size: 11px; color: #92400e; opacity: 0.8;">
+                                                    Blue line uses ATM IV from option chain data + IV Change offset.
+                                                    IV = 0 means market IV
+                                                    as-is.
+                                                </div>
+                                            </div>
+
+                                            <div class="legs-list" id="legsList" style="display: none;">
+                                            </div>
+                                        </div>
+
+
+
+
+
+                                        <!--  PAYOFF GRAPH END  -->
+                                    </div>
+                                    <div class="row eod__message advance__setting">
+                                        <div class="d-flex">
+                                            <div class="mr-2">Change IV:</div>
+                                            <div class="reset_change_spot mobile__only"
+                                                style="margin: 0px 15px 0px auto"></div>
+                                            <div class="simulator_group_input">
+                                                <button type="button" class="sign_button"
+                                                    onclick="changeIV(-5)">-</button><input disabled=""
+                                                    id="changeIVDisplay" value="0%"
+                                                    style="text-align:center;min-width:48px;" /><button type="button"
+                                                    class="sign_button" onclick="changeIV(5)">+</button>
+                                            </div>
+                                            <div class="mr-2" style="margin-left:10px;font-size:12px;color:#555;">
+                                                New IV: <span id="newIVDisplay" style="font-weight:600;">-</span>
+                                            </div>
+                                            <div class="reset_change_spot web__only"></div>
+                                        </div>
+                                        <div class="d-flex">
+                                            <div class="reset_change_spot web__only"></div>
+                                            <div class="mr-2">Target On:</div>
+                                            <div class="payoff_date_picker position__strike mr-1">
+                                                <button disabled="" class="arrow_button" style="margin: 0px 2px">
+                                                    &lt;
+                                                </button>
+                                                <div class="date_div">Wed, Mar 11, 2026</div>
+                                                <button class="arrow_button" style="margin: 0px 2px">
+                                                    &gt;
+                                                </button>
+                                            </div>
+                                            <select id="tTimeToConsider_h" class="__box__input mr-1">
+                                                <option value="9">9</option>
+                                                <option value="10">10</option>
+                                                <option value="11">11</option>
+                                                <option value="12">12</option>
+                                                <option value="13">13</option>
+                                                <option value="14">14</option>
+                                                <option value="15">15</option>
+                                            </select><select id="tTimeToConsider_m" class="__box__input">
+                                                <option value="00">00</option>
+                                                <option value="01">01</option>
+                                                <option value="02">02</option>
+                                                <option value="03">03</option>
+                                                <option value="04">04</option>
+                                                <option value="05">05</option>
+                                                <option value="06">06</option>
+                                                <option value="07">07</option>
+                                                <option value="08">08</option>
+                                                <option value="09">09</option>
+                                                <option value="10">10</option>
+                                                <option value="11">11</option>
+                                                <option value="12">12</option>
+                                                <option value="13">13</option>
+                                                <option value="14">14</option>
+                                                <option value="15">15</option>
+                                                <option value="16">16</option>
+                                                <option value="17">17</option>
+                                                <option value="18">18</option>
+                                                <option value="19">19</option>
+                                                <option value="20">20</option>
+                                                <option value="21">21</option>
+                                                <option value="22">22</option>
+                                                <option value="23">23</option>
+                                                <option value="24">24</option>
+                                                <option value="25">25</option>
+                                                <option value="26">26</option>
+                                                <option value="27">27</option>
+                                                <option value="28">28</option>
+                                                <option value="29">29</option>
+                                                <option value="30">30</option>
+                                                <option value="31">31</option>
+                                                <option value="32">32</option>
+                                                <option value="33">33</option>
+                                                <option value="34">34</option>
+                                                <option value="35">35</option>
+                                                <option value="36">36</option>
+                                                <option value="37">37</option>
+                                                <option value="38">38</option>
+                                                <option value="39">39</option>
+                                                <option value="40">40</option>
+                                                <option value="41">41</option>
+                                                <option value="42">42</option>
+                                                <option value="43">43</option>
+                                                <option value="44">44</option>
+                                                <option value="45">45</option>
+                                                <option value="46">46</option>
+                                                <option value="47">47</option>
+                                                <option value="48">48</option>
+                                                <option value="49">49</option>
+                                                <option value="50">50</option>
+                                                <option value="51">51</option>
+                                                <option value="52">52</option>
+                                                <option value="53">53</option>
+                                                <option value="54">54</option>
+                                                <option value="55">55</option>
+                                                <option value="56">56</option>
+                                                <option value="57">57</option>
+                                                <option value="58">58</option>
+                                                <option value="59">59</option>
+                                            </select>
+                                        </div>
+                                        <div class="d-flex">
+                                            <div class="reset_change_spot web__only"></div>
+                                            <div class="mr-2">Change Spot:</div>
+                                            <div class="reset_change_spot mobile__only"
+                                                style="margin: 0px 15px 0px auto"></div>
+                                            <div class="simulator_group_input mr-1">
+                                                <button class="sign_button">-</button><input /><button
+                                                    class="sign_button">+</button>
+                                            </div>
+                                            <div style="min-width: 30px; text-align: right">
+                                                0.0%
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="table_tabs_container">
+                                        <ul class="nav nav-tab table_tabs">
+                                            <li class="nav-item">
+                                                <a data-toggle="tab" href="https://www.stockmock.in/#strategy"
+                                                    class="nav-link active">Positions
+                                                </a>
+                                            </li>
+                                            <li class="nav-item">
+                                                <a data-toggle="tab" href="https://www.stockmock.in/#greeks"
+                                                    class="nav-link">Greeks</a>
+                                            </li>
+                                            <li class="nav-item">
+                                                <a data-toggle="tab" href="https://www.stockmock.in/#targetPnl"
+                                                    class="nav-link">Target
+                                                    P&amp;L
+                                                    <span class="expiry_indicator">(blue line)</span></a>
+                                            </li>
+                                        </ul>
+                                        <ul class="nav nav-tab table_tabs">
+                                            <button class="btn btn-light btn-xs mr-3 icon_button add_notes_button">
+                                                <i class="fa fa-plus __share__icon"></i>Add Notes
+                                            </button>
+                                            <div class="dropdown add_ons view_filter">
+                                                <div data-toggle="dropdown" class="add_on_button">
+                                                    <img src="assets/images/addon.svg" />Add ons<img
+                                                        src="assets/images/arrow_down.svg" />
+                                                </div>
+                                                <div class="dropdown-menu">
+                                                    <form>
+                                                        <div class="dropdown-item">
+                                                            <label class="checkbox-container">
+                                                                <div class="checkbox-label">
+                                                                    <input type="checkbox" /><span
+                                                                        class="checkbox-custom"></span>
+                                                                </div>
+                                                                <div class="checkbox__title">
+                                                                    Entry/Exit Date
+                                                                </div>
+                                                            </label>
+                                                        </div>
+                                                        <div class="dropdown-item">
+                                                            <label class="checkbox-container">
+                                                                <div class="checkbox-label">
+                                                                    <input type="checkbox" /><span
+                                                                        class="checkbox-custom"></span>
+                                                                </div>
+                                                                <div class="checkbox__title">
+                                                                    Entry/Exit Date Time
+                                                                </div>
+                                                            </label>
+                                                        </div>
+                                                        <div class="dropdown-item">
+                                                            <label class="checkbox-container">
+                                                                <div class="checkbox-label">
+                                                                    <input type="checkbox" /><span
+                                                                        class="checkbox-custom"></span>
+                                                                </div>
+                                                                <div class="checkbox__title">
+                                                                    Delta
+                                                                </div>
+                                                            </label>
+                                                        </div>
+                                                        <div class="dropdown-item">
+                                                            <label class="checkbox-container">
+                                                                <div class="checkbox-label">
+                                                                    <input type="checkbox" /><span
+                                                                        class="checkbox-custom"></span>
+                                                                </div>
+                                                                <div class="checkbox__title">
+                                                                    Multiply Greeks by Lot Size
+                                                                </div>
+                                                            </label>
+                                                        </div>
+                                                        <div class="dropdown-item">
+                                                            <label class="checkbox-container">
+                                                                <div class="checkbox-label">
+                                                                    <input type="checkbox" /><span
+                                                                        class="checkbox-custom"></span>
+                                                                </div>
+                                                                <div class="checkbox__title">
+                                                                    Show Full P&amp;L
+                                                                </div>
+                                                            </label>
+                                                        </div>
+                                                        <div class="dropdown-item">
+                                                            <label class="checkbox-container">
+                                                                <div class="checkbox-label">
+                                                                    <input type="checkbox" /><span
+                                                                        class="checkbox-custom"></span>
+                                                                </div>
+                                                                <div class="checkbox__title">
+                                                                    Merge CE PE Legs together
+                                                                </div>
+                                                            </label>
+                                                        </div>
+                                                        <div class="dropdown-item">
+                                                            <label class="checkbox-container">
+                                                                <div class="checkbox-label">
+                                                                    <input type="checkbox" /><span
+                                                                        class="checkbox-custom"></span>
+                                                                </div>
+                                                                <div class="checkbox__title">
+                                                                    View only open positions
+                                                                </div>
+                                                            </label>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                        </ul>
+                                    </div>
+                                    <div class="position_table"
+                                        style="overflow-x:auto; overflow-y:auto; max-height:260px;">
+                                        <table style="width: 100%; min-width: 700px; table-layout: fixed">
+                                            <colgroup>
+                                                <col style="width: 50px" />
+                                                <col style="width: 70px" />
+                                                <col style="width: 5%" />
+                                                <col style="width: 90px" />
+                                                <col style="width: 75px" />
+                                                <col style="width: 85px" />
+                                                <col style="width: 8%" />
+                                                <col style="width: 8%" />
+                                                <col style="width: 6%" />
+                                                <col style="width: 12%" />
+                                                <col style="width: 100px" />
+                                            </colgroup>
+                                            <tr class="sticky-top" style="width: 100%">
+                                                <th class="action_head" style="padding: 0px">
+                                                    <div class="action_button action_button_group">
+                                                        <label class="checkbox-container">
+                                                            <div class="checkbox-label">
+                                                                <input type="checkbox" /><span
+                                                                    class="checkbox-custom"></span>
+                                                            </div>
+                                                        </label><button class="sell_button invisible"></button>
+                                                    </div>
+                                                </th>
+                                                <th class="lotsize_head">
+                                                    <div>Lots</div>
+                                                </th>
+                                                <th>Qty</th>
+                                                <th class="position_date">
+                                                    <div class="sort_header">
+                                                        Date<img src="assets/images/sort.svg" class="sorted_up" />
+                                                    </div>
+                                                </th>
+                                                <th>
+                                                    <div class="sort_header">
+                                                        Strike<img src="assets/images/no-sort.svg"
+                                                            style="height: 11px" />
+                                                    </div>
+                                                </th>
+                                                <th>
+                                                    <div>Expiry</div>
+                                                </th>
+                                                <th>Entry</th>
+                                                <th>LTP/Exit</th>
+                                                <th>Delta</th>
+                                                <th>
+                                                    <div>P&amp;L</div>
+                                                </th>
+                                                <th class="simulator_action_class">
+                                                    <div class="sort_header">
+                                                        Lots Exit<img src="assets/images/no-sort.svg"
+                                                            style="height: 11px" />
+                                                    </div>
+                                                </th>
+                                            </tr>
+                                            <tr class="parent_position" style="opacity: 1">
+                                                <td class="action_button">
+                                                    <div class="action_button_group">
+                                                        <label class="checkbox-container">
+                                                            <div class="checkbox-label">
+                                                                <input type="checkbox" /><span
+                                                                    class="checkbox-custom"></span>
+                                                            </div>
+                                                        </label><button class="buy_button">B</button>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="simulator_position_input position__strike">
+                                                        <button class="mr-1 sign_btn" disabled="">
+                                                            -</button><input type="number" placeholder="1"
+                                                            class="lot_input" /><button class="ml-1 sign_btn">+</button>
+                                                    </div>
+                                                </td>
+                                                <td>65</td>
+                                                <td>
+                                                    <div class="d-flex flex-column">
+                                                        <span>11 Mar, 09:31</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="position__strike">
+                                                        <span>23850</span><span class="mr-1 put-btn">PE</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="position__expiry">17 Mar'26</div>
+                                                </td>
+                                                <td>
+                                                    <span class="simulator_position_input"><input type="number"
+                                                            step="any" class="entry_input" /></span>
+                                                </td>
+                                                <td>
+                                                    <span class="simulator_position_input"><input type="number"
+                                                            step="any" class="exit_input" /></span>
+                                                </td>
+                                                <td>-0.32</td>
+                                                <td class="simulator_green_text">
+                                                    <div style="white-space: nowrap">
+                                                        <span class="tool__tip"><span>₹1917</span>
+                                                            <div class="tool__tip__text">₹1917</div>
+                                                        </span><span
+                                                            class="expiry_indicator simulator_green_text_normal">(24%)</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="simulator_position_button">
+                                                        <select
+                                                            class="btn btn-outline-secondary btn-xs btn-unborder lot_select_space"
+                                                            style="background-size: 9px; font-size: 12px">
+                                                            <option value="1">1</option>
+                                                        </select><a><img src="assets/images/exit.svg" /></a>
+                                                        <div class="simulator_action ml-2">
+                                                            <a class="bi bi-trash mt-1"></a>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <!-- <tr
+                            class="child_position exited__TP"
+                            style="opacity: 0.8"
+                          >
+                            <td class="action_button"></td>
+                            <td>
+                              <div
+                                class="simulator_position_input position__strike"
+                              >
+                                <button disabled="" class="mr-1 sign_btn">
+                                  -</button
+                                ><input
+                                  type="number"
+                                  placeholder="1"
+                                  class="lot_input"
+                                /><button class="ml-1 sign_btn">+</button>
+                              </div>
+                            </td>
+                            <td>65</td>
+                            <td>
+                              <div class="d-flex flex-column">
+                                <span>11 Mar, 09:31</span
+                                ><span class="expiry_indicator">
+                                  (11 Mar, 10:01)</span
+                                >
+                              </div>
+                            </td>
+                            <td>
+                              <div class="position__strike">
+                                <div class="partial_exit_text">
+                                  Partial Exit
+                                </div>
+                              </div>
+                            </td>
+                            <td><div class="position__expiry"></div></td>
+                            <td>
+                              <span class="simulator_position_input"
+                                ><input
+                                  type="number"
+                                  step="any"
+                                  class="entry_input"
+                              /></span>
+                            </td>
+                            <td>
+                              <span class="simulator_position_input"
+                                ><input
+                                  type="number"
+                                  step="any"
+                                  class="exit_input"
+                              /></span>
+                            </td>
+                            <td>-0.32</td>
+                            <td class="simulator_green_text">
+                              <div style="white-space: nowrap">
+                                <span class="tool__tip"
+                                  ><span>₹1917</span>
+                                  <div class="tool__tip__text">₹1917</div></span
+                                ><span
+                                  class="expiry_indicator simulator_green_text_normal"
+                                  >(24%)</span
+                                >
+                              </div>
+                            </td>
+                            <td>
+                              <div class="simulator_position_button">
+                                <div class="lot_select_space"></div>
+                                <a><img src="assets/images/re_open.svg" /></a>
+                                <div class="simulator_action ml-2">
+                                  <a class="bi bi-trash mt-1"></a>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                          <tr
+                            class="parent_position exited__SL"
+                            style="opacity: 0.8"
+                          >
+                            <td class="action_button">
+                              <div class="action_button_group">
+                                <label class="checkbox-container"
+                                  ><div class="checkbox-label">
+                                    <input type="checkbox" /><span
+                                      class="checkbox-custom"
+                                    ></span></div></label
+                                ><button class="sell_button">S</button>
+                              </div>
+                            </td>
+                            <td>
+                              <div
+                                class="simulator_position_input position__strike"
+                              >
+                                <button disabled="" class="mr-1 sign_btn">
+                                  -</button
+                                ><input
+                                  type="number"
+                                  placeholder="1"
+                                  class="lot_input"
+                                /><button class="ml-1 sign_btn">+</button>
+                              </div>
+                            </td>
+                            <td>65</td>
+                            <td>
+                              <div class="d-flex flex-column">
+                                <span>11 Mar, 09:31</span
+                                ><span class="expiry_indicator">
+                                  (11 Mar, 10:01)</span
+                                >
+                              </div>
+                            </td>
+                            <td>
+                              <div class="position__strike">
+                                <span>24050</span
+                                ><span class="mr-1 put-btn">PE</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div class="position__expiry">17 Mar'26</div>
+                            </td>
+                            <td>
+                              <span class="simulator_position_input"
+                                ><input
+                                  type="number"
+                                  step="any"
+                                  class="entry_input"
+                              /></span>
+                            </td>
+                            <td>
+                              <span class="simulator_position_input"
+                                ><input
+                                  type="number"
+                                  step="any"
+                                  class="exit_input"
+                              /></span>
+                            </td>
+                            <td>0.42</td>
+                            <td class="simulator_red_text">
+                              <div style="white-space: nowrap">
+                                <span class="tool__tip"
+                                  ><span>₹-2652</span>
+                                  <div class="tool__tip__text">
+                                    ₹-2652
+                                  </div></span
+                                ><span
+                                  class="expiry_indicator simulator_red_text_normal"
+                                  >(-23%)</span
+                                >
+                              </div>
+                            </td>
+                            <td>
+                              <div class="simulator_position_button">
+                                <div class="lot_select_space"></div>
+                                <a><img src="assets/images/re_open.svg" /></a>
+                                <div class="simulator_action ml-2">
+                                  <a class="bi bi-trash mt-1"></a>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                          <tr
+                            class="parent_position exited__TP"
+                            style="opacity: 0.8"
+                          >
+                            <td class="action_button">
+                              <div class="action_button_group">
+                                <label class="checkbox-container"
+                                  ><div class="checkbox-label">
+                                    <input type="checkbox" /><span
+                                      class="checkbox-custom"
+                                    ></span></div></label
+                                ><button class="sell_button">S</button>
+                              </div>
+                            </td>
+                            <td>
+                              <div
+                                class="simulator_position_input position__strike"
+                              >
+                                <button disabled="" class="mr-1 sign_btn">
+                                  -</button
+                                ><input
+                                  type="number"
+                                  placeholder="1"
+                                  class="lot_input"
+                                /><button class="ml-1 sign_btn">+</button>
+                              </div>
+                            </td>
+                            <td>65</td>
+                            <td>
+                              <div class="d-flex flex-column">
+                                <span>11 Mar, 09:31</span
+                                ><span class="expiry_indicator">
+                                  (11 Mar, 10:01)</span
+                                >
+                              </div>
+                            </td>
+                            <td>
+                              <div class="position__strike">
+                                <span>24450</span
+                                ><span class="mr-1 call-btn">CE</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div class="position__expiry">17 Mar'26</div>
+                            </td>
+                            <td>
+                              <span class="simulator_position_input"
+                                ><input
+                                  type="number"
+                                  step="any"
+                                  class="entry_input"
+                              /></span>
+                            </td>
+                            <td>
+                              <span class="simulator_position_input"
+                                ><input
+                                  type="number"
+                                  step="any"
+                                  class="exit_input"
+                              /></span>
+                            </td>
+                            <td>-0.33</td>
+                            <td class="simulator_green_text">
+                              <div style="white-space: nowrap">
+                                <span class="tool__tip"
+                                  ><span>₹1033</span>
+                                  <div class="tool__tip__text">₹1033</div></span
+                                ><span
+                                  class="expiry_indicator simulator_green_text_normal"
+                                  >(10%)</span
+                                >
+                              </div>
+                            </td>
+                            <td>
+                              <div class="simulator_position_button">
+                                <div class="lot_select_space"></div>
+                                <a><img src="assets/images/re_open.svg" /></a>
+                                <div class="simulator_action ml-2">
+                                  <a class="bi bi-trash mt-1"></a>
+                                </div>
+                              </div>
+                            </td>
+                          </tr> -->
+                                            <tr class="parent_position" style="opacity: 1">
+                                                <td class="action_button">
+                                                    <div class="action_button_group">
+                                                        <label class="checkbox-container">
+                                                            <div class="checkbox-label">
+                                                                <input type="checkbox" /><span
+                                                                    class="checkbox-custom"></span>
+                                                            </div>
+                                                        </label><button class="buy_button">B</button>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="simulator_position_input position__strike">
+                                                        <button disabled="" class="mr-1 sign_btn">
+                                                            -</button><input type="number" placeholder="1"
+                                                            class="lot_input" /><button class="ml-1 sign_btn">+</button>
+                                                    </div>
+                                                </td>
+                                                <td>65</td>
+                                                <td>
+                                                    <div class="d-flex flex-column">
+                                                        <span>11 Mar, 09:31</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="position__strike">
+                                                        <span>24650</span><span class="mr-1 call-btn">CE</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="position__expiry">17 Mar'26</div>
+                                                </td>
+                                                <td>
+                                                    <span class="simulator_position_input"><input type="number"
+                                                            step="any" class="entry_input" /></span>
+                                                </td>
+                                                <td>
+                                                    <span class="simulator_position_input"><input type="number"
+                                                            step="any" class="exit_input" /></span>
+                                                </td>
+                                                <td>0.22</td>
+                                                <td class="simulator_red_text">
+                                                    <div style="white-space: nowrap">
+                                                        <span class="tool__tip"><span>₹-585</span>
+                                                            <div class="tool__tip__text">₹-585</div>
+                                                        </span><span
+                                                            class="expiry_indicator simulator_red_text_normal">(-10%)</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="simulator_position_button">
+                                                        <select
+                                                            class="btn btn-outline-secondary btn-xs btn-unborder lot_select_space"
+                                                            style="background-size: 9px; font-size: 12px">
+                                                            <option value="1">1</option>
+                                                        </select><a><img src="assets/images/exit.svg" /></a>
+                                                        <div class="simulator_action ml-2">
+                                                            <a class="bi bi-trash mt-1"></a>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr class="parent_position" style="opacity: 1">
+                                                <td class="action_button">
+                                                    <div class="action_button_group">
+                                                        <label class="checkbox-container">
+                                                            <div class="checkbox-label">
+                                                                <input type="checkbox" /><span
+                                                                    class="checkbox-custom"></span>
+                                                            </div>
+                                                        </label><button class="sell_button">S</button>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="simulator_position_input position__strike">
+                                                        <button disabled="" class="mr-1 sign_btn">
+                                                            -</button><input type="number" placeholder="1"
+                                                            class="lot_input" /><button class="ml-1 sign_btn">+</button>
+                                                    </div>
+                                                </td>
+                                                <td>65</td>
+                                                <td>
+                                                    <div class="d-flex flex-column">
+                                                        <span>11 Mar, 10:01</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="position__strike">
+                                                        <button class="sign_btn">-</button><span>24150</span><button
+                                                            class="mr-1 call-btn">CE</button><button
+                                                            class="sign_btn">+</button>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="position__expiry">
+                                                        <select class="btn btn-outline-secondary btn-sm"
+                                                            style="margin-left: 12px">
+                                                            <option value="17 MAR 2026">17 Mar'26</option>
+                                                            <option value="24 MAR 2026">24 Mar'26</option>
+                                                            <option value="30 MAR 2026">30 Mar'26</option>
+                                                            <option value="7 APR 2026">07 Apr'26</option>
+                                                            <option value="28 APR 2026">28 Apr'26</option>
+                                                        </select>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <span class="simulator_position_input"><input type="number"
+                                                            step="any" class="entry_input" /></span>
+                                                </td>
+                                                <td>
+                                                    <span class="simulator_position_input"><input type="number"
+                                                            step="any" class="exit_input" /></span>
+                                                </td>
+                                                <td>-0.52</td>
+                                                <td class="simulator_green_text">
+                                                    <div style="white-space: nowrap">
+                                                        <span class="tool__tip"><span>₹0</span>
+                                                            <div class="tool__tip__text">₹0</div>
+                                                        </span><span
+                                                            class="expiry_indicator simulator_green_text_normal">(0%)</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="simulator_position_button">
+                                                        <select
+                                                            class="btn btn-outline-secondary btn-xs btn-unborder lot_select_space"
+                                                            style="background-size: 9px; font-size: 12px">
+                                                            <option value="1">1</option>
+                                                        </select><a><img src="assets/images/exit.svg" /></a>
+                                                        <div class="simulator_action ml-2">
+                                                            <a class="bi bi-trash mt-1"></a>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr class="parent_position" style="opacity: 1">
+                                                <td class="action_button">
+                                                    <div class="action_button_group">
+                                                        <label class="checkbox-container">
+                                                            <div class="checkbox-label">
+                                                                <input type="checkbox" /><span
+                                                                    class="checkbox-custom"></span>
+                                                            </div>
+                                                        </label><button class="sell_button">S</button>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="simulator_position_input position__strike">
+                                                        <button disabled="" class="mr-1 sign_btn">
+                                                            -</button><input type="number" placeholder="1"
+                                                            class="lot_input" /><button class="ml-1 sign_btn">+</button>
+                                                    </div>
+                                                </td>
+                                                <td>65</td>
+                                                <td>
+                                                    <div class="d-flex flex-column">
+                                                        <span>11 Mar, 10:01</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="position__strike">
+                                                        <button class="sign_btn">-</button><span>24150</span><button
+                                                            class="mr-1 put-btn">PE</button><button
+                                                            class="sign_btn">+</button>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="position__expiry">
+                                                        <select class="btn btn-outline-secondary btn-sm"
+                                                            style="margin-left: 12px">
+                                                            <option value="17 MAR 2026">17 Mar'26</option>
+                                                            <option value="24 MAR 2026">24 Mar'26</option>
+                                                            <option value="30 MAR 2026">30 Mar'26</option>
+                                                            <option value="7 APR 2026">07 Apr'26</option>
+                                                            <option value="28 APR 2026">28 Apr'26</option>
+                                                        </select>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <span class="simulator_position_input"><input type="number"
+                                                            step="any" class="entry_input" /></span>
+                                                </td>
+                                                <td>
+                                                    <span class="simulator_position_input"><input type="number"
+                                                            step="any" class="exit_input" /></span>
+                                                </td>
+                                                <td>0.48</td>
+                                                <td class="simulator_green_text">
+                                                    <div style="white-space: nowrap">
+                                                        <span class="tool__tip"><span>₹0</span>
+                                                            <div class="tool__tip__text">₹0</div>
+                                                        </span><span
+                                                            class="expiry_indicator simulator_green_text_normal">(0%)</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="simulator_position_button">
+                                                        <select
+                                                            class="btn btn-outline-secondary btn-xs btn-unborder lot_select_space"
+                                                            style="background-size: 9px; font-size: 12px">
+                                                            <option value="1">1</option>
+                                                        </select><a><img src="assets/images/exit.svg" /></a>
+                                                        <div class="simulator_action ml-2">
+                                                            <a class="bi bi-trash mt-1"></a>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <th colspan="11" style="padding: 0px">
+                                                    <div class="simulator_and_condition_box"></div>
+                                                </th>
+                                            </tr>
+                                            <tr class="table_footer">
+                                                <th colspan="8" class="text-left">
+                                                    <div class="d-flex align-items-center">
+                                                        <div class="mx-2">Multiplier:</div>
+                                                        <div class="simulator_group_input mr-1">
+                                                            <button disabled="" class="sign_button">
+                                                                -</button><input type="number" step="any" /><button
+                                                                class="sign_button">
+                                                                +
+                                                            </button>
+                                                        </div>
+                                                        <div class="mx-2">Lot Size: 65</div>
+                                                        <button
+                                                            class="btn btn-outline-primary btn-xs btn-unborder ml-1">
+                                                            <span>Add Alert</span></button><button
+                                                            class="btn btn-outline-primary btn-xs ml-2">
+                                                            Save</button><button
+                                                            class="btn btn-outline-primary btn-xs ml-2 strategy_button">
+                                                            <i class="fa fa-share-alt __share__icon"></i>Share
+                                                        </button>
+                                                    </div>
+                                                </th>
+                                                <th id="footerDelta">-0.14</th>
+                                                <th id="footerPnL" class="simulator_green_text">₹1,630</th>
+                                                <th>
+                                                    <div class="simulator_position_button">
+                                                        <a class="exit_all">Exit</a><a class="remove_all">Clear</a>
+                                                    </div>
+                                                </th>
+                                            </tr>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <form id="uplink-place" method="post" action="https://api.upstox.com/v2/uplink/order/place">
+                    <input type="hidden" name="access_token" /><input type="hidden" name="redirect_url"
+                        value="https://www.stockmock.in/fetchUpstoxUserData" /><input type="hidden" name="data" value=""
+                        id="order_data" /><input type="hidden" name="is_editable" value="true" />
+                </form>
+                <form id="uplink-modify" method="post" action="https://api.upstox.com/v2/uplink/order/modify">
+                    <input type="hidden" name="access_token" /><input type="hidden" name="redirect_url"
+                        value="https://www.stockmock.in/fetchUpstoxUserData" /><input type="hidden" name="order_id"
+                        value="" id="modify_order_id" />
+                </form>
+                <form id="uplink-cancel" method="post" action="https://api.upstox.com/v2/uplink/order/cancel">
+                    <input type="hidden" name="access_token" /><input type="hidden" name="redirect_url"
+                        value="https://www.stockmock.in/fetchUpstoxUserData" /><input type="hidden" name="order_id"
+                        value="" id="cancel_order_id" />
+                </form>
+                <form id="kite-place" method="post" action="https://kite.zerodha.com/connect/basket">
+                    <input type="hidden" name="api_key" /><input type="hidden" name="data" value="" id="basket" />
+                </form>
+            </div>
+        </div>
+    </div>
+    <div id="toast" class="">
+        <div id="desc">Position added.</div>
+    </div>
+</div>
+
+
+</html>

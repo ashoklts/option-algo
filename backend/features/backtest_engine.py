@@ -81,6 +81,17 @@ STRIKE_STEPS = {
     "SENSEX":     100,
 }
 
+# Execution mode:
+# True  -> use calculated trigger/target/cost price (limit-like behavior)
+# False -> use the matching candle close price (market-like behavior)
+LIMIT_ORDER_EXECUTION = True
+
+# Response payload switches:
+RETURN_COMBINED_MTM_BREAKDOWN = True
+RETURN_PNL_SUMMARY = False
+RETURN_MINUTE_PNL = False
+RETURN_TRADE_EXPLANATION = False
+
 
 # ─── In-Memory Index ──────────────────────────────────────────────────────────
 
@@ -275,22 +286,19 @@ def _resolve_expiry(date_str: str, kind: str, expiries: list,
         return None
 
     if kind in ("ExpiryType.Weekly", "ExpiryType.NextWeekly"):
-        if expiry_weekday:
-            target_wd = _WEEKDAY_MAP.get(expiry_weekday, 3)   # default Thursday
-            weekly = [
-                e for e in expiries
-                if datetime.strptime(e, "%Y-%m-%d").weekday() == target_wd
-            ]
-        else:
-            weekly = expiries   # no filter — use all expiries in order
+        # Use expiries directly from DB — already correct including holiday shifts.
+        # No weekday filtering: if Thursday is holiday, expiry moves to Wednesday
+        # and DB records will carry that date. Just pick nearest available.
+        available = [e for e in expiries if e >= date_str]
 
         if kind == "ExpiryType.Weekly":
-            return weekly[0] if weekly else expiries[0]
-        else:   # NextWeekly
-            return weekly[1] if len(weekly) > 1 else (weekly[0] if weekly else expiries[0])
+            return available[0] if available else (expiries[0] if expiries else None)
+        else:   # NextWeekly — skip current week expiry, take next one
+            return available[1] if len(available) > 1 else (available[0] if available else (expiries[0] if expiries else None))
 
     cur_mo = date_str[:7]
-    this   = [e for e in expiries if e[:7] == cur_mo]
+    # Monthly: last expiry in current month that is >= trading date
+    this   = [e for e in expiries if e[:7] == cur_mo and e >= date_str]
     if kind == "ExpiryType.Monthly":
         return this[-1] if this else expiries[0]
     if kind == "ExpiryType.NextMonthly":
@@ -336,10 +344,10 @@ def _check_sl_target(candles, entry_price, entry_spot, position,
     Scan candles for SL (with optional TSL) or Target trigger.
 
     Premium-based (Points / Percentage):
-      SELL SL     → candle_high >= sl_px   → exit at sl_px
-      SELL Target → candle_low  <= tgt_px  → exit at tgt_px
-      BUY  SL     → candle_low  <= sl_px   → exit at sl_px
-      BUY  Target → candle_high >= tgt_px  → exit at tgt_px
+      SELL SL     → candle_high >= sl_px   → exit at candle close
+      SELL Target → candle_low  <= tgt_px  → exit at candle close
+      BUY  SL     → candle_low  <= sl_px   → exit at candle close
+      BUY  Target → candle_high >= tgt_px  → exit at candle close
 
     Underlying-based (UnderlyingPoints / UnderlyingPercentage):
       SELL SL     → spot >= sl_px   → exit at option close
@@ -400,14 +408,16 @@ def _check_sl_target(candles, entry_price, entry_spot, position,
                     if spot and spot >= cur_sl_px:
                         return round(c["close"], 2), time_str, "SL"
                 elif c["high"] >= cur_sl_px:
-                    return round(cur_sl_px, 2), time_str, "SL"
+                    exit_px = cur_sl_px if LIMIT_ORDER_EXECUTION else c["close"]
+                    return round(exit_px, 2), time_str, "SL"
             if tgt_px is not None:
                 if is_underlying_tgt:
                     spot = idx.get_spot(day, time_str)
                     if spot and spot <= tgt_px:
                         return round(c["close"], 2), time_str, "Target"
                 elif c["low"] <= tgt_px:
-                    return round(tgt_px, 2), time_str, "Target"
+                    exit_px = tgt_px if LIMIT_ORDER_EXECUTION else c["close"]
+                    return round(exit_px, 2), time_str, "Target"
         else:  # BUY
             if cur_sl_px is not None:
                 if is_underlying_sl:
@@ -415,14 +425,16 @@ def _check_sl_target(candles, entry_price, entry_spot, position,
                     if spot and spot <= cur_sl_px:
                         return round(c["close"], 2), time_str, "SL"
                 elif c["low"] <= cur_sl_px:
-                    return round(cur_sl_px, 2), time_str, "SL"
+                    exit_px = cur_sl_px if LIMIT_ORDER_EXECUTION else c["close"]
+                    return round(exit_px, 2), time_str, "SL"
             if tgt_px is not None:
                 if is_underlying_tgt:
                     spot = idx.get_spot(day, time_str)
                     if spot and spot >= tgt_px:
                         return round(c["close"], 2), time_str, "Target"
                 elif c["high"] >= tgt_px:
-                    return round(tgt_px, 2), time_str, "Target"
+                    exit_px = tgt_px if LIMIT_ORDER_EXECUTION else c["close"]
+                    return round(exit_px, 2), time_str, "Target"
 
     return None, None, None
 
@@ -488,7 +500,7 @@ def _find_momentum_entry(idx, day: str, scan_start: str, exit_time: str,
     Premium-based  (PointsUp / PercentageUp)         → check candle HIGH  >= target
     Underlying-based (UnderlyingPointsUp / UnderlyingPercentageUp) → check spot  >= target
 
-    Returns (trigger_time, target_price) or (None, None).
+    Returns (trigger_time, trigger_price_or_candle_close) or (None, None).
     """
     is_underlying = "Underlying" in momentum_type
     is_pct        = "Percentage" in momentum_type
@@ -503,11 +515,15 @@ def _find_momentum_entry(idx, day: str, scan_start: str, exit_time: str,
                     continue
                 spot = idx.get_spot(day, t)
                 if spot and spot >= target:
-                    return t, round(target, 2)
+                    entry_price = idx.get_close(day, t, expiry, strike, otype)
+                    if entry_price is not None:
+                        exec_px = target if LIMIT_ORDER_EXECUTION else entry_price
+                        return t, round(exec_px, 2)
         else:
             for c in idx.get_candles_range(day, scan_start, exit_time, expiry, strike, otype):
                 if c["high"] >= target:
-                    return c["time"], round(target, 2)
+                    exec_px = target if LIMIT_ORDER_EXECUTION else c["close"]
+                    return c["time"], round(exec_px, 2)
 
     else:  # Down
         target = (base_price * (1 - momentum_val / 100) if is_pct
@@ -519,11 +535,15 @@ def _find_momentum_entry(idx, day: str, scan_start: str, exit_time: str,
                     continue
                 spot = idx.get_spot(day, t)
                 if spot and spot <= target:
-                    return t, round(target, 2)
+                    entry_price = idx.get_close(day, t, expiry, strike, otype)
+                    if entry_price is not None:
+                        exec_px = target if LIMIT_ORDER_EXECUTION else entry_price
+                        return t, round(exec_px, 2)
         else:
             for c in idx.get_candles_range(day, scan_start, exit_time, expiry, strike, otype):
                 if c["low"] <= target:
-                    return c["time"], round(target, 2)
+                    exec_px = target if LIMIT_ORDER_EXECUTION else c["close"]
+                    return c["time"], round(exec_px, 2)
 
     return None, None
 
@@ -690,7 +710,9 @@ def _process_leg(idx, day, entry_time, exit_time,
             "entry_price":         round(entry_price, 2),
             "entry_spot":          round(entry_spot, 2),
             "sl_price":            round(sl_display,  2) if sl_display  is not None else None,
+            "initial_sl_price":    round(sl_display,  2) if sl_display  is not None else None,
             "tgt_price":           round(tgt_display, 2) if tgt_display is not None else None,
+            "expiry":              expiry,
             "strike":              cur_strike,
             "option_type":         otype,
             "exit_date":           day,
@@ -701,6 +723,12 @@ def _process_leg(idx, day, entry_time, exit_time,
             "reentry_type":        re_type,
             "reentry_number":      reentry_number,
             "pnl":                 pnl,
+            "_lots":               lots,
+            "_lot_size":           lot_size,
+            "_expiry":             expiry,
+            "trail_type":          trail_type,
+            "trail_x":             trail_x,
+            "trail_y":             trail_y,
         }
 
         # Momentum info — shown for ALL sub_trades when LegMomentum is active
@@ -763,8 +791,13 @@ def _process_leg(idx, day, entry_time, exit_time,
                 if cost_time is None:
                     break   # price never returned, no re-entry
 
-                forced_entry_price = entry_price   # re-enter at original cost, not candle close
-                cur_time = cost_time   # enter at the candle where price crossed cost
+                if LIMIT_ORDER_EXECUTION:
+                    forced_entry_price = entry_price
+                else:
+                    forced_entry_price = idx.get_close(day, cost_time, expiry, cur_strike, otype)
+                    if forced_entry_price is None:
+                        break
+                cur_time = cost_time   # market order at the candle where price crossed cost
                 # cur_strike stays same
                 if "Reverse" in re_type:
                     cur_position = _flip_position(cur_position)   # AtCostReverse
@@ -828,9 +861,797 @@ def _process_leg(idx, day, entry_time, exit_time,
     }
 
 
+def _compute_combined_mtm(day_trade: dict, idx, day: str) -> None:
+    """
+    For each sub_trade, compute combined_mtm at both entry and exit times:
+      combined_mtm_at_entry — MTM of all legs at the moment this leg enters
+      combined_mtm_at_exit  — MTM of all legs at the moment this leg exits
+
+    Both = realized PnL of closed legs + unrealized PnL of open legs at that time.
+    Removes internal _lots, _lot_size, _expiry keys after use.
+    """
+    all_st = []
+    for leg in day_trade.get("legs", []):
+        for st in leg.get("sub_trades", []):
+            all_st.append(st)
+
+    overall_sl_time  = day_trade.get("overall_sl_exit_time", "")
+    overall_tgt_time = day_trade.get("overall_tgt_exit_time", "")
+    force_close_times = set(filter(None, [overall_sl_time, overall_tgt_time]))
+
+    def _mtm_at(t: str, treat_as_open_at: str = "") -> tuple:
+        """
+        Returns (combined_mtm, breakdown_dict) at time t.
+        treat_as_open_at: force-close time — legs exiting AT this time
+        are treated as open (unrealized) to show pre-SL MTM.
+        t is the candle time used for price lookup and is included in breakdown.
+        """
+        realized_items   = []
+        unrealized_items = []
+
+        for st in all_st:
+            entry_t   = st.get("entry_time", "")
+            exit_t    = st.get("exit_time", "")
+            lots      = st.get("_lots", 1)
+            lot_size  = st.get("_lot_size", 1)
+            expiry    = st.get("_expiry", "")
+            strike    = st.get("strike")
+            otype     = st.get("option_type", "")
+            lazy_id   = st.get("lazy_leg_id", "")
+            p_num     = st.get("parent_leg_num", "")
+            p_type    = st.get("parent_leg_type", "")
+            direction = -1 if st.get("entry_action", "SELL") == "SELL" else 1
+            leg_label = f"Lazy({lazy_id})" if lazy_id else f"Leg {p_num} ({p_type})"
+
+            is_force_closed    = treat_as_open_at and exit_t == treat_as_open_at
+            is_post_sl_reentry = treat_as_open_at and entry_t >= treat_as_open_at and st.get("overall_reentry_cycle")
+
+            if is_post_sl_reentry:
+                continue  # exclude — entered after SL triggered
+
+            elif exit_t and exit_t <= t and not is_force_closed:
+                pnl = st.get("pnl", 0)
+                realized_items.append({
+                    "leg":        leg_label,
+                    "exit_time":  exit_t,
+                    "exit_reason": st.get("exit_reason", ""),
+                    "pnl":        round(pnl, 2),
+                })
+
+            elif (entry_t and entry_t < t) or (entry_t and entry_t == t and not treat_as_open_at):
+                cur_price = idx.get_close(day, t, expiry, strike, otype)
+                if cur_price is not None:
+                    qty = lots * lot_size
+                    unr_pnl = round((cur_price - st.get("entry_price", 0)) * qty * direction, 2)
+                    unrealized_items.append({
+                        "leg":            leg_label,
+                        "entry_time":     entry_t,
+                        "entry_price":    st.get("entry_price", 0),
+                        "candle_time":    t,
+                        "cur_price":      round(cur_price, 2),
+                        "qty":            qty,
+                        "unrealized_pnl": unr_pnl,
+                    })
+
+        realized_total   = round(sum(x["pnl"] for x in realized_items), 2)
+        unrealized_total = round(sum(x["unrealized_pnl"] for x in unrealized_items), 2)
+        combined         = round(realized_total + unrealized_total, 2)
+
+        breakdown = {
+            "candle_time":     t,
+            "realized":        realized_items,
+            "realized_total":  realized_total,
+            "unrealized":      unrealized_items,
+            "unrealized_total": unrealized_total,
+            "combined_mtm":    combined,
+        }
+        return combined, breakdown
+
+    # Compute at every unique entry and exit time
+    all_times = sorted(set(
+        t for st in all_st
+        for t in [st.get("entry_time", ""), st.get("exit_time", "")]
+        if t
+    ))
+
+    mtm_cache: dict = {}       # t -> (combined, breakdown)
+    for t in all_times:
+        if t in force_close_times:
+            # Use the force-close time's own close price for all open legs
+            # (market order = exit at current close price at that candle)
+            mtm_cache[t] = _mtm_at(t, treat_as_open_at=t)
+        else:
+            mtm_cache[t] = _mtm_at(t)
+
+    # Tag each sub_trade
+    for st in all_st:
+        entry_t = st.get("entry_time", "")
+        exit_t  = st.get("exit_time", "")
+        if entry_t and entry_t in mtm_cache:
+            combined, breakdown = mtm_cache[entry_t]
+            st["combined_mtm_at_entry"]           = combined
+            st["combined_mtm_breakdown_at_entry"] = breakdown
+        if exit_t and exit_t in mtm_cache:
+            combined, breakdown = mtm_cache[exit_t]
+            st["combined_mtm_at_exit"]            = combined
+            st["combined_mtm_breakdown_at_exit"]  = breakdown
+
+    # Clean up internal keys
+    for st in all_st:
+        st.pop("_lots", None)
+        st.pop("_lot_size", None)
+        st.pop("_expiry", None)
+
+
+def _build_minute_pnl_timeline(day_trade: dict, idx, day: str) -> list:
+    """
+    Build a minute-wise combined PnL timeline for one trade day.
+
+    Output format:
+      [
+        {"candle_time": "09:16", "pnl": 0},
+        {"candle_time": "09:17", "pnl": 125.5},
+        ...
+      ]
+
+    PnL at each candle = realized PnL of already closed legs + unrealized PnL
+    of currently open legs at that candle's close.
+    """
+    all_st = []
+    for leg in day_trade.get("legs", []):
+        for st in leg.get("sub_trades", []):
+            all_st.append(st)
+
+    if not all_st:
+        return []
+
+    first_entry = min((st.get("entry_time", "") for st in all_st if st.get("entry_time")), default="")
+    last_exit = max((st.get("exit_time", "") for st in all_st if st.get("exit_time")), default="")
+    if not first_entry or not last_exit:
+        return []
+
+    minute_pnl = []
+    for t in idx._all_times.get(day, []):
+        if t < first_entry or t > last_exit:
+            continue
+
+        combined = 0.0
+        for st in all_st:
+            entry_t   = st.get("entry_time", "")
+            exit_t    = st.get("exit_time", "")
+            if not entry_t or entry_t > t:
+                continue
+
+            if exit_t and exit_t <= t:
+                combined += st.get("pnl", 0)
+                continue
+
+            expiry    = st.get("_expiry", "")
+            strike    = st.get("strike")
+            otype     = st.get("option_type", "")
+            cur_price = idx.get_close(day, t, expiry, strike, otype)
+            if cur_price is None:
+                continue
+
+            lots      = st.get("_lots", 1)
+            lot_size  = st.get("_lot_size", 1)
+            qty       = lots * lot_size
+            direction = -1 if st.get("entry_action", "SELL") == "SELL" else 1
+            combined += (cur_price - st.get("entry_price", 0)) * qty * direction
+
+        minute_pnl.append({
+            "candle_time": t,
+            "pnl": round(combined, 2),
+        })
+
+    return minute_pnl
+
+
+def _build_trail_change_events(day_trade: dict, idx, day: str) -> list:
+    events = []
+
+    for leg in day_trade.get("legs", []):
+        leg_num = leg.get("leg_num", 0)
+        leg_type = leg.get("type", "")
+
+        for st in leg.get("sub_trades", []):
+            trail_type = st.get("trail_type", "None")
+            trail_x = float(st.get("trail_x", 0) or 0)
+            trail_y = float(st.get("trail_y", 0) or 0)
+            initial_sl = st.get("initial_sl_price")
+            entry_price = st.get("entry_price", 0)
+            entry_time = st.get("entry_time", "")
+            exit_time = st.get("exit_time", "")
+            expiry = st.get("expiry") or st.get("_expiry")
+            strike = st.get("strike")
+            otype = st.get("option_type", "")
+            position = st.get("entry_action", "")
+            lazy_id = st.get("lazy_leg_id")
+            cycle = st.get("overall_reentry_cycle")
+
+            if (
+                trail_type == "None" or trail_x <= 0 or trail_y <= 0 or
+                initial_sl is None or not entry_time or not exit_time or
+                not expiry or strike is None or not otype or not position
+            ):
+                continue
+
+            parent_leg = f"Leg {st.get('parent_leg_num', leg_num)} ({st.get('parent_leg_type', leg_type)})"
+            if cycle:
+                parent_leg += f" [cycle {cycle}]"
+            leg_label = f"Lazy({lazy_id})" if lazy_id else parent_leg
+            if lazy_id and cycle:
+                leg_label += f" [cycle {cycle}]"
+
+            if "Percentage" in trail_type:
+                trail_x_pts = entry_price * trail_x / 100
+                trail_y_pts = entry_price * trail_y / 100
+            else:
+                trail_x_pts = trail_x
+                trail_y_pts = trail_y
+            if trail_x_pts <= 0 or trail_y_pts <= 0:
+                continue
+
+            prev_sl = float(initial_sl)
+            prev_steps = 0
+            candles = idx.get_candles_range(day, _add_one_minute(entry_time), exit_time, expiry, strike, otype)
+            for c in candles:
+                if position == "SELL":
+                    favorable = entry_price - c["low"]
+                    raw_new_sl = float(initial_sl) - int(max(favorable, 0) // trail_x_pts) * trail_y_pts
+                    new_sl = min(prev_sl, raw_new_sl)
+                else:
+                    favorable = c["high"] - entry_price
+                    raw_new_sl = float(initial_sl) + int(max(favorable, 0) // trail_x_pts) * trail_y_pts
+                    new_sl = max(prev_sl, raw_new_sl)
+
+                new_steps = int(max(favorable, 0) // trail_x_pts) if favorable > 0 else 0
+                if round(new_sl, 2) != round(prev_sl, 2):
+                    events.append({
+                        "event_type": "trail_update",
+                        "parent_leg": parent_leg,
+                        "leg": leg_label,
+                        "time": c["time"],
+                        "prev_sl": round(prev_sl, 2),
+                        "new_sl": round(new_sl, 2),
+                        "favorable_move": round(max(favorable, 0), 2),
+                        "instrument_move_step": round(trail_x_pts, 2),
+                        "stoploss_move_step": round(trail_y_pts, 2),
+                        "steps_reached": new_steps,
+                    })
+                    prev_sl = new_sl
+                    prev_steps = new_steps
+
+    return events
+
+
+def _build_trade_explanation(day_trade: dict, idx, day: str) -> list:
+    """
+    Build a chronological flat list of entry+exit events from all sub_trades.
+    Each event has all fields (no nulls) plus a parent_leg key for grouping.
+    """
+    events = []
+
+    for leg in day_trade.get("legs", []):
+        leg_num  = leg.get("leg_num", 0)
+        leg_type = leg.get("type", "")
+
+        for st in leg.get("sub_trades", []):
+            lazy_id      = st.get("lazy_leg_id")
+            p_num        = st.get("parent_leg_num", leg_num)
+            p_type       = st.get("parent_leg_type", leg_type)
+            cycle        = st.get("overall_reentry_cycle")
+            reentry_type = st.get("reentry_type", "")
+            strike       = st.get("strike", "")
+            option_type  = st.get("option_type", "")
+
+            # parent_leg label (always Leg N (TYPE))
+            parent_leg = f"Leg {p_num} ({p_type})"
+            if cycle:
+                parent_leg += f" [cycle {cycle}]"
+
+            # current leg label (lazy or initial/reentry)
+            if lazy_id:
+                leg_label = f"Lazy({lazy_id})"
+                if cycle:
+                    leg_label += f" [cycle {cycle}]"
+            else:
+                leg_label = parent_leg
+
+            entry_event = {
+                "event_type":         "entry",
+                "parent_leg":         parent_leg,
+                "leg":                leg_label,
+                "time":               st.get("entry_time", ""),
+                "date":               st.get("entry_date", ""),
+                "action":             f"{st.get('entry_action','')} {strike} {option_type}",
+                "strike":             strike,
+                "option_type":        option_type,
+                "entry_price":        st.get("entry_price", 0),
+                "entry_spot":         st.get("entry_spot", 0),
+                "sl_price":           st.get("sl_price", 0),
+                "initial_sl_price":   st.get("initial_sl_price", 0),
+                "tgt_price":          st.get("tgt_price", 0),
+                "reentry_type":       reentry_type,
+                "combined_mtm":          st.get("combined_mtm_at_entry"),
+                "combined_mtm_breakdown": st.get("combined_mtm_breakdown_at_entry"),
+            }
+            if st.get("momentum_type"):
+                entry_event["momentum_type"]         = st["momentum_type"]
+                entry_event["momentum_value"]        = st.get("momentum_value", 0)
+                entry_event["momentum_base_price"]   = st.get("momentum_base_price", 0)
+                entry_event["momentum_target_price"] = st.get("momentum_target_price", 0)
+                entry_event["momentum_listen_time"]  = st.get("momentum_listen_time", "")
+
+            exit_event = {
+                "event_type":           "exit",
+                "parent_leg":           parent_leg,
+                "leg":                  leg_label,
+                "time":                 st.get("exit_time", ""),
+                "date":                 st.get("exit_date", ""),
+                "action":               f"{st.get('exit_action','')} {strike} {option_type}",
+                "strike":               strike,
+                "option_type":          option_type,
+                "entry_price":          st.get("entry_price", 0),
+                "entry_action":         st.get("entry_action", ""),
+                "initial_sl_price":     st.get("initial_sl_price", 0),
+                "exit_price":           st.get("exit_price", 0),
+                "exit_reason":          st.get("exit_reason", ""),
+                "pnl":                  st.get("pnl", 0),
+                "combined_mtm_at_exit":           st.get("combined_mtm_at_exit"),
+                "combined_mtm_breakdown_at_exit": st.get("combined_mtm_breakdown_at_exit"),
+                "triggered_lazy_leg":             st.get("triggered_lazy_leg", ""),
+                "reentry_type":                   reentry_type,
+            }
+
+            events.append(entry_event)
+            events.append(exit_event)
+
+    events.extend(_build_trail_change_events(day_trade, idx, day))
+
+    priority = {"trail_update": 0, "exit": 1, "entry": 2}
+    events.sort(key=lambda e: (e["time"] or "", priority.get(e["event_type"], 3)))
+    return events
+
+
+def _build_trade_explanation_content(
+    day_trade: dict, events: list, idle_configs: dict = None,
+    overall_sl_type: str = "None", overall_sl_val: float = 0,
+    overall_tgt_type: str = "None", overall_tgt_val: float = 0,
+) -> dict:
+    """
+    Build a structured explanation content (like a human narrative) for a trade.
+    Returns a dict with:
+      - overview: trade-level summary
+      - steps: list of step-by-step events with description
+      - pnl_summary: leg-wise PnL breakdown
+      - final_summary: overall outcome text
+    """
+    date        = day_trade.get("date", "")
+    entry_time  = day_trade.get("entry_time", "")
+    exit_time   = day_trade.get("exit_time", "")
+    total_pnl   = day_trade.get("total_pnl", 0)
+    overall_sl  = day_trade.get("overall_sl_exit", False)
+    overall_tgt = day_trade.get("overall_tgt_exit", False)
+    overall_sl_time  = day_trade.get("overall_sl_exit_time", "")
+    overall_tgt_time = day_trade.get("overall_tgt_exit_time", "")
+
+    has_overall_sl_reentry = bool(
+        overall_sl_time and any(
+            ev.get("event_type") == "entry"
+            and ev.get("time") >= overall_sl_time
+            and "[cycle " in ev.get("parent_leg", "")
+            for ev in events
+        )
+    )
+    has_overall_tgt_reentry = bool(
+        overall_tgt_time and any(
+            ev.get("event_type") == "entry"
+            and ev.get("time") >= overall_tgt_time
+            and "[cycle " in ev.get("parent_leg", "")
+            for ev in events
+        )
+    )
+
+    # ── Overview ────────────────────────────────────────────────────────────
+    overview_lines = [
+        f"Date: {date}",
+        f"Strategy entry at {entry_time}, exit at {exit_time}",
+    ]
+    if overall_sl:
+        if has_overall_sl_reentry:
+            overview_lines.append(
+                f"Overall SL triggered at {overall_sl_time} — active positions were closed and the next overall re-entry cycle started"
+            )
+        else:
+            overview_lines.append(f"Overall SL triggered at {overall_sl_time} — all positions closed")
+    if overall_tgt:
+        if has_overall_tgt_reentry:
+            overview_lines.append(
+                f"Overall Target triggered at {overall_tgt_time} — active positions were closed and the next overall target re-entry cycle started"
+            )
+        else:
+            overview_lines.append(f"Overall Target triggered at {overall_tgt_time} — all positions closed")
+
+    overview = " | ".join(overview_lines)
+
+    # ── Pre-scan: find which triggered lazy legs actually got an entry ────────
+    triggered_lazy_legs = set()
+    entered_lazy_legs   = set()
+    for ev in events:
+        if ev.get("event_type") == "exit" and ev.get("triggered_lazy_leg"):
+            triggered_lazy_legs.add(ev["triggered_lazy_leg"])
+        if ev.get("event_type") == "entry" and ev.get("leg", "").startswith("Lazy("):
+            lazy_id = ev["leg"].replace("Lazy(", "").rstrip(")")
+            # strip [cycle N] suffix if present
+            lazy_id = lazy_id.split(")")[0] if ")" in lazy_id else lazy_id
+            entered_lazy_legs.add(lazy_id)
+    not_entered_lazy = triggered_lazy_legs - entered_lazy_legs
+
+    def _extract_cycle_number(label: str) -> int:
+        if "[cycle " not in label:
+            return 0
+        try:
+            return int(label.split("[cycle ", 1)[1].split("]", 1)[0])
+        except (ValueError, IndexError):
+            return 0
+
+    def _format_threshold(kind: str, threshold_type: str, value: float, cycle_num: int) -> str:
+        active_value = value
+        if threshold_type != "None":
+            active_value = value * (cycle_num + 1)
+        if threshold_type == "None" or active_value <= 0:
+            return ""
+        type_label = threshold_type.replace("OverallTgtSLType.", "")
+        if type_label == "MTM":
+            return f"{'-' if kind == 'sl' else '+'}₹{active_value:,.0f}"
+        return f"{'-' if kind == 'sl' else '+'}{active_value}%"
+
+    # ── Steps ────────────────────────────────────────────────────────────────
+    steps = []
+    step_num   = 1
+    running_pnl = 0.0
+
+    for ev in events:
+        ev_type    = ev.get("event_type", "")
+        time       = ev.get("time", "")
+        leg        = ev.get("leg", "")
+        parent_leg = ev.get("parent_leg", "")
+        action     = ev.get("action", "")
+        exit_reason = ev.get("exit_reason", "")
+        pnl        = ev.get("pnl")
+        triggered  = ev.get("triggered_lazy_leg", "")
+        cycle_num  = _extract_cycle_number(parent_leg)
+        cycle      = cycle_num > 0
+        active_sl_threshold = _format_threshold("sl", overall_sl_type, overall_sl_val, cycle_num)
+        active_tgt_threshold = _format_threshold("tgt", overall_tgt_type, overall_tgt_val, cycle_num)
+
+        if ev_type == "trail_update":
+            desc = (
+                f"Trail SL moved from ₹{ev.get('prev_sl', 0)} to ₹{ev.get('new_sl', 0)} "
+                f"after favorable move ₹{ev.get('favorable_move', 0)}. "
+                f"Rule: every ₹{ev.get('instrument_move_step', 0)} favorable move, "
+                f"SL shifts by ₹{ev.get('stoploss_move_step', 0)}. "
+                f"Steps reached: {ev.get('steps_reached', 0)}."
+            )
+            step_obj = {
+                "step": step_num,
+                "time": time,
+                "event_type": "trail_update",
+                "parent_leg": parent_leg,
+                "leg": leg,
+                "kind": "Trailing SL changing",
+                "description": desc,
+            }
+            if active_sl_threshold:
+                step_obj["overall_sl_limit"] = active_sl_threshold
+            if active_tgt_threshold:
+                step_obj["overall_target_limit"] = active_tgt_threshold
+            steps.append(step_obj)
+        elif ev_type == "entry":
+            entry_price = ev.get("entry_price", 0)
+            sl_price    = ev.get("sl_price", 0)
+            tgt_price   = ev.get("tgt_price")
+            entry_spot  = ev.get("entry_spot", 0)
+            reentry_type = ev.get("reentry_type", "")
+            is_lazy     = leg != parent_leg
+
+            desc_parts = [f"{action} @ ₹{entry_price}"]
+            if entry_spot:
+                desc_parts.append(f"spot {entry_spot}")
+            if sl_price:
+                desc_parts.append(f"SL set @ ₹{sl_price}")
+            if tgt_price:
+                desc_parts.append(f"Target @ ₹{tgt_price}")
+
+            if is_lazy:
+                mom_type  = ev.get("momentum_type", "")
+                mom_base  = ev.get("momentum_base_price", 0)
+                mom_tgt   = ev.get("momentum_target_price", 0)
+                mom_time  = ev.get("momentum_listen_time", "")
+                if mom_type:
+                    desc_parts.append(
+                        f"Momentum({mom_type}) — waited from {mom_time}, base ₹{mom_base} → triggered @ ₹{mom_tgt}"
+                    )
+                kind = "Lazy leg entry"
+                if cycle:
+                    kind = "Lazy leg entry (reentry cycle)"
+            else:
+                if cycle:
+                    kind = "Reentry leg entry (overall reentry cycle)"
+                else:
+                    kind = "Strategy entry" if step_num <= len(day_trade.get("legs", [])) * 2 else "Leg entry"
+
+            step_obj = {
+                "step":                   step_num,
+                "time":                   time,
+                "event_type":             "entry",
+                "parent_leg":             parent_leg,
+                "leg":                    leg,
+                "kind":                   kind,
+                "description":            ", ".join(desc_parts),
+                "combined_mtm":           ev.get("combined_mtm"),
+                "combined_mtm_breakdown": ev.get("combined_mtm_breakdown"),
+            }
+            if active_sl_threshold:
+                step_obj["overall_sl_limit"] = active_sl_threshold
+            if active_tgt_threshold:
+                step_obj["overall_target_limit"] = active_tgt_threshold
+            steps.append(step_obj)
+
+        else:  # exit
+            exit_price            = ev.get("exit_price", 0)
+            initial_sl            = ev.get("initial_sl_price", 0)
+            entry_action_ev       = ev.get("entry_action", "SELL")
+            combined_mtm_exit     = ev.get("combined_mtm_at_exit")
+            combined_mtm_breakdown = ev.get("combined_mtm_breakdown_at_exit")
+            pnl_str               = f"₹{pnl:+.2f}" if pnl is not None else ""
+            reentry_type          = ev.get("reentry_type", "")
+
+            desc_parts = [f"{action} @ ₹{exit_price}"]
+            if pnl_str:
+                desc_parts.append(f"PnL: {pnl_str}")
+
+            if exit_reason == "SL":
+                # Detect trail SL: SELL exit_price < initial_sl, BUY exit_price > initial_sl
+                is_sell      = entry_action_ev == "SELL"
+                trail_sl_hit = initial_sl and (
+                    (is_sell and exit_price < initial_sl) or
+                    (not is_sell and exit_price > initial_sl)
+                )
+                if trail_sl_hit:
+                    desc_parts.append(
+                        f"Trail SL triggered (initial SL was ₹{initial_sl}, trail SL moved to ₹{exit_price} as price moved favorably)"
+                    )
+                    kind = "Trail Stop Loss exit"
+                else:
+                    desc_parts.append(f"Initial SL ₹{initial_sl} hit")
+                    kind = "Stop Loss exit"
+                if triggered:
+                    lazy_entered = triggered in entered_lazy_legs
+                    if lazy_entered:
+                        desc_parts.append(f"→ triggers {triggered} (lazy leg entered)")
+                    else:
+                        desc_parts.append(
+                            f"→ triggered {triggered} but lazy leg did NOT enter "
+                            f"(momentum condition not met before market close)"
+                        )
+            elif exit_reason == "Overall SL":
+                sl_threshold = active_sl_threshold
+                if has_overall_sl_reentry:
+                    cycle_note = (
+                        " Active positions in this cycle were force-closed first; "
+                        "overall re-entry is enabled, so a new cycle can start from the same timestamp."
+                    )
+                else:
+                    cycle_note = " All positions were force-closed."
+                desc_parts.append(
+                    f"Overall strategy SL {sl_threshold} triggered at {ev.get('time', '')}.{cycle_note} "
+                    f"This leg PnL is ₹{pnl:+.2f} (individual leg can be positive). "
+                    f"Note: overall SL is checked using simulated intrabar MTM (open+closed legs) — "
+                    f"the combined_mtm_breakdown here shows post-trade close prices which may differ from the simulation's intrabar check."
+                )
+                kind = "Overall SL exit"
+            elif exit_reason == "Overall Target":
+                tgt_threshold = active_tgt_threshold
+                if has_overall_tgt_reentry:
+                    cycle_note = (
+                        " Active positions in this cycle were force-closed first; "
+                        "overall target re-entry is enabled, so a new cycle can start from the same timestamp."
+                    )
+                else:
+                    cycle_note = " All positions were force-closed."
+                desc_parts.append(
+                    f"Overall strategy Target {tgt_threshold} triggered at {ev.get('time', '')}.{cycle_note} "
+                    f"This leg PnL is ₹{pnl:+.2f}."
+                )
+                kind = "Overall Target exit"
+            elif exit_reason == "Target":
+                kind = "Target exit"
+            elif exit_reason == "Time Exit":
+                kind = "Time exit (strategy end time)"
+            else:
+                kind = f"Exit ({exit_reason})"
+
+            running_pnl += pnl if pnl is not None else 0
+            step_obj = {
+                "step":                   step_num,
+                "time":                   time,
+                "event_type":             "exit",
+                "parent_leg":             parent_leg,
+                "leg":                    leg,
+                "kind":                   kind,
+                "description":            ", ".join(desc_parts),
+                "pnl":                    pnl,
+                "realized_pnl_so_far":    round(running_pnl, 2),
+                "combined_mtm":           combined_mtm_exit,
+                "combined_mtm_breakdown": combined_mtm_breakdown,
+            }
+            if active_sl_threshold:
+                step_obj["overall_sl_limit"] = active_sl_threshold
+            if active_tgt_threshold:
+                step_obj["overall_target_limit"] = active_tgt_threshold
+            if exit_reason == "Overall SL":
+                step_obj["overall_sl_threshold"] = active_sl_threshold
+                step_obj["overall_sl_note"] = (
+                    f"Overall SL threshold: {active_sl_threshold}. "
+                    f"This threshold is evaluated on combined open + closed PnL for the active cycle/day."
+                )
+            elif exit_reason == "Overall Target":
+                step_obj["overall_target_threshold"] = active_tgt_threshold
+                step_obj["overall_target_note"] = (
+                    f"Overall Target threshold: {active_tgt_threshold}. "
+                    f"This threshold is evaluated on combined open + closed PnL for the active cycle/day."
+                )
+            steps.append(step_obj)
+
+        step_num += 1
+
+    # ── Not-entered lazy legs — explain why they never entered ───────────────
+    if not_entered_lazy and idle_configs:
+        for lazy_id in sorted(not_entered_lazy):
+            cfg = idle_configs.get(lazy_id, {})
+            mom_cfg   = cfg.get("LegMomentum", {})
+            mom_type  = mom_cfg.get("Type", "None")
+            mom_val   = mom_cfg.get("Value", 0)
+
+            # Find which exit event triggered this lazy leg and when
+            trigger_time = ""
+            trigger_from = ""
+            for ev in events:
+                if ev.get("event_type") == "exit" and ev.get("triggered_lazy_leg") == lazy_id:
+                    trigger_time = ev.get("time", "")
+                    trigger_from = ev.get("parent_leg", "")
+                    break
+
+            if mom_type and mom_type != "None":
+                mom_label = mom_type.replace("MomentumType.", "")
+                desc = (
+                    f"Lazy leg {lazy_id} was triggered at {trigger_time} (from {trigger_from}), "
+                    f"waiting for momentum condition: {mom_label} {mom_val}% "
+                    f"— price did not move {mom_val}% in required direction before strategy exit at {exit_time}. "
+                    f"So {lazy_id} never entered the market."
+                )
+            else:
+                desc = (
+                    f"Lazy leg {lazy_id} was triggered at {trigger_time} (from {trigger_from}) "
+                    f"but did not enter — no market data available or strategy exited before entry could be placed."
+                )
+
+            steps.append({
+                "step":        step_num,
+                "time":        trigger_time,
+                "event_type":  "lazy_not_entered",
+                "parent_leg":  trigger_from,
+                "leg":         f"Lazy({lazy_id})",
+                "kind":        "Lazy leg — never entered",
+                "description": desc,
+                "pnl":         0,
+            })
+            step_num += 1
+
+    # ── PnL Summary ──────────────────────────────────────────────────────────
+    pnl_summary = []
+    for leg in day_trade.get("legs", []):
+        leg_num  = leg.get("leg_num", "")
+        leg_type = leg.get("type", "")
+        leg_pnl  = leg.get("pnl", 0)
+        for st in leg.get("sub_trades", []):
+            cycle   = st.get("overall_reentry_cycle")
+            lazy_id = st.get("lazy_leg_id")
+            p_num   = st.get("parent_leg_num", leg_num)
+            p_type  = st.get("parent_leg_type", leg_type)
+            if lazy_id:
+                label = f"Lazy({lazy_id})"
+            else:
+                label = f"Leg {p_num} ({p_type})"
+            if cycle:
+                label += f" [cycle {cycle}]"
+            pnl_summary.append({
+                "leg":   label,
+                "entry_time":  st.get("entry_time", ""),
+                "exit_time":   st.get("exit_time", ""),
+                "entry_price": st.get("entry_price", 0),
+                "exit_price":  st.get("exit_price", 0),
+                "exit_reason": st.get("exit_reason", ""),
+                "pnl":         st.get("pnl", 0),
+            })
+
+    # ── Final Summary ─────────────────────────────────────────────────────────
+    outcome = "Profit" if total_pnl > 0 else "Loss"
+    close_reason = (
+        f"Overall SL at {overall_sl_time}" if overall_sl
+        else f"Overall Target at {overall_tgt_time}" if overall_tgt
+        else f"Time exit at {exit_time}"
+    )
+    final_summary = (
+        f"Trade closed via {close_reason}. "
+        f"Net PnL: ₹{total_pnl:+.2f} ({outcome}). "
+        f"Total sub-trades: {len(pnl_summary)}."
+    )
+
+    return {
+        "overview":      overview,
+        "steps":         steps,
+        "pnl_summary":   pnl_summary,
+        "final_summary": final_summary,
+    }
+
+
+def _apply_response_flags(day_trade: dict) -> dict:
+    if not RETURN_TRADE_EXPLANATION:
+        day_trade.pop("trade_explanation", None)
+
+    content = day_trade.get("trade_explanation_content")
+    if isinstance(content, dict):
+        if not RETURN_PNL_SUMMARY:
+            content.pop("pnl_summary", None)
+        if not RETURN_MINUTE_PNL:
+            content.pop("minute_pnl", None)
+        if not RETURN_COMBINED_MTM_BREAKDOWN:
+            for step in content.get("steps", []):
+                step.pop("combined_mtm_breakdown", None)
+
+    if not RETURN_COMBINED_MTM_BREAKDOWN:
+        for event in day_trade.get("trade_explanation", []):
+            event.pop("combined_mtm_breakdown", None)
+            event.pop("combined_mtm_breakdown_at_exit", None)
+
+    return day_trade
+
+
+def _merge_reentry_into_parents(parent_legs: list, reentry_legs: list) -> None:
+    """
+    Merge overall-reentry legs into their matching parent legs by id.
+    Each reentry leg's sub_trades are tagged with overall_reentry_cycle and
+    appended to the parent leg's sub_trades. The pnl and exit_time of the
+    parent leg are updated accordingly.
+    Instead of adding new top-level legs, the trade always has exactly
+    len(ListOfLegConfigs) legs.
+    """
+    parent_by_id = {leg["id"]: leg for leg in parent_legs}
+    for rl in reentry_legs:
+        parent = parent_by_id.get(rl["id"])
+        if parent is None:
+            # No matching parent — fall back to appending (should not happen)
+            parent_legs.append(rl)
+            continue
+        cycle = rl.get("overall_reentry_cycle", 1)
+        for st in rl.get("sub_trades", []):
+            st["overall_reentry_cycle"] = cycle
+            parent["sub_trades"].append(st)
+        parent["pnl"] = round(parent["pnl"] + rl["pnl"], 2)
+        if rl["exit_time"] and rl["exit_time"] > parent["exit_time"]:
+            parent["exit_time"]   = rl["exit_time"]
+            parent["exit_price"]  = rl["exit_price"]
+            parent["exit_reason"] = rl["exit_reason"]
+
+
 def _summary(trades: list) -> dict:
     if not trades:
         return {}
+    from datetime import datetime as _dt
+
     pnls      = [t["total_pnl"] for t in trades]
     wins      = [p for p in pnls if p > 0]
     losses    = [p for p in pnls if p <= 0]
@@ -855,10 +1676,18 @@ def _summary(trades: list) -> dict:
         mws = max(mws, cw)
         mls = max(mls, cl)
 
-    overall  = round(sum(pnls), 2)
-    rr       = round(avg_win / abs(avg_loss), 4) if avg_loss != 0 else 0
-    romd     = round(overall / max_dd, 4)        if max_dd   != 0 else "nan"
-    exp      = round((win_rate * avg_win) + (loss_rate * avg_loss), 2)
+    overall = round(sum(pnls), 2)
+
+    # AlgoTest: avgWin / |avgLoss|
+    rr = round(avg_win / abs(avg_loss), 4) if avg_loss != 0 else 0
+
+    # AlgoTest: Overall Profit / Max Drawdown (no year division)
+    romd = round(overall / max_dd, 4) if max_dd != 0 else "nan"
+
+    # AlgoTest Expectancy = (win% × avgWin) − (loss% × |avgLoss|)
+    expectancy_val = round((win_rate * avg_win) - (loss_rate * abs(avg_loss)), 2)
+    # AlgoTest Expectancy Ratio = Expectancy / |avgLoss|  → profit per ₹1 lost
+    exp_ratio = round(expectancy_val / abs(avg_loss), 4) if avg_loss != 0 else 0
 
     return {
         "NumberOfTrades":               n,
@@ -874,7 +1703,7 @@ def _summary(trades: list) -> dict:
         "MaximumLosingStreak":          mls,
         "MaximumDrawdown":              round(max_dd, 2),
         "ReturnOverMaximumDrawdown":    romd,
-        "Expectancy":                   exp,
+        "ExpectancyRatio":              exp_ratio,
         "RewardToRiskRatio":            rr,
     }
 
@@ -1321,6 +2150,7 @@ def run_backtest(request: dict, on_progress=None) -> dict:
                 idx, day, entry_time, exit_time,
                 legs, expiries, step, lot_size,
                 overall_sl_type, overall_sl_val, spot,
+                idle_configs=strategy.get("IdleLegConfigs", {}),
             )
 
         # ── Overall Target ────────────────────────────────────────────────────
@@ -1328,6 +2158,7 @@ def run_backtest(request: dict, on_progress=None) -> dict:
             idx, day, entry_time, exit_time,
             legs, expiries, step, lot_size,
             overall_tgt_type, overall_tgt_val, spot,
+            idle_configs=strategy.get("IdleLegConfigs", {}),
         )
 
         # ── Lock / Lock and Trail ─────────────────────────────────────────────
@@ -1371,7 +2202,7 @@ def run_backtest(request: dict, on_progress=None) -> dict:
         }
         valid = True
 
-        for leg in legs:
+        for leg_num, leg in enumerate(legs, start=1):
             position     = "SELL" if "Sell" in leg["PositionType"] else "BUY"
             otype        = "CE"   if "CE"   in leg["InstrumentKind"] else "PE"
             expiry_kind  = leg.get("ExpiryKind",      "ExpiryType.Weekly")
@@ -1548,6 +2379,10 @@ def run_backtest(request: dict, on_progress=None) -> dict:
                 reentry_tp_next_ref=reentry_tp_next_ref,
             )
 
+            for st in result["sub_trades"]:
+                st["parent_leg_num"]  = leg_num
+                st["parent_leg_type"] = otype
+
             parent_leg_entry = {
                 "id":                leg["id"],
                 "expiry":            expiry,
@@ -1565,6 +2400,7 @@ def run_backtest(request: dict, on_progress=None) -> dict:
                 "pnl":               result["total_leg_pnl"],
                 "sub_trades":        result["sub_trades"],
                 "range_breakout":    rb_type != "None",
+                "leg_num":           leg_num,
             }
 
             # ── Lazy Leg: merge into parent leg's sub_trades ──────────────────
@@ -1581,6 +2417,8 @@ def run_backtest(request: dict, on_progress=None) -> dict:
                     # tag each sub_trade with lazy leg id and add to parent
                     for st in ll.get("sub_trades", []):
                         st["lazy_leg_id"]  = ll["id"]
+                        st["parent_leg_num"]  = leg_num
+                        st["parent_leg_type"] = otype
                         # preserve inner reentry_number; prefix type with Lazy(id)
                         inner_type = st.get("reentry_type", "Initial")
                         st["reentry_type"] = f"Lazy({ll['id']})" if inner_type == "Initial" else f"Lazy({ll['id']})/{inner_type}"
@@ -1600,6 +2438,23 @@ def run_backtest(request: dict, on_progress=None) -> dict:
         if valid and day_trade["legs"]:
             day_trade["total_pnl"] = round(sum(l["pnl"] for l in day_trade["legs"]), 2)
 
+            # ── Tag sub_trades cut off by overall SL / overall Target ─────────
+            if sl_caused_exit and overall_sl_exit_time:
+                for leg in day_trade["legs"]:
+                    for st in leg.get("sub_trades", []):
+                        if st.get("exit_time") == overall_sl_exit_time and st.get("exit_reason") == "Time Exit":
+                            st["exit_reason"] = "Overall SL"
+                    if leg.get("exit_time") == overall_sl_exit_time and leg.get("exit_reason") == "Time Exit":
+                        leg["exit_reason"] = "Overall SL"
+
+            if tgt_caused_exit and overall_tgt_exit_time:
+                for leg in day_trade["legs"]:
+                    for st in leg.get("sub_trades", []):
+                        if st.get("exit_time") == overall_tgt_exit_time and st.get("exit_reason") == "Time Exit":
+                            st["exit_reason"] = "Overall Target"
+                    if leg.get("exit_time") == overall_tgt_exit_time and leg.get("exit_reason") == "Time Exit":
+                        leg["exit_reason"] = "Overall Target"
+
             # ── Overall Re-entry on SL ────────────────────────────────────────
             if (sl_caused_exit and
                     overall_re_type != "None" and
@@ -1618,12 +2473,15 @@ def run_backtest(request: dict, on_progress=None) -> dict:
                     idle_configs  = strategy.get("IdleLegConfigs", {}),
                     overall_sl_type  = overall_sl_type,
                     overall_sl_val   = overall_sl_val,
+                    overall_tgt_type = overall_tgt_type,
+                    overall_tgt_val  = overall_tgt_val,
                     reentry_type   = overall_re_type,
                     reentries_left = overall_re_count,
                     cycle_number  = 1,
+                    base_pnl_before_cycle = day_trade["total_pnl"],
                 )
 
-                day_trade["legs"].extend(reentry_legs)
+                _merge_reentry_into_parents(day_trade["legs"], reentry_legs)
                 day_trade["total_pnl"] = round(
                     sum(l["pnl"] for l in day_trade["legs"]), 2
                 )
@@ -1651,13 +2509,25 @@ def run_backtest(request: dict, on_progress=None) -> dict:
                     reentry_type     = overall_re_tgt_type,
                     reentries_left   = overall_re_tgt_count,
                     cycle_number     = 1,
+                    base_pnl_before_cycle = day_trade["total_pnl"],
                 )
 
-                day_trade["legs"].extend(tgt_reentry_legs)
+                _merge_reentry_into_parents(day_trade["legs"], tgt_reentry_legs)
                 day_trade["total_pnl"] = round(
                     sum(l["pnl"] for l in day_trade["legs"]), 2
                 )
 
+            minute_pnl = _build_minute_pnl_timeline(day_trade, idx, day)
+            _compute_combined_mtm(day_trade, idx, day)
+            explanation_events = _build_trade_explanation(day_trade, idx, day)
+            day_trade["trade_explanation"] = explanation_events
+            day_trade["trade_explanation_content"] = _build_trade_explanation_content(
+                day_trade, explanation_events, strategy.get("IdleLegConfigs", {}),
+                overall_sl_type=overall_sl_type, overall_sl_val=overall_sl_val,
+                overall_tgt_type=overall_tgt_type, overall_tgt_val=overall_tgt_val,
+            )
+            day_trade["trade_explanation_content"]["minute_pnl"] = minute_pnl
+            day_trade = _apply_response_flags(day_trade)
             trades.append(day_trade)
 
         if on_progress:
