@@ -493,6 +493,10 @@ def _parse_overall_reentry(strategy_cfg: dict, key: str) -> tuple[str, int]:
         count = _safe_int(cfg.get('Count') if cfg.get('Count') is not None else cfg.get('count'))
 
     normalized_type = stype.replace(' ', '').lower()
+    if 'likeoriginalreverse' in normalized_type:
+        return 'LikeOriginalReverse', count
+    if 'likeoriginal' in normalized_type:
+        return 'LikeOriginal', count
     if 'momentumreverse' in normalized_type:
         return 'MomentumReverse', count
     if 'momentum' in normalized_type:
@@ -502,7 +506,7 @@ def _parse_overall_reentry(strategy_cfg: dict, key: str) -> tuple[str, int]:
     if 'immediate' in normalized_type or 'reasap' in normalized_type or 'reentry' in normalized_type or 'renetry' in normalized_type:
         return 'Immediate', count
 
-    for kind in ('ImmediateReverse', 'Immediate', 'MomentumReverse', 'Momentum'):
+    for kind in ('LikeOriginalReverse', 'LikeOriginal', 'ImmediateReverse', 'Immediate', 'MomentumReverse', 'Momentum'):
         if kind.lower() in normalized_type:
             return kind, count
     return 'None', 0

@@ -254,6 +254,9 @@ def _build_what_happened(event_type: str, data: dict) -> str:
     return ''
 
 
+
+
+
 def _push_notification(db, doc: dict) -> None:
     """Compute what_happened, then insert one notification document."""
     try:
@@ -860,6 +863,14 @@ def _resolve_feature_leg_id(db, trade_id: str, leg_id: str) -> str:
         return resolved_leg_id
 
     try:
+        feature_col = db[LEG_FEATURE_STATUS_COLLECTION]
+        existing_feature = feature_col.find_one(
+            {'trade_id': resolved_trade_id, 'leg_id': resolved_leg_id},
+            {'_id': 1},
+        )
+        if existing_feature:
+            return resolved_leg_id
+
         history_col = db['algo_trade_positions_history']
         history_doc = history_col.find_one(
             {
@@ -1398,3 +1409,215 @@ def rotate_trail_sl_record(
         )
     except Exception as exc:
         log.error('rotate_trail_sl_record insert error leg=%s: %s', feature_leg_id, exc)
+
+
+def upsert_broker_feature_status(
+    db,
+    *,
+    trade: dict,
+    user_id: str,
+    broker: str,
+    activation_mode: str,
+    feature: str,
+    trigger_value: float,
+    current_mtm: float,
+    timestamp: str,
+    status: str = 'triggered',
+) -> None:
+    """
+    Store broker-level SL/Target tracking rows in algo_leg_feature_status.
+    Broker-level events are audit events, so we always insert a fresh row
+    instead of updating an older broker/day record in place.
+    """
+    col = db[LEG_FEATURE_STATUS_COLLECTION]
+    now = timestamp or _lfs_now()
+    trade_date = _trade_date_from_ts(now) or _lfs_today()
+    resolved_trade = trade or {}
+    resolved_feature = str(feature or '').strip() or 'broker_event'
+    broker_id = str(broker or '').strip()
+    broker_leg_id = f'__broker__:{broker_id}'
+
+    try:
+        payload = {
+            'strategy_id': str(
+                resolved_trade.get('strategy_id')
+                or ((resolved_trade.get('strategy') or {}).get('_id') or '')
+            ),
+            'strategy_name': str(
+                resolved_trade.get('name')
+                or resolved_trade.get('strategy_name')
+                or ((resolved_trade.get('strategy') or {}).get('name') or '')
+            ),
+            'ticker': str(
+                resolved_trade.get('ticker')
+                or ((resolved_trade.get('config') or {}).get('Ticker') or '')
+                or ((resolved_trade.get('strategy') or {}).get('Ticker') or '')
+            ),
+            'trade_id': str(resolved_trade.get('_id') or ''),
+            'trade_date': trade_date,
+            'leg_id': broker_leg_id,
+            'feature': resolved_feature,
+            'enabled': False,
+            'status': status,
+            'entry_price': None,
+            'trigger_price': round(_safe_float(trigger_value), 2),
+            'trigger_type': 'MTM',
+            'trigger_value': round(_safe_float(trigger_value), 2),
+            'trigger_description': (
+                f'Broker-level {resolved_feature} triggered at MTM '
+                f'{round(_safe_float(current_mtm), 2)}.'
+            ),
+            'trail_config': None,
+            'current_sl_price': None,
+            'initial_sl_price': None,
+            'position_side': 'broker',
+            'created_at': now,
+            'updated_at': now,
+            'triggered_at': now,
+            'triggered_price': round(_safe_float(current_mtm), 2),
+            'disabled_at': now,
+            'disabled_reason': resolved_feature,
+            'user_id': str(user_id or '').strip(),
+            'broker': broker_id,
+            'activation_mode': str(activation_mode or '').strip(),
+            'current_mtm': round(_safe_float(current_mtm), 2),
+            'source_event': 'broker_level_trigger',
+        }
+        result = col.insert_one(payload)
+        print('[BROKER FEATURE STATUS INSERTED]', {
+            'id': str(result.inserted_id),
+            'broker': broker_id,
+            'feature': resolved_feature,
+            'trade_id': payload['trade_id'],
+            'strategy_name': payload['strategy_name'],
+            'timestamp': now,
+        })
+    except Exception as exc:
+        log.error('upsert_broker_feature_status error broker=%s feature=%s: %s', broker_id, resolved_feature, exc)
+
+
+def upsert_recost_feature_status(
+    db,
+    trade: dict,
+    leg: dict,
+    timestamp: str,
+    cost_price: float,
+    exit_price: float,
+    status: str = 'pending',
+    recost_leg_id: str | None = None,
+) -> None:
+    """
+    Track AtCost (RE-COST) reentry status in algo_leg_feature_status.
+
+    status='pending'    → SL/Target hit; waiting for price to return to cost_price
+    status='triggered'  → Price returned to cost_price; re-entry entry taken
+    status='disabled'   → Cancelled (e.g. trade exited before price returned)
+
+    Key: (trade_id, recost_leg_id, feature='reCost')
+    recost_leg_id is the inline pending reentry leg's own id (e.g. "0nmwoa90_re_2025-11-03094000"),
+    so _attach_leg_feature_statuses can attach this row to the correct inline leg object.
+    """
+    meta     = _trade_meta(trade)
+    trade_id = str(trade.get('_id') or '')
+    leg_id   = str(recost_leg_id or leg.get('id') or '')
+
+    col = db[LEG_FEATURE_STATUS_COLLECTION]
+    now = timestamp or _lfs_now()
+
+    position    = str(leg.get('position') or '')
+    is_sell     = 'sell' in position.lower()
+    option_type = str(leg.get('option') or '')
+    strike      = leg.get('strike')
+
+    if status == 'pending':
+        direction = 'falls back to' if is_sell else 'rises back to'
+        description = (
+            f"RE-COST pending: {strike} {option_type} exited @ \u20b9{round(_safe_float(exit_price), 2)}. "
+            f"Waiting for price to {direction} \u20b9{round(_safe_float(cost_price), 2)} "
+            f"(original entry cost) to re-enter same strike."
+        )
+    elif status == 'triggered':
+        description = (
+            f"RE-COST triggered: price returned to \u20b9{round(_safe_float(cost_price), 2)} "
+            f"for {strike} {option_type}. Re-entry taken."
+        )
+    else:  # disabled
+        description = (
+            f"RE-COST disabled for {strike} {option_type}. "
+            f"Waiting cost \u20b9{round(_safe_float(cost_price), 2)} not reached."
+        )
+
+    try:
+        col.update_one(
+            {'trade_id': trade_id, 'leg_id': leg_id, 'feature': 'reCost'},
+            {'$set': {
+                'strategy_id':    meta['strategy_id'],
+                'strategy_name':  meta['strategy_name'],
+                'ticker':         meta['ticker'],
+                'trade_date':     _trade_date_from_ts(now),
+                'feature':        'reCost',
+                'enabled':        status == 'pending',
+                'status':         status,
+                'entry_price':    round(_safe_float(cost_price), 2),
+                'trigger_price':  round(_safe_float(cost_price), 2),
+                'trigger_type':   'AtCost',
+                'trigger_value':  round(_safe_float(cost_price), 2),
+                'trigger_description': description,
+                'exit_price':     round(_safe_float(exit_price), 2),
+                'strike':         strike,
+                'option_type':    option_type,
+                'position':       position,
+                'updated_at':     now,
+                'triggered_at':   now if status == 'triggered' else None,
+                'triggered_price': round(_safe_float(cost_price), 2) if status == 'triggered' else None,
+                'disabled_at':    now if status == 'disabled' else None,
+                'disabled_reason': 'cost_not_reached' if status == 'disabled' else None,
+            }, '$setOnInsert': {
+                'trade_id':       trade_id,
+                'leg_id':         leg_id,
+                'created_at':     now,
+            }},
+            upsert=True,
+        )
+    except Exception as exc:
+        log.error('upsert_recost_feature_status error leg=%s: %s', leg_id, exc)
+
+
+def disable_all_trade_notifications(
+    db,
+    trade_id: str,
+    reason: str = 'overall_exit',
+    timestamp: str | None = None,
+) -> None:
+    """
+    Disable ALL active/pending algo_leg_feature_status records for a trade.
+
+    Called when overall SL or overall target is hit so that every open
+    notification (simpleMomentum, sl, target, trailSL, momentum_pending, etc.)
+    is marked disabled before the new cycle begins or the trade ends.
+
+    Unlike _disable_trade_feature_rows_for_new_cycle (which only targets
+    enabled=True records), this function disables any record whose status
+    is still 'pending', 'active', or 'armed' regardless of the enabled flag.
+    """
+    col = db[LEG_FEATURE_STATUS_COLLECTION]
+    now = timestamp or _lfs_now()
+    normalized_trade_id = str(trade_id or '').strip()
+    if not normalized_trade_id:
+        return
+    try:
+        col.update_many(
+            {
+                'trade_id': normalized_trade_id,
+                'status': {'$in': ['pending', 'active', 'armed']},
+            },
+            {'$set': {
+                'status':          'disabled',
+                'enabled':         False,
+                'disabled_at':     now,
+                'disabled_reason': str(reason or 'overall_exit'),
+                'updated_at':      now,
+            }},
+        )
+    except Exception as exc:
+        log.error('disable_all_trade_notifications error trade=%s: %s', normalized_trade_id, exc)

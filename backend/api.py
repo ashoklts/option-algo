@@ -27,17 +27,21 @@ from pathlib import Path
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pymongo import UpdateOne
 
 from features.backtest_engine import run_backtest
 from features.portfolio_worker import strategy_worker
 from features.mongo_data     import MongoData
 from features.expiry_config  import seed_expiry_config
+from features.spot_atm_utils import get_kite_expiries, list_kite_option_contracts
 from features.execution_socket import (
-    build_backtest_simulation_socket_messages,
     broadcast_backtest_simulation_step,
+    emit_broker_settings_for_user,
     queue_execute_order_group_start,
     run_backtest_simulation_step,
     socket_router,
+    _build_message,
+    _extract_broker_configuration_label,
 )
 
 # ─── Config ───────────────────────────────────────────────────────────────────
@@ -49,12 +53,20 @@ CACHE_DIR = Path("/tmp/option_algo_backtest_cache")
 
 JOB_TTL_SECONDS = 3600       # auto-delete completed jobs older than 1 hour
 MAX_JOBS        = 10         # max jobs kept in memory at once
+DEFAULT_APP_USER_ID = "69dcf52711877c164638d2a7"
 
 # ─── Job store (in-memory) ────────────────────────────────────────────────────
 # job_id → { status, completed, total, percent, current_day, result, error, created_at }
 
 _jobs: dict = {}
 _jobs_lock = multiprocessing.Lock()
+
+
+def _resolve_app_user_id(value: str | None = None) -> str:
+    normalized_value = str(value or "").strip()
+    if normalized_value:
+        return normalized_value
+    return DEFAULT_APP_USER_ID
 
 
 def _request_fingerprint(request: dict) -> str:
@@ -539,6 +551,87 @@ def _attach_leg_feature_statuses(db_instance, records: list) -> list:
     return enriched_records
 
 
+def _extract_broker_configuration_label(document: dict, fallback_broker_id: str = "") -> str:
+    if not isinstance(document, dict):
+        return fallback_broker_id
+    for key in (
+        "broker_name",
+        "display_name",
+        "name",
+        "title",
+        "broker",
+        "broker_type",
+        "provider",
+        "vendor",
+    ):
+        value = str(document.get(key) or "").strip()
+        if value:
+            return value
+    return str(fallback_broker_id or "").strip()
+
+
+def _attach_broker_configuration_details(db_instance, records: list) -> list:
+    if not records:
+        return records
+
+    broker_ids = []
+    broker_object_ids = []
+    for record in records:
+        broker_id = str((record or {}).get("broker") or "").strip()
+        if not broker_id:
+            continue
+        broker_ids.append(broker_id)
+        try:
+            broker_object_ids.append(ObjectId(broker_id))
+        except Exception:
+            continue
+
+    if not broker_ids:
+        return records
+
+    broker_docs_by_id = {}
+    try:
+        cursor = db_instance["broker_configuration"].find(
+            {"_id": {"$in": broker_object_ids}},
+            {
+                "_id": 1,
+                "broker_name": 1,
+                "display_name": 1,
+                "name": 1,
+                "title": 1,
+                "broker": 1,
+                "broker_icon": 1,
+                "broker_type": 1,
+                "provider": 1,
+                "vendor": 1,
+            },
+        )
+        for item in cursor:
+            if not item:
+                continue
+            item_id = str(item.get("_id") or "").strip()
+            if item_id:
+                broker_docs_by_id[item_id] = item
+    except Exception:
+        return records
+
+    if not broker_docs_by_id:
+        return records
+
+    enriched_records = []
+    for record in records:
+        new_record = dict(record)
+        broker_id = str(new_record.get("broker") or "").strip()
+        broker_doc = broker_docs_by_id.get(broker_id)
+        if broker_doc:
+            broker_details = dict(broker_doc)
+            broker_details["_id"] = str(broker_doc.get("_id") or broker_id)
+            new_record["broker_details"] = broker_details
+            new_record["broker_label"] = _extract_broker_configuration_label(broker_doc, broker_id)
+        enriched_records.append(new_record)
+    return enriched_records
+
+
 def _enrich_execution_record_with_pnl(record: dict) -> dict:
     legs = record.get("legs") if isinstance(record.get("legs"), list) else []
     enriched_legs = [_calc_leg_pnl(leg) for leg in legs if isinstance(leg, dict)]
@@ -826,6 +919,163 @@ def seed_expiry():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _sync_active_option_tokens(body: dict):
+    """
+    Fetch all CE/PE contracts for the requested instrument from Kite instruments
+    and store them in `active_option_tokens`.
+
+    Body:
+      {
+        "instrument": "NIFTY" | "BANKNIFTY",
+        "expiry": "YYYY-MM-DD"   # optional; if omitted imports all expiries for next 3 months
+      }
+    """
+    from features.kite_broker_ws import is_configured, validate_access_token
+
+    instrument = str((body or {}).get("instrument") or "").strip().upper()
+    requested_expiry = str((body or {}).get("expiry") or "").strip()[:10]
+    if instrument not in {"NIFTY", "BANKNIFTY"}:
+        raise HTTPException(status_code=400, detail="instrument must be NIFTY or BANKNIFTY")
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="Kite credentials not configured. Call POST /kite/config first.",
+        )
+
+    if not validate_access_token():
+        raise HTTPException(
+            status_code=401,
+            detail="Stored Kite access_token is invalid or expired. Refresh it via POST /kite/config.",
+        )
+
+    today_ist = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+    expiries = get_kite_expiries(instrument, today_ist)
+    if not expiries:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No Kite option expiries found for {instrument}.",
+        )
+
+    if requested_expiry and requested_expiry not in expiries:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Requested expiry {requested_expiry} is not available for {instrument}.",
+        )
+
+    month_cutoff = (datetime.strptime(today_ist, "%Y-%m-%d") + timedelta(days=92)).strftime("%Y-%m-%d")
+    target_expiries = [requested_expiry] if requested_expiry else [
+        expiry_value for expiry_value in expiries
+        if today_ist <= expiry_value <= month_cutoff
+    ]
+    if not target_expiries:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No option expiries found within the next 3 months for {instrument}.",
+        )
+
+    now_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+    operations: list[UpdateOne] = []
+    active_tokens_by_expiry: dict[str, list[str]] = {}
+    all_contracts: list[dict] = []
+    for target_expiry in target_expiries:
+        contracts = list_kite_option_contracts(instrument, target_expiry)
+        if not contracts:
+            continue
+        active_tokens_by_expiry[target_expiry] = []
+        for contract in contracts:
+            token_value = str(contract.get("token") or "").strip()
+            option_type = str(contract.get("option_type") or "").strip().upper()
+            if not token_value or option_type not in {"CE", "PE"}:
+                continue
+            active_tokens_by_expiry[target_expiry].append(token_value)
+            all_contracts.append(contract)
+            operations.append(
+                UpdateOne(
+                    {
+                        "instrument": instrument,
+                        "expiry": target_expiry,
+                        "strike": contract.get("strike"),
+                        "option_type": option_type,
+                    },
+                    {
+                        "$set": {
+                            "instrument": instrument,
+                            "expiry": target_expiry,
+                            "strike": contract.get("strike"),
+                            "option_type": option_type,
+                            "token": token_value,
+                            "tokens": token_value,
+                            "symbol": contract.get("symbol") or "",
+                            "exchange": contract.get("exchange") or "NFO",
+                            "updated_at": now_ts,
+                        },
+                        "$setOnInsert": {
+                            "created_at": now_ts,
+                        },
+                    },
+                    upsert=True,
+                )
+            )
+
+    if not operations:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No valid option tokens resolved for {instrument} in the selected expiry range.",
+        )
+
+    db = MongoData()
+    try:
+        collection = db._db["active_option_tokens"]
+        collection.create_index(
+            [("instrument", 1), ("expiry", 1), ("strike", 1), ("option_type", 1)],
+            unique=True,
+        )
+        bulk_result = collection.bulk_write(operations, ordered=False)
+        deleted_stale_count = 0
+        for target_expiry, active_tokens in active_tokens_by_expiry.items():
+            delete_result = collection.delete_many({
+                "instrument": instrument,
+                "expiry": target_expiry,
+                "token": {"$nin": active_tokens},
+            })
+            deleted_stale_count += int(delete_result.deleted_count or 0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+    return {
+        "success": True,
+        "instrument": instrument,
+        "expiry": requested_expiry or "",
+        "imported_expiries": target_expiries,
+        "available_expiries": expiries,
+        "stored_count": len(all_contracts),
+        "upserted_count": bulk_result.upserted_count,
+        "modified_count": bulk_result.modified_count,
+        "deleted_stale_count": deleted_stale_count,
+        "collection_name": "active_option_tokens",
+        "sample": all_contracts[:5],
+    }
+
+
+@router.get("/option-tokens/sync")
+def sync_active_option_tokens_get(
+    instrument: str = Query(..., description="NIFTY or BANKNIFTY"),
+    expiry: str = Query("", description="Optional expiry in YYYY-MM-DD"),
+):
+    return _sync_active_option_tokens({
+        "instrument": instrument,
+        "expiry": expiry,
+    })
+
+
+@router.post("/option-tokens/sync")
+def sync_active_option_tokens_post(body: dict):
+    return _sync_active_option_tokens(body)
+
+
 @router.get("/backtest/sample-result")
 async def backtest_sample_result():
     """Return sample backtest result JSON for frontend table rendering."""
@@ -1090,6 +1340,7 @@ async def strategy_save(payload: dict):
     doc = {
         "name":        name,
         "underlying":  s.get("Ticker"),
+        "user_id":     _resolve_app_user_id(payload.get("user_id") or s.get("user_id")),
         "created_at":  datetime.datetime.utcnow().isoformat(),
         "full_config": payload,
         "report_data": report_data,
@@ -1713,8 +1964,14 @@ async def portfolio_prepare_activation(payload: dict):
             except Exception:
                 pass  # invalid ObjectId or not found — proceed without
 
-        broker_type = str(item.get("broker_type") or strategy_detail.get("broker_type") or ("Broker.Backtest" if activation_mode == "algo-backtest" else "Broker.Dummy")).strip()
-        broker = item.get("broker") or strategy_detail.get("broker")
+        broker = str(
+            item.get("broker")
+            or item.get("broker_type")
+            or strategy_detail.get("broker")
+            or strategy_detail.get("broker_type")
+            or ""
+        ).strip() or None
+        user_id = _resolve_app_user_id(item.get("user_id") or strategy_detail.get("user_id"))
         execution_number = executed_col.count_documents({
             "portfolio_id": portfolio_id,
             "source_strategy_id": source_strategy_id,
@@ -1735,7 +1992,7 @@ async def portfolio_prepare_activation(payload: dict):
             "portfolio_name": portfolio_doc.get("name") or "",
             "activation_mode": activation_mode,
             "broker": broker,
-            "broker_type": broker_type,
+            "user_id": user_id,
             "number_of_executions": execution_number,
             "execution_cache": execution_cache,
             "multiplier": int(item.get("qty_multiplier") or 1),
@@ -1745,7 +2002,7 @@ async def portfolio_prepare_activation(payload: dict):
             "updated_at": now_ts,
         })
 
-        split_executions.setdefault(broker_type, {})[source_strategy_id] = {
+        split_executions.setdefault(str(broker or ""), {})[source_strategy_id] = {
             "number_of_executions": execution_number,
             "assigned_strategy_id": assigned_strategy_id,
         }
@@ -1753,7 +2010,8 @@ async def portfolio_prepare_activation(payload: dict):
             "source_strategy_id": source_strategy_id,
             "assigned_strategy_id": assigned_strategy_id,
             "number_of_executions": execution_number,
-            "broker_type": broker_type,
+            "broker": broker,
+            "user_id": user_id,
             "ticker": ticker,
         })
 
@@ -1855,7 +2113,7 @@ async def portfolio_activate(payload: dict):
         doc = dict(item)
         prepared_execution = executed_col.find_one(
             {"assigned_strategy_id": strategy_id},
-            {"strategy_detail_snapshot": 1, "multiplier": 1, "source_strategy_id": 1},
+            {"strategy_detail_snapshot": 1, "multiplier": 1, "source_strategy_id": 1, "broker": 1, "user_id": 1},
         )
         prepared_strategy_detail = (
             prepared_execution.get("strategy_detail_snapshot")
@@ -1935,8 +2193,17 @@ async def portfolio_activate(payload: dict):
         doc["legs"] = doc.get("legs") if isinstance(doc.get("legs"), list) else []
         default_status = "StrategyStatus.Import" if activation_mode == "algo-backtest" else "StrategyStatus.Live_Running"
         doc["status"] = doc.get("status") or default_status
-        if activation_mode == "algo-backtest":
-            doc["broker_type"] = "Broker.Backtest"
+        prepared_broker = (
+            str((prepared_execution or {}).get("broker") or prepared_strategy_detail.get("broker") or "").strip()
+            or None
+        )
+        prepared_user_id = (
+            str((prepared_execution or {}).get("user_id") or prepared_strategy_detail.get("user_id") or "").strip()
+            or _resolve_app_user_id()
+        )
+        doc["broker"] = str(doc.get("broker") or prepared_broker or "").strip() or None
+        doc["user_id"] = _resolve_app_user_id(doc.get("user_id") or prepared_user_id)
+        doc.pop("broker_type", None)
         doc["portfolio"] = doc.get("portfolio") if isinstance(doc.get("portfolio"), dict) else {}
         doc["portfolio"]["portfolio"] = portfolio_id
         doc["portfolio"]["group_name"] = resolved_portfolio_group_name
@@ -2045,7 +2312,8 @@ async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest
             "trade_status": item.get("trade_status"),
             "active_on_server": bool(item.get("active_on_server")),
             "activation_mode": item.get("activation_mode") or normalized_mode,
-            "broker_type": item.get("broker_type") or "",
+            "broker": item.get("broker") or "",
+            "user_id": item.get("user_id") or "",
             "ticker": item.get("ticker") or "",
             "creation_ts": item.get("creation_ts") or "",
             "entry_time": item.get("entry_time") or "",
@@ -2056,6 +2324,7 @@ async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest
     # Populate string leg IDs with full algo_trade_positions_history docs (single batch query)
     populated_records = _populate_history_legs(db._db, raw_records)
     populated_records = _attach_leg_feature_statuses(db._db, populated_records)
+    populated_records = _attach_broker_configuration_details(db._db, populated_records)
     records = [_enrich_execution_record_with_pnl(rec) for rec in populated_records]
 
     return {
@@ -2299,6 +2568,277 @@ async def get_notifications(
     }
 
 
+@router.get("/broker-configurations")
+async def list_broker_configurations(broker_type: str = ""):
+    normalized_broker_type = str(broker_type or "").strip()
+    query = {}
+    if normalized_broker_type:
+        query["broker_type"] = normalized_broker_type
+
+    db = MongoData()
+    try:
+        cursor = db._db["broker_configuration"].find(
+            query,
+            {
+                "_id": 1,
+                "name": 1,
+                "broker_name": 1,
+                "display_name": 1,
+                "title": 1,
+                "broker": 1,
+                "broker_type": 1,
+                "broker_icon": 1,
+                "provider": 1,
+                "vendor": 1,
+            },
+        )
+        records = []
+        for item in cursor:
+            broker_id = str(item.get("_id") or "").strip()
+            if not broker_id:
+                continue
+            broker_doc = dict(item)
+            broker_doc["_id"] = broker_id
+            records.append({
+                "_id": broker_id,
+                "name": _extract_broker_configuration_label(broker_doc, broker_id),
+                "broker_type": str(item.get("broker_type") or "").strip(),
+                "broker_icon": str(item.get("broker_icon") or "").strip(),
+            })
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load broker configurations: {exc}") from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "count": len(records),
+        "records": records,
+    }
+
+
+@router.post("/broker-stoploss-settings/save")
+async def save_broker_stoploss_settings(payload: dict):
+    def _as_int(value, field_name: str) -> int:
+        if value is None or str(value).strip() == "":
+            raise HTTPException(status_code=400, detail=f"{field_name} is required")
+        try:
+            return int(value)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"{field_name} must be an integer") from exc
+
+    def _as_nullable_int(value, field_name: str):
+        if value is None or str(value).strip() == "":
+            return None
+        try:
+            return int(value)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"{field_name} must be an integer or null") from exc
+
+    def _normalize_optional_block(value, field_name: str):
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"{field_name} must be an object or null")
+        if "InstrumentMove" not in value or "StopLossMove" not in value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field_name} must include InstrumentMove and StopLossMove",
+            )
+        return {
+            "InstrumentMove": _as_int(value.get("InstrumentMove"), f"{field_name}.InstrumentMove"),
+            "StopLossMove": _as_int(value.get("StopLossMove"), f"{field_name}.StopLossMove"),
+        }
+
+    document = {
+        "broker_type": "Broker.Backtest",
+        "creation_ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": 1,
+        "activation_mode": str(payload.get("activation_mode") or "algo-backtest").strip() or "algo-backtest",
+        "user_id": _resolve_app_user_id(payload.get("user_id")),
+        "broker": str(payload.get("broker") or "").strip() or None,
+        "StopLoss": _as_nullable_int(payload.get("StopLoss"), "StopLoss"),
+        "Target": _as_nullable_int(payload.get("Target"), "Target"),
+        "OverallTrailSL": _normalize_optional_block(payload.get("OverallTrailSL"), "OverallTrailSL"),
+        "LockAndTrail": _normalize_optional_block(payload.get("LockAndTrail"), "LockAndTrail"),
+    }
+
+    db = MongoData()
+    try:
+        collection = db._db["algo_borker_stoploss_settings"]
+        update_query = None
+        if document["user_id"] and document["broker"] and document["activation_mode"]:
+            update_query = {
+                "user_id": document["user_id"],
+                "broker": document["broker"],
+                "activation_mode": document["activation_mode"],
+            }
+
+        state_reset: dict = {}          # fields to clear when config changes
+        state_reset_reason: list = []   # human-readable list of what was reset
+
+        if update_query:
+            # Fetch existing doc — need config fields to detect changes
+            existing_doc = collection.find_one(update_query, {
+                "_id": 1, "creation_ts": 1,
+                "StopLoss": 1, "Target": 1,
+                "LockAndTrail": 1, "OverallTrailSL": 1,
+            })
+            updated_document = dict(document)
+            updated_document["updated_ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if existing_doc and existing_doc.get("creation_ts"):
+                updated_document["creation_ts"] = existing_doc["creation_ts"]
+
+            # ── Detect config changes and reset affected state ──────────────
+            # Any change to LockAndTrail, OverallTrailSL, StopLoss or Target
+            # invalidates the persisted lock/trail state. Clear it so the very
+            # next tick starts fresh (signatures also cleared so tick processor
+            # doesn't need to wait for a date change).
+
+            old_lat   = (existing_doc or {}).get("LockAndTrail")
+            old_trail = (existing_doc or {}).get("OverallTrailSL")
+            old_sl    = (existing_doc or {}).get("StopLoss")
+            old_tgt   = (existing_doc or {}).get("Target")
+
+            new_lat   = document["LockAndTrail"]
+            new_trail = document["OverallTrailSL"]
+            new_sl    = document["StopLoss"]
+            new_tgt   = document["Target"]
+
+            # LockAndTrail state reset
+            lock_config_changed = (
+                old_lat   != new_lat   or
+                old_trail != new_trail or
+                old_sl    != new_sl    or
+                old_tgt   != new_tgt
+            )
+            if lock_config_changed and existing_doc:
+                state_reset.update({
+                    "lock_settings_sig":   "",      # tick processor resets on next tick
+                    "lock_activated":      False,
+                    "current_lock_floor":  0.0,
+                    "lock_peak_mtm":       0.0,
+                    "lock_activated_at":   None,
+                    "lock_activation_mtm": 0.0,
+                })
+                if old_lat != new_lat:
+                    state_reset_reason.append("LockAndTrail changed")
+                if old_trail != new_trail:
+                    state_reset_reason.append("OverallTrailSL changed")
+                if old_sl != new_sl:
+                    state_reset_reason.append("StopLoss changed")
+                if old_tgt != new_tgt:
+                    state_reset_reason.append("Target changed")
+
+            # OverallTrailSL standalone (Case A) state reset
+            # Only applies when LockAndTrail is null
+            sl_trail_changed = (old_trail != new_trail or old_sl != new_sl)
+            if sl_trail_changed and not new_lat and existing_doc:
+                state_reset.update({
+                    "sl_settings_sig": "",          # tick processor resets on next tick
+                    "sl_peak_mtm":     0.0,
+                    "effective_sl":    new_sl,
+                })
+                if "OverallTrailSL changed" not in state_reset_reason:
+                    state_reset_reason.append("OverallTrailSL (standalone) changed")
+
+            updated_document.update(state_reset)
+
+            result = collection.update_one(
+                update_query,
+                {"$set": updated_document},
+                upsert=True,
+            )
+            inserted_id = result.upserted_id or (existing_doc and existing_doc.get("_id"))
+            operation = "created" if result.upserted_id else "updated"
+            document = updated_document
+        else:
+            result = collection.insert_one(document)
+            inserted_id = result.inserted_id
+            operation = "created"
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save broker stoploss settings: {exc}") from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    # ── Emit ALL broker settings for this user after save ────────────────────
+    await emit_broker_settings_for_user(
+        document.get("user_id") or "",
+        document.get("activation_mode") or "",
+    )
+
+    return {
+        "success": True,
+        "id": str(inserted_id) if inserted_id is not None else "",
+        "operation": operation,
+        "state_reset": state_reset_reason if state_reset_reason else None,
+        "settings": {
+            "broker_type":    document["broker_type"],
+            "creation_ts":    document["creation_ts"],
+            "status":         document["status"],
+            "activation_mode": document["activation_mode"],
+            "user_id":        document["user_id"],
+            "broker":         document["broker"],
+            "StopLoss":       document["StopLoss"],
+            "Target":         document["Target"],
+            "OverallTrailSL": document["OverallTrailSL"],
+            "LockAndTrail":   document["LockAndTrail"],
+        },
+        # Current runtime state after save (reflects reset if triggered)
+        "lock_state": {
+            "lock_activated":      document.get("lock_activated", False),
+            "current_lock_floor":  document.get("current_lock_floor", 0.0),
+            "lock_peak_mtm":       document.get("lock_peak_mtm", 0.0),
+            "lock_activated_at":   document.get("lock_activated_at"),
+            "lock_activation_mtm": document.get("lock_activation_mtm", 0.0),
+            "effective_sl":        document.get("effective_sl"),
+            "sl_peak_mtm":         document.get("sl_peak_mtm", 0.0),
+        },
+    }
+
+
+@router.get("/get_broker_stoploss_settings/{user_id}/{broker}/{activation_mode}")
+async def get_broker_stoploss_settings(user_id: str, broker: str, activation_mode: str):
+    normalized_user_id = str(user_id or "").strip()
+    normalized_broker = str(broker or "").strip()
+    normalized_activation_mode = str(activation_mode or "").strip() or "algo-backtest"
+
+    if not normalized_user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if not normalized_broker:
+        raise HTTPException(status_code=400, detail="broker is required")
+
+    db = MongoData()
+    try:
+        document = db._db["algo_borker_stoploss_settings"].find_one(
+            {
+                "user_id": normalized_user_id,
+                "broker": normalized_broker,
+                "activation_mode": normalized_activation_mode,
+            },
+            {"_id": 0},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load broker stoploss settings: {exc}") from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "found": document is not None,
+        "settings": document,
+    }
+
+
 @router.get("/algo-backtest-simulator")
 async def algo_backtest_simulator(
     listen_timestamp: str = Query(..., description="Backtest listen timestamp in YYYY-MM-DDTHH:MM:SS"),
@@ -2317,12 +2857,7 @@ async def algo_backtest_simulator(
             normalized_timestamp,
             activation_mode="algo-backtest",
         )
-        # Build socket messages exactly once — broadcast reuses them to avoid
-        # a second _populate_legs_from_history DB call.
-        socket_messages = build_backtest_simulation_socket_messages(db, result)
-        delivered = await broadcast_backtest_simulation_step(
-            db, result, prebuilt_messages=socket_messages
-        )
+        delivered = await broadcast_backtest_simulation_step(db, result)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"algo-backtest-simulator failed: {exc}") from exc
     finally:
@@ -2353,3 +2888,358 @@ async def algo_backtest_simulator(
 
 app.include_router(router)
 app.include_router(socket_router)
+
+
+# ─── Kite market-data config ──────────────────────────────────────────────────
+# One common Kite account is used for all users' live LTP data.
+# access_token expires daily — update it each morning via this endpoint.
+#
+#   POST /kite/config
+#   Body: {"api_key": "...", "access_token": "..."}
+#
+#   GET  /kite/config
+#   Returns current config status (no secrets returned).
+
+kite_router = APIRouter(prefix='/kite')
+
+
+@kite_router.post('/config')
+async def set_kite_config(body: dict):
+    """
+    Set the common Kite credentials used for all users' live LTP.
+    Call this once daily after generating today's access_token.
+    Saves to MongoDB (kite_market_config) and hot-reloads the ticker.
+    Also attaches the live monitor service as a Kite tick listener
+    so background monitoring starts immediately.
+    """
+    from features.kite_broker_ws import (
+        save_credentials_to_db,
+        set_common_credentials,
+    )
+    api_key = str((body or {}).get('api_key') or '').strip()
+    access_token = str((body or {}).get('access_token') or '').strip()
+    if not api_key or not access_token:
+        raise HTTPException(status_code=400, detail='api_key and access_token are required')
+    db = MongoData()
+    try:
+        save_credentials_to_db(db, api_key, access_token)
+        set_common_credentials(api_key, access_token)
+    finally:
+        db.close()
+    # Attach live monitor listener now that credentials are ready
+    from features.live_monitor_service import attach_kite_listener
+    attach_kite_listener()
+    # Subscribe index tokens for entry monitor (spot price before entry time)
+    from features.live_entry_monitor import attach_kite_listener as _lem_attach
+    _lem_attach()
+    return {'success': True, 'message': 'Kite credentials updated — live monitor active'}
+
+
+@kite_router.get('/config')
+async def get_kite_config():
+    """Return current Kite config + live monitor status."""
+    from features.kite_broker_ws import get_common_api_key, is_configured
+    from features.live_monitor_service import get_service
+    svc = get_service()
+    return {
+        'configured': is_configured(),
+        'api_key_set': bool(get_common_api_key()),
+        'live_monitor_running': svc._running,
+        'tick_queue_size': svc._queue.qsize(),
+    }
+
+
+app.include_router(kite_router)
+
+
+# ─── Live monitor control endpoints ───────────────────────────────────────────
+#
+#   GET /live/start          → validate token; if expired redirect to Kite login
+#   GET /live/kite-callback  → Kite OAuth redirect lands here, generates token
+#   GET /live/stop           → stop position checking
+#   GET /live/status         → current state
+#
+# Open these in a browser — no body or auth needed.
+
+from fastapi import Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+live_router = APIRouter(prefix='/live')
+
+
+@live_router.get('/start')
+async def live_start(request: Request):
+    """
+    Hit this URL in the browser to start live monitoring.
+
+    Flow:
+      1. Check if stored access_token is still valid (Kite profile call).
+      2. Valid  → attach listener → show success page.
+      3. Expired/missing → redirect browser to Kite login page automatically.
+         After login Kite redirects to /live/kite-callback which generates a
+         fresh token and starts monitoring.
+    """
+    from features.kite_broker_ws import (
+        get_login_url,
+        is_configured,
+        validate_access_token,
+    )
+    from features.live_monitor_service import get_service
+
+    # ── Step 1: validate existing token ───────────────────────────────────
+    if is_configured() and validate_access_token():
+        import asyncio as _asyncio
+        from features.live_entry_monitor import get_monitor
+
+        # Re-attach SL/TP position monitor
+        svc = get_service()
+        loop = _asyncio.get_event_loop()
+        if not svc._running:
+            svc.start(loop)
+        else:
+            svc.attach_kite_listener()
+
+        # Restart entry monitor fresh from current time
+        mon = get_monitor()
+        mon.start(loop)
+
+        return HTMLResponse(_html_page(
+            title='Live Monitor Started',
+            color='#22c55e',
+            icon='✅',
+            heading='Monitoring Active',
+            body='Kite token is valid. All positions are being monitored.<br>'
+                 'SL / TP / Trail / Overall checks running on every tick.<br>'
+                 'Entry monitor active — checking every second.',
+            show_stop=True,
+        ))
+
+    # ── Step 2: token missing or expired → redirect to Kite login ─────────
+    login_url = get_login_url()
+    return RedirectResponse(url=login_url)
+
+
+@live_router.get('/kite-callback')
+async def kite_callback(request: Request, request_token: str = '', status: str = ''):
+    """
+    Kite OAuth callback — Zerodha redirects here after login.
+    URL pattern: /live/kite-callback?request_token=xxx&status=success
+
+    Generates access_token, saves to MongoDB, starts monitoring.
+    """
+    from features.kite_broker_ws import (
+        generate_access_token,
+        save_access_token_to_db,
+        set_common_credentials,
+        get_common_api_key,
+    )
+    from features.live_monitor_service import get_service
+
+    if status != 'success' or not request_token:
+        return HTMLResponse(_html_page(
+            title='Login Failed',
+            color='#ef4444',
+            icon='❌',
+            heading='Kite Login Failed',
+            body=f'status={status or "unknown"}<br>request_token missing or invalid.<br>'
+                 'Please try again.',
+            show_stop=False,
+        ))
+
+    # ── Generate access_token from request_token ───────────────────────────
+    try:
+        access_token = generate_access_token(request_token)
+    except Exception as exc:
+        return HTMLResponse(_html_page(
+            title='Token Error',
+            color='#ef4444',
+            icon='❌',
+            heading='Token Generation Failed',
+            body=f'Error: {exc}',
+            show_stop=False,
+        ))
+
+    # ── Save to MongoDB + activate in memory ──────────────────────────────
+    db = MongoData()
+    try:
+        save_access_token_to_db(db, access_token)
+    finally:
+        db.close()
+
+    set_common_credentials(get_common_api_key(), access_token)
+
+    # ── Start monitoring ──────────────────────────────────────────────────
+    import asyncio as _asyncio
+    from features.live_entry_monitor import get_monitor
+
+    svc = get_service()
+    loop = _asyncio.get_event_loop()
+    if not svc._running:
+        svc.start(loop)
+    else:
+        svc.attach_kite_listener()
+
+    mon = get_monitor()
+    mon.start(loop)
+
+    return HTMLResponse(_html_page(
+        title='Live Monitor Started',
+        color='#22c55e',
+        icon='✅',
+        heading='Login Successful — Monitoring Active',
+        body='Access token generated and saved.<br>'
+             'All positions are now being monitored on every Kite tick.<br>'
+             'SL / TP / Trail / Overall / Broker settings — all active.<br>'
+             'Entry monitor active — checking every second.',
+        show_stop=True,
+    ))
+
+
+@live_router.get('/stop')
+async def live_stop():
+    """Stop position checking and entry monitoring. Kite socket stays connected."""
+    from features.live_monitor_service import get_service
+    from features.live_entry_monitor import get_monitor
+
+    # Stop SL/TP position monitor
+    svc = get_service()
+    svc.stop()
+
+    # Stop entry time monitor (clears all state)
+    mon = get_monitor()
+    mon.stop()
+
+    # NOTE: Kite socket is intentionally NOT stopped here.
+    # Stopping and recreating the socket on every live monitor restart
+    # causes [KITE WS SUBSCRIBE QUEUED] / socket-not-connected failures.
+    # The socket is shared infrastructure — it stays alive until full server
+    # shutdown (@app.on_event('shutdown') calls stop_all()).
+
+    return HTMLResponse(_html_page(
+        title='Live Monitor Stopped',
+        color='#f59e0b',
+        icon='⏸',
+        heading='Monitoring Paused',
+        body='Position checking stopped.<br>'
+             'Entry monitoring stopped.<br>'
+             'Kite WebSocket remains connected.<br>'
+             'Hit <a href="/live/start">/live/start</a> to resume.',
+        show_stop=False,
+    ))
+
+
+@live_router.get('/status')
+async def live_status():
+    """JSON status of live monitor and Kite connection."""
+    from features.kite_broker_ws import get_common_api_key, is_configured
+    from features.live_monitor_service import get_service
+
+    svc = get_service()
+    configured = is_configured()
+    return {
+        'kite_configured': configured,
+        'kite_api_key': get_common_api_key(),
+        'monitor_loop_running': svc._running,
+        'tick_queue_size': svc._queue.qsize(),
+        'status': 'active' if (svc._running and configured) else 'paused',
+        'message': (
+            'Monitoring active — SL/TP/trail/overall checking on every tick'
+            if svc._running and configured
+            else 'Monitoring paused — hit /live/start to begin'
+        ),
+    }
+
+
+def _html_page(
+    title: str,
+    color: str,
+    icon: str,
+    heading: str,
+    body: str,
+    show_stop: bool,
+) -> str:
+    stop_btn = (
+        '<br><br><a href="/live/stop" style="'
+        'background:#ef4444;color:#fff;padding:10px 24px;'
+        'border-radius:8px;text-decoration:none;font-size:15px;">'
+        '⏸ Stop Monitoring</a>'
+        if show_stop else ''
+    )
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  <style>
+    body {{font-family:system-ui,sans-serif;display:flex;align-items:center;
+           justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}}
+    .card {{background:#1e293b;border-radius:16px;padding:40px 48px;
+            text-align:center;max-width:480px;border:2px solid {color}}}
+    .icon {{font-size:56px;margin-bottom:12px}}
+    h1 {{color:{color};font-size:22px;margin:0 0 16px}}
+    p {{color:#94a3b8;font-size:15px;line-height:1.6;margin:0}}
+    a {{color:{color}}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">{icon}</div>
+    <h1>{heading}</h1>
+    <p>{body}{stop_btn}</p>
+  </div>
+</body>
+</html>"""
+
+
+app.include_router(live_router)
+
+
+# ─── Startup / Shutdown ───────────────────────────────────────────────────────
+
+@app.on_event('startup')
+async def _on_startup():
+    """
+    1. Load Kite credentials from MongoDB.
+    2. Start the persistent live monitor background service.
+       (Continues running regardless of frontend connections.)
+    """
+    import asyncio as _asyncio
+
+    # ── Load Kite credentials ──────────────────────────────────────────────
+    try:
+        from features.kite_broker_ws import load_credentials_from_db
+        db = MongoData()
+        loaded = load_credentials_from_db(db)
+        db.close()
+        if loaded:
+            print('[STARTUP] Kite common credentials loaded from DB')
+        else:
+            print('[STARTUP] No Kite credentials in DB — set via POST /kite/config')
+    except Exception as exc:
+        print(f'[STARTUP] Kite credentials load error: {exc}')
+
+    # Live monitor service and live entry monitor are NOT started automatically.
+    # Hit GET /live/start to start them manually.
+
+
+@app.on_event('shutdown')
+async def _on_shutdown():
+    """Stop live monitor services and Kite connection cleanly."""
+    try:
+        from features.live_monitor_service import stop as _lm_stop
+        _lm_stop()
+        print('[SHUTDOWN] Live monitor service stopped')
+    except Exception as exc:
+        print(f'[SHUTDOWN] Live monitor stop error: {exc}')
+    try:
+        from features.live_entry_monitor import stop as _lem_stop
+        _lem_stop()
+        print('[SHUTDOWN] Live entry monitor stopped')
+    except Exception as exc:
+        print(f'[SHUTDOWN] Live entry monitor stop error: {exc}')
+    try:
+        from features.kite_broker_ws import stop_all
+        stop_all()
+        print('[SHUTDOWN] Kite WebSocket stopped')
+    except Exception as exc:
+        print(f'[SHUTDOWN] Kite stop error: {exc}')

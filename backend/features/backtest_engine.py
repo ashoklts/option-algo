@@ -588,11 +588,10 @@ def _find_at_cost_reentry(candles: list, cost_price: float,
         (position == "SELL" and exit_reason == "Target")
     )
     for c in candles:
-        price = c["close"]
-        if wait_for_rise  and price >= cost_price:
-            return c["time"], round(price, 2)
-        if not wait_for_rise and price <= cost_price:
-            return c["time"], round(price, 2)
+        if wait_for_rise  and c["high"] >= cost_price:
+            return c["time"], cost_price
+        if not wait_for_rise and c["low"] <= cost_price:
+            return c["time"], cost_price
     return None, None
 
 
