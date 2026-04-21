@@ -3,19 +3,330 @@ Helpers for shared spot-price lookup and ATM derivation.
 
 This module is intended to be reused across backtest, fast-forward,
 execution socket, and live-trade flows.
+
+Live / fast-forward mode NEVER touches option_chain_historical_data.
+All option chain data for live comes from Kite instruments API + Kite LTP map.
 """
 
 from __future__ import annotations
 
+import logging
+import threading
 from bisect import bisect_right
 from typing import Any
 from pymongo import DESCENDING
 
 from features.backtest_engine import _resolve_expiry, _resolve_strike
 
+log = logging.getLogger(__name__)
+
+
+def _trace_stdout(message: str) -> None:
+    """Print live option-chain traces immediately to the Python terminal."""
+    print(message, flush=True)
+
 OPTION_CHAIN_COLLECTION = 'option_chain_historical_data'
 INDEX_SPOT_COLLECTION = 'option_chain_index_spot'
 MARKET_DATA_CACHE: dict[str, dict] = {}
+
+# ─── Kite instruments daily cache ─────────────────────────────────────────────
+# Loaded once per trading day. Keyed by (underlying, expiry, strike, type).
+# Value: {'token': int, 'symbol': str, 'exchange': str}
+# Used ONLY for live / fast-forward mode (never for backtest).
+
+_kite_inst_lock  = threading.Lock()
+_kite_inst_date  = ''                          # date the cache was loaded for
+_kite_inst_cache: dict[tuple, dict] = {}       # (underlying, expiry, strike, type) → inst
+
+
+def _ist_today() -> str:
+    from datetime import datetime, timezone, timedelta
+    return (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')
+
+
+def _load_kite_instruments(force: bool = False) -> dict[tuple, dict]:
+    """
+    Load NFO instruments from Kite and cache them for the trading day.
+    Returns the cache dict (may be empty if Kite not configured).
+    Thread-safe.
+    """
+    global _kite_inst_date, _kite_inst_cache
+
+    today = _ist_today()
+    with _kite_inst_lock:
+        if not force and _kite_inst_date == today and _kite_inst_cache:
+            return _kite_inst_cache
+
+        try:
+            from features.kite_broker_ws import get_common_credentials, is_configured  # type: ignore
+            if not is_configured():
+                return _kite_inst_cache
+
+            from kiteconnect import KiteConnect  # type: ignore
+            api_key, access_token = get_common_credentials()
+            if not api_key or not access_token:
+                return _kite_inst_cache
+
+            kite = KiteConnect(api_key=api_key)
+            kite.set_access_token(access_token)
+            instruments = kite.instruments('NFO')
+
+            new_cache: dict[tuple, dict] = {}
+            for inst in instruments:
+                name      = str(inst.get('name') or '').strip().upper()
+                inst_type = str(inst.get('instrument_type') or '').strip().upper()
+                exp       = inst.get('expiry')
+                stk       = inst.get('strike')
+                tok       = inst.get('instrument_token')
+                sym       = str(inst.get('tradingsymbol') or '').strip()
+
+                if not (name and inst_type in ('CE', 'PE') and exp and stk is not None and tok):
+                    continue
+
+                try:
+                    exp_str = exp.strftime('%Y-%m-%d')
+                except AttributeError:
+                    exp_str = str(exp)[:10]
+
+                key = (name, exp_str, float(stk), inst_type)
+                new_cache[key] = {
+                    'token':    int(tok),
+                    'symbol':   sym,
+                    'exchange': str(inst.get('exchange') or 'NFO'),
+                }
+
+            _kite_inst_cache = new_cache
+            _kite_inst_date  = today
+            log.info('[kite_instruments] loaded %d NFO instruments for %s', len(new_cache), today)
+
+        except Exception as exc:
+            log.warning('[kite_instruments] load error: %s', exc)
+
+        return _kite_inst_cache
+
+
+def get_kite_chain_doc(
+    underlying: str,
+    expiry: str,
+    strike: float,
+    option_type: str,
+) -> dict:
+    """
+    Build a synthetic option chain doc from Kite instruments cache + live LTP.
+
+    Used ONLY for live / fast-forward mode.
+    Returns {} if the instrument is not found or Kite is not configured.
+    """
+    cache = _load_kite_instruments()
+    key   = (
+        str(underlying  or '').strip().upper(),
+        str(expiry      or '').strip()[:10],
+        float(strike),
+        str(option_type or '').strip().upper(),
+    )
+    inst = cache.get(key)
+    if not inst:
+        _trace_stdout(
+            f'[LIVE OPTION CHAIN] underlying={key[0]} expiry={key[1]} '
+            f'strike={key[2]} type={key[3]} instrument=NOT_FOUND'
+        )
+        return {}
+
+    token_int = inst['token']
+    token_str = str(token_int)
+    ltp       = 0.0
+
+    # 1. REST quote cache — works even before WebSocket subscription
+    quotes = fetch_kite_quotes_for_expiry(key[0], key[1])
+    ltp    = float(quotes.get(token_str, 0.0))
+
+    # 2. Fallback: WebSocket LTP map (available after token is subscribed)
+    if ltp <= 0:
+        try:
+            from features.kite_broker_ws import get_ltp_map  # type: ignore
+            ltp = float(get_ltp_map().get(token_str, 0.0))
+        except Exception:
+            pass
+
+    _trace_stdout(
+        f'[LIVE OPTION CHAIN] underlying={key[0]} expiry={key[1]} '
+        f'strike={key[2]} type={key[3]} token={token_str} '
+        f'symbol={inst["symbol"]} ltp={ltp if ltp > 0 else "UNAVAILABLE"}'
+    )
+
+    return {
+        'underlying': key[0],
+        'expiry':     key[1],
+        'strike':     key[2],
+        'type':       key[3],
+        'token':      str(token_int),
+        'symbol':     inst['symbol'],
+        'exchange':   inst['exchange'],
+        'close':      ltp,
+        'ltp':        ltp,
+        'current_price': ltp,
+        'price':      ltp,
+        'last_price': ltp,
+    }
+
+
+def get_kite_expiries(underlying: str, from_date: str) -> list[str]:
+    """
+    Return sorted expiry date strings for *underlying* >= from_date
+    from the Kite instruments cache.  Used by live / fast-forward mode.
+    """
+    cache = _load_kite_instruments()
+    und   = str(underlying or '').strip().upper()
+    expiries: set[str] = set()
+    for (name, exp, _strike, _type) in cache:
+        if name == und and exp >= from_date:
+            expiries.add(exp)
+    return sorted(expiries)
+
+
+def list_kite_option_contracts(underlying: str, expiry: str) -> list[dict]:
+    """
+    Return all cached Kite option contracts for an underlying + expiry.
+
+    Each item contains:
+      {
+        'instrument': 'NIFTY',
+        'expiry': '2026-04-23',
+        'strike': 24500,
+        'option_type': 'CE',
+        'token': '123456',
+        'tokens': '123456',
+        'symbol': 'NIFTY26APR24500CE',
+        'exchange': 'NFO',
+      }
+    """
+    und = str(underlying or '').strip().upper()
+    exp = str(expiry or '').strip()[:10]
+    if not und or not exp:
+        return []
+
+    cache = _load_kite_instruments()
+    contracts: list[dict] = []
+    for (name, exp_key, strike, option_type), inst in cache.items():
+        if name != und or exp_key != exp:
+            continue
+        token_value = str(inst.get('token') or '').strip()
+        if not token_value:
+            continue
+        strike_value = int(strike) if float(strike).is_integer() else float(strike)
+        contracts.append({
+            'instrument': und,
+            'expiry': exp,
+            'strike': strike_value,
+            'option_type': str(option_type or '').strip().upper(),
+            'token': token_value,
+            'tokens': token_value,
+            'symbol': str(inst.get('symbol') or '').strip(),
+            'exchange': str(inst.get('exchange') or 'NFO').strip() or 'NFO',
+        })
+
+    contracts.sort(key=lambda item: (item['strike'], item['option_type']))
+    return contracts
+
+
+# ─── Kite option-chain quote cache ────────────────────────────────────────────
+# At entry time we need LTP for ALL strikes of a specific expiry — but those
+# tokens are NOT yet subscribed on the WebSocket.  We solve this by calling
+# the Kite REST quote() API once per (underlying, expiry) and caching the
+# result for _QUOTE_CACHE_TTL seconds.  This avoids per-token subscriptions
+# before entry and works even when ltp_map is empty.
+#
+# Used ONLY for live / fast-forward mode.
+
+import time as _time
+
+_QUOTE_CACHE_TTL              = 3.0   # seconds
+_kite_quote_lock              = threading.Lock()
+_kite_quote_cache: dict       = {}    # {(underlying, expiry): {'ts': float, 'data': {str(token): float}}}
+
+
+def fetch_kite_quotes_for_expiry(underlying: str, expiry: str) -> dict[str, float]:
+    """
+    Fetch real-time LTP for ALL options of *underlying* + *expiry* via the
+    Kite REST quote() API.  Returns {str(instrument_token): float(ltp)}.
+
+    Results are cached for _QUOTE_CACHE_TTL seconds so multiple legs of the
+    same strategy share one API call at entry time.
+
+    Live / fast-forward only — never called for backtest.
+    """
+    und       = str(underlying or '').strip().upper()
+    exp       = str(expiry     or '').strip()[:10]
+    cache_key = (und, exp)
+
+    with _kite_quote_lock:
+        cached = _kite_quote_cache.get(cache_key)
+        if cached and (_time.monotonic() - cached['ts']) < _QUOTE_CACHE_TTL:
+            return cached['data']
+
+    # Collect all instrument tokens for this underlying + expiry
+    inst_cache = _load_kite_instruments()
+    tokens: list[int] = [
+        inst['token']
+        for (name, exp_k, _stk, _typ), inst in inst_cache.items()
+        if name == und and exp_k == exp
+    ]
+
+    if not tokens:
+        return {}
+
+    ltp_data: dict[str, float] = {}
+    try:
+        from features.kite_broker_ws import get_common_credentials, is_configured  # type: ignore
+        if not is_configured():
+            return {}
+        from kiteconnect import KiteConnect  # type: ignore
+        api_key, access_token = get_common_credentials()
+        if not api_key or not access_token:
+            return {}
+
+        kite = KiteConnect(api_key=api_key)
+        kite.set_access_token(access_token)
+
+        # Kite quote() accepts up to 500 tokens per call
+        for i in range(0, len(tokens), 500):
+            batch  = tokens[i:i + 500]
+            quotes = kite.quote(batch)
+            for _sym, q in quotes.items():
+                tok = str(q.get('instrument_token') or '').strip()
+                ltp = float(q.get('last_price') or 0.0)
+                if tok:
+                    ltp_data[tok] = ltp
+
+        log.info(
+            '[kite_quotes] fetched %d quotes  underlying=%s  expiry=%s',
+            len(ltp_data), und, exp,
+        )
+        _trace_stdout(
+            f'[LIVE OPTION QUOTES] underlying={und} expiry={exp} quotes={len(ltp_data)}'
+        )
+    except Exception as exc:
+        log.warning('[kite_quotes] fetch error underlying=%s expiry=%s: %s', und, exp, exc)
+        _trace_stdout(
+            f'[LIVE OPTION QUOTES] underlying={und} expiry={exp} fetch_error={exc}'
+        )
+
+    with _kite_quote_lock:
+        _kite_quote_cache[cache_key] = {'ts': _time.monotonic(), 'data': ltp_data}
+
+    return ltp_data
+
+
+# Kite numeric instrument tokens for major index underlyings.
+# Used by live / fast-forward mode to get real-time spot price from
+# kite_broker_ws LTP map instead of querying the DB.
+KITE_INDEX_TOKENS: dict[str, int] = {
+    'NIFTY':      256265,
+    'BANKNIFTY':  260105,
+    'SENSEX':     265,
+    'FINNIFTY':   257801,
+    'MIDCPNIFTY': 288009,
+}
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -167,43 +478,237 @@ def preload_market_data_cache(
     return cache
 
 
-def get_cached_spot_doc(market_cache: dict | None, underlying: str, snapshot_ts: str | None = None) -> dict:
-    if not market_cache:
+def _kite_spot_doc(underlying_norm: str, ts: str) -> dict:
+    """
+    Return a synthetic spot doc built from live Kite LTP for the index.
+    Used only in live / fast-forward mode (no pre-loaded market_cache).
+    Returns {} if Kite is not configured or LTP not yet received.
+    """
+    index_token = KITE_INDEX_TOKENS.get(underlying_norm)
+    if not index_token:
         return {}
+    try:
+        from features.kite_broker_ws import get_ltp_map  # type: ignore
+        ltp_map = get_ltp_map()
+        price = float(ltp_map.get(str(index_token), 0.0))
+        if price > 0:
+            return {
+                'underlying': underlying_norm,
+                'spot_price': price,
+                'close':      price,
+                'ltp':        price,
+                'timestamp':  ts or '',
+            }
+    except Exception:
+        pass
+    return {}
+
+
+def _active_option_token_doc(
+    db,
+    underlying_norm: str,
+    expiry_norm: str,
+    strike_val: float,
+    opt_norm: str,
+    ts: str,
+) -> dict:
+    """
+    Resolve live option contract metadata from active_option_tokens and
+    overlay the latest Kite WebSocket LTP.
+
+    This is the live / fast-forward replacement for any option-chain-based
+    contract lookup. No REST quote fetch is performed here.
+    """
+    if db is None:
+        return {}
+
+    try:
+        doc = db['active_option_tokens'].find_one(
+            {
+                'instrument': underlying_norm,
+                'expiry': expiry_norm,
+                'strike': strike_val,
+                'option_type': opt_norm,
+            },
+            {
+                '_id': 0,
+                'instrument': 1,
+                'expiry': 1,
+                'strike': 1,
+                'option_type': 1,
+                'token': 1,
+                'tokens': 1,
+                'symbol': 1,
+                'exchange': 1,
+            },
+        ) or {}
+    except Exception as exc:
+        log.warning(
+            '[active_option_tokens] lookup error instrument=%s expiry=%s strike=%s type=%s: %s',
+            underlying_norm, expiry_norm, strike_val, opt_norm, exc,
+        )
+        return {}
+
+    token_str = str(doc.get('token') or doc.get('tokens') or '').strip()
+    if not doc or not token_str:
+        _trace_stdout(
+            f'[ACTIVE OPTION TOKEN] instrument={underlying_norm} expiry={expiry_norm} '
+            f'strike={strike_val} type={opt_norm} token=NOT_FOUND'
+        )
+        return {}
+
+    ltp = 0.0
+    try:
+        from features.kite_broker_ws import get_ltp_map  # type: ignore
+        ltp = float(get_ltp_map().get(token_str, 0.0))
+    except Exception:
+        pass
+
+    _trace_stdout(
+        f'[ACTIVE OPTION TOKEN] instrument={underlying_norm} expiry={expiry_norm} '
+        f'strike={strike_val} type={opt_norm} token={token_str} '
+        f'symbol={str(doc.get("symbol") or "").strip() or "-"} '
+        f'ltp={ltp if ltp > 0 else "UNAVAILABLE"}'
+    )
+
+    return {
+        'underlying': underlying_norm,
+        'expiry': expiry_norm,
+        'strike': strike_val,
+        'type': opt_norm,
+        'token': token_str,
+        'symbol': str(doc.get('symbol') or '').strip(),
+        'exchange': str(doc.get('exchange') or 'NFO').strip() or 'NFO',
+        'close': ltp,
+        'ltp': ltp,
+        'current_price': ltp,
+        'price': ltp,
+        'last_price': ltp,
+        'timestamp': ts or '',
+    }
+
+
+def get_cached_spot_doc(
+    db_or_cache,
+    underlying: str,
+    snapshot_ts: str | None = None,
+    *,
+    timestamp: str | None = None,
+    cache: dict | None = None,
+) -> dict:
+    """
+    Fetch spot price document.
+
+    Modes
+    ─────
+    • backtest        : first arg is a pre-loaded dict market_cache  →  cache lookup
+    • live / fast-fwd : first arg is a pymongo Database              →  kite LTP first,
+                        then DB fallback (never uses historical cache)
+
+    ``timestamp`` is an alias for ``snapshot_ts`` (used by trading_core.py).
+    ``cache`` is an explicit dict cache (takes priority over db_or_cache).
+    """
+    ts = snapshot_ts or timestamp
+
+    # Determine the actual dict cache (backtest path)
+    actual_cache = cache
+    if actual_cache is None and isinstance(db_or_cache, dict):
+        actual_cache = db_or_cache
+
     normalized_underlying = str(underlying or '').strip().upper()
     if not normalized_underlying:
         return {}
-    if not snapshot_ts:
-        return (market_cache.get('latest_spot_docs') or {}).get(normalized_underlying) or {}
-    return _find_latest_snapshot(
-        (market_cache.get('spot_docs') or {}).get(normalized_underlying) or [],
-        (market_cache.get('spot_timestamps') or {}).get(normalized_underlying) or [],
-        snapshot_ts,
-    )
+
+    # ── Backtest: use pre-loaded dict cache ───────────────────────────────────
+    if actual_cache:
+        if not ts:
+            return (actual_cache.get('latest_spot_docs') or {}).get(normalized_underlying) or {}
+        return _find_latest_snapshot(
+            (actual_cache.get('spot_docs') or {}).get(normalized_underlying) or [],
+            (actual_cache.get('spot_timestamps') or {}).get(normalized_underlying) or [],
+            ts,
+        )
+
+    # ── Live / fast-forward: db_or_cache is a pymongo Database ───────────────
+    db = db_or_cache
+    if db is None:
+        return {}
+
+    # 1. Try live Kite LTP for the index token (real-time, most accurate)
+    kite_doc = _kite_spot_doc(normalized_underlying, ts or '')
+    if kite_doc:
+        return kite_doc
+
+    # 2. Fallback: direct DB query (if kite not yet connected / token not subscribed)
+    try:
+        query: dict = {'underlying': normalized_underlying}
+        if ts:
+            query['timestamp'] = {'$lte': ts}
+        doc = db[INDEX_SPOT_COLLECTION].find_one(query, sort=[('timestamp', -1)])
+        return doc or {}
+    except Exception:
+        return {}
 
 
 def get_cached_chain_doc(
-    market_cache: dict | None,
+    db_or_cache,
     underlying: str,
     expiry: str,
     strike: Any,
     option_type: str,
     snapshot_ts: str | None = None,
+    *,
+    timestamp: str | None = None,
+    cache: dict | None = None,
 ) -> dict:
-    if not market_cache:
-        return {}
+    """
+    Fetch option chain document.
+
+    Modes
+    ─────
+    • backtest        : first arg is a pre-loaded dict market_cache  →  cache lookup
+    • live / fast-fwd : first arg is a pymongo Database              →  DB query for
+                        contract metadata (expiry, strike, instrument_token) then
+                        overlay the price fields with live Kite LTP so the entry /
+                        SL / TP uses real-time tick data, not a stale DB close price.
+
+    ``timestamp`` is an alias for ``snapshot_ts`` (used by trading_core.py).
+    ``cache`` is an explicit dict cache (takes priority over db_or_cache).
+    """
+    ts = snapshot_ts or timestamp
+
+    # Determine the actual dict cache (backtest path)
+    actual_cache = cache
+    if actual_cache is None and isinstance(db_or_cache, dict):
+        actual_cache = db_or_cache
+
     key = (
         str(underlying or '').strip().upper(),
         str(expiry or '').strip()[:10],
         safe_float(strike),
         str(option_type or '').strip().upper(),
     )
-    if not snapshot_ts:
-        return (market_cache.get('latest_chain_docs') or {}).get(key) or {}
-    return _find_latest_snapshot(
-        (market_cache.get('chain_docs') or {}).get(key) or [],
-        (market_cache.get('chain_timestamps') or {}).get(key) or [],
-        snapshot_ts,
+
+    # ── Backtest: use pre-loaded dict cache ───────────────────────────────────
+    if actual_cache:
+        if not ts:
+            return (actual_cache.get('latest_chain_docs') or {}).get(key) or {}
+        return _find_latest_snapshot(
+            (actual_cache.get('chain_docs') or {}).get(key) or [],
+            (actual_cache.get('chain_timestamps') or {}).get(key) or [],
+            ts,
+        )
+
+    # ── Live / fast-forward: use active_option_tokens + Kite socket LTP ─────
+    # Never query option_chain_historical_data here — that collection is for backtest only.
+    underlying_norm, expiry_norm, strike_val, opt_norm = key
+    return _active_option_token_doc(
+        db_or_cache,
+        underlying_norm,
+        expiry_norm,
+        strike_val,
+        opt_norm,
+        ts or '',
     )
 
 
