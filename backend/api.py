@@ -25,20 +25,35 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from bson import ObjectId
-from fastapi import FastAPI, HTTPException, APIRouter, Query
+from fastapi import FastAPI, HTTPException, APIRouter, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from features.backtest_engine import run_backtest
 from features.portfolio_worker import strategy_worker
 from features.mongo_data     import MongoData
 from features.expiry_config  import seed_expiry_config
+from features.kite_broker import (
+    get_login_url,
+    generate_session,
+    get_kite_instance,
+    save_kite_session,
+    get_stored_access_token,
+)
+from features.kite_ticker import ticker_manager
+from features.mock_ticker import mock_ticker_manager
 from features.execution_socket import (
-    build_backtest_simulation_socket_messages,
     broadcast_backtest_simulation_step,
+    emit_broker_settings_for_user,
     queue_execute_order_group_start,
     run_backtest_simulation_step,
     socket_router,
+    _build_message,
+    _extract_broker_configuration_label,
 )
+from features.live_fast_monitor import live_fast_monitor_supervisor
+from features.live_monitor_socket import live_monitor_loop
+from features.mock_kite_socket import mock_kite_socket_router
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -49,12 +64,20 @@ CACHE_DIR = Path("/tmp/option_algo_backtest_cache")
 
 JOB_TTL_SECONDS = 3600       # auto-delete completed jobs older than 1 hour
 MAX_JOBS        = 10         # max jobs kept in memory at once
+DEFAULT_APP_USER_ID = "69dcf52711877c164638d2a7"
 
 # ─── Job store (in-memory) ────────────────────────────────────────────────────
 # job_id → { status, completed, total, percent, current_day, result, error, created_at }
 
 _jobs: dict = {}
 _jobs_lock = multiprocessing.Lock()
+
+
+def _resolve_app_user_id(value: str | None = None) -> str:
+    normalized_value = str(value or "").strip()
+    if normalized_value:
+        return normalized_value
+    return DEFAULT_APP_USER_ID
 
 
 def _request_fingerprint(request: dict) -> str:
@@ -539,6 +562,87 @@ def _attach_leg_feature_statuses(db_instance, records: list) -> list:
     return enriched_records
 
 
+def _extract_broker_configuration_label(document: dict, fallback_broker_id: str = "") -> str:
+    if not isinstance(document, dict):
+        return fallback_broker_id
+    for key in (
+        "broker_name",
+        "display_name",
+        "name",
+        "title",
+        "broker",
+        "broker_type",
+        "provider",
+        "vendor",
+    ):
+        value = str(document.get(key) or "").strip()
+        if value:
+            return value
+    return str(fallback_broker_id or "").strip()
+
+
+def _attach_broker_configuration_details(db_instance, records: list) -> list:
+    if not records:
+        return records
+
+    broker_ids = []
+    broker_object_ids = []
+    for record in records:
+        broker_id = str((record or {}).get("broker") or "").strip()
+        if not broker_id:
+            continue
+        broker_ids.append(broker_id)
+        try:
+            broker_object_ids.append(ObjectId(broker_id))
+        except Exception:
+            continue
+
+    if not broker_ids:
+        return records
+
+    broker_docs_by_id = {}
+    try:
+        cursor = db_instance["broker_configuration"].find(
+            {"_id": {"$in": broker_object_ids}},
+            {
+                "_id": 1,
+                "broker_name": 1,
+                "display_name": 1,
+                "name": 1,
+                "title": 1,
+                "broker": 1,
+                "broker_icon": 1,
+                "broker_type": 1,
+                "provider": 1,
+                "vendor": 1,
+            },
+        )
+        for item in cursor:
+            if not item:
+                continue
+            item_id = str(item.get("_id") or "").strip()
+            if item_id:
+                broker_docs_by_id[item_id] = item
+    except Exception:
+        return records
+
+    if not broker_docs_by_id:
+        return records
+
+    enriched_records = []
+    for record in records:
+        new_record = dict(record)
+        broker_id = str(new_record.get("broker") or "").strip()
+        broker_doc = broker_docs_by_id.get(broker_id)
+        if broker_doc:
+            broker_details = dict(broker_doc)
+            broker_details["_id"] = str(broker_doc.get("_id") or broker_id)
+            new_record["broker_details"] = broker_details
+            new_record["broker_label"] = _extract_broker_configuration_label(broker_doc, broker_id)
+        enriched_records.append(new_record)
+    return enriched_records
+
+
 def _enrich_execution_record_with_pnl(record: dict) -> dict:
     legs = record.get("legs") if isinstance(record.get("legs"), list) else []
     enriched_legs = [_calc_leg_pnl(leg) for leg in legs if isinstance(leg, dict)]
@@ -760,6 +864,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def _setup_logging():
+    from features.app_logger import setup_logging
+    setup_logging()
 
 
 @app.on_event("startup")
@@ -1090,6 +1200,7 @@ async def strategy_save(payload: dict):
     doc = {
         "name":        name,
         "underlying":  s.get("Ticker"),
+        "user_id":     _resolve_app_user_id(payload.get("user_id") or s.get("user_id")),
         "created_at":  datetime.datetime.utcnow().isoformat(),
         "full_config": payload,
         "report_data": report_data,
@@ -1492,6 +1603,44 @@ def _build_strategy_execution_config(strategy_detail: dict, strategy_state: dict
     }
 
 
+def _normalize_execution_settings_payload(source_detail: dict, payload: dict, activation_mode: str):
+    detail = _clone_json_value(source_detail) if isinstance(source_detail, dict) else {}
+    incoming = payload if isinstance(payload, dict) else {}
+
+    if isinstance(incoming.get("execution_config_base"), dict):
+        detail["execution_config_base"] = _clone_json_value(incoming.get("execution_config_base"))
+    if isinstance(incoming.get("execution_config_extra"), dict):
+        detail["execution_config_extra"] = _clone_json_value(incoming.get("execution_config_extra"))
+    if isinstance(incoming.get("view_config"), dict):
+        detail["view_config"] = _clone_json_value(incoming.get("view_config"))
+
+    normalized = _build_strategy_execution_config(
+        detail,
+        {
+            "qty_multiplier": ((incoming.get("execution_config_base") or {}).get("Multiplier") if isinstance(incoming.get("execution_config_base"), dict) else 1) or 1,
+            "is_weekdays": incoming.get("is_weekdays", True),
+            "dte": incoming.get("dte") if isinstance(incoming.get("dte"), list) else [],
+            "weekdays": list((incoming.get("weekdays") or {}).keys()) if isinstance(incoming.get("weekdays"), dict) else [],
+        },
+        activation_mode,
+    )
+
+    if isinstance(incoming.get("weekdays"), dict):
+        normalized["weekdays"] = {
+            "friday": bool(incoming["weekdays"].get("friday")),
+            "monday": bool(incoming["weekdays"].get("monday")),
+            "saturday": bool(incoming["weekdays"].get("saturday")),
+            "sunday": bool(incoming["weekdays"].get("sunday")),
+            "thursday": bool(incoming["weekdays"].get("thursday")),
+            "tuesday": bool(incoming["weekdays"].get("tuesday")),
+            "wednesday": bool(incoming["weekdays"].get("wednesday")),
+        }
+    normalized["is_weekdays"] = bool(incoming.get("is_weekdays", normalized.get("is_weekdays", True)))
+    normalized["dte"] = incoming.get("dte") if isinstance(incoming.get("dte"), list) else normalized.get("dte", [])
+    normalized["view_config"] = incoming.get("view_config") if isinstance(incoming.get("view_config"), dict) else normalized.get("view_config", {"advanced_exec_config_modal": True})
+    return normalized
+
+
 def _clone_json_value(value):
     return deepcopy(value)
 
@@ -1713,8 +1862,14 @@ async def portfolio_prepare_activation(payload: dict):
             except Exception:
                 pass  # invalid ObjectId or not found — proceed without
 
-        broker_type = str(item.get("broker_type") or strategy_detail.get("broker_type") or ("Broker.Backtest" if activation_mode == "algo-backtest" else "Broker.Dummy")).strip()
-        broker = item.get("broker") or strategy_detail.get("broker")
+        broker = str(
+            item.get("broker")
+            or item.get("broker_type")
+            or strategy_detail.get("broker")
+            or strategy_detail.get("broker_type")
+            or ""
+        ).strip() or None
+        user_id = _resolve_app_user_id(item.get("user_id") or strategy_detail.get("user_id"))
         execution_number = executed_col.count_documents({
             "portfolio_id": portfolio_id,
             "source_strategy_id": source_strategy_id,
@@ -1735,7 +1890,7 @@ async def portfolio_prepare_activation(payload: dict):
             "portfolio_name": portfolio_doc.get("name") or "",
             "activation_mode": activation_mode,
             "broker": broker,
-            "broker_type": broker_type,
+            "user_id": user_id,
             "number_of_executions": execution_number,
             "execution_cache": execution_cache,
             "multiplier": int(item.get("qty_multiplier") or 1),
@@ -1745,7 +1900,7 @@ async def portfolio_prepare_activation(payload: dict):
             "updated_at": now_ts,
         })
 
-        split_executions.setdefault(broker_type, {})[source_strategy_id] = {
+        split_executions.setdefault(str(broker or ""), {})[source_strategy_id] = {
             "number_of_executions": execution_number,
             "assigned_strategy_id": assigned_strategy_id,
         }
@@ -1753,7 +1908,8 @@ async def portfolio_prepare_activation(payload: dict):
             "source_strategy_id": source_strategy_id,
             "assigned_strategy_id": assigned_strategy_id,
             "number_of_executions": execution_number,
-            "broker_type": broker_type,
+            "broker": broker,
+            "user_id": user_id,
             "ticker": ticker,
         })
 
@@ -1855,7 +2011,7 @@ async def portfolio_activate(payload: dict):
         doc = dict(item)
         prepared_execution = executed_col.find_one(
             {"assigned_strategy_id": strategy_id},
-            {"strategy_detail_snapshot": 1, "multiplier": 1, "source_strategy_id": 1},
+            {"strategy_detail_snapshot": 1, "multiplier": 1, "source_strategy_id": 1, "broker": 1, "user_id": 1},
         )
         prepared_strategy_detail = (
             prepared_execution.get("strategy_detail_snapshot")
@@ -1935,8 +2091,26 @@ async def portfolio_activate(payload: dict):
         doc["legs"] = doc.get("legs") if isinstance(doc.get("legs"), list) else []
         default_status = "StrategyStatus.Import" if activation_mode == "algo-backtest" else "StrategyStatus.Live_Running"
         doc["status"] = doc.get("status") or default_status
-        if activation_mode == "algo-backtest":
-            doc["broker_type"] = "Broker.Backtest"
+        prepared_broker = (
+            str((prepared_execution or {}).get("broker") or prepared_strategy_detail.get("broker") or "").strip()
+            or None
+        )
+        prepared_user_id = (
+            str((prepared_execution or {}).get("user_id") or prepared_strategy_detail.get("user_id") or "").strip()
+            or _resolve_app_user_id()
+        )
+        normalized_execution_settings = _build_strategy_execution_config(prepared_strategy_detail, prepared_state, activation_mode)
+        doc["broker"] = str(doc.get("broker") or prepared_broker or "").strip() or None
+        doc["user_id"] = _resolve_app_user_id(doc.get("user_id") or prepared_user_id)
+        doc["source_strategy_id"] = str(
+            (prepared_execution or {}).get("source_strategy_id")
+            or item.get("source_strategy_id")
+            or ""
+        ).strip() or None
+        doc["execution_config_base"] = normalized_execution_settings.get("execution_config_base") if isinstance(normalized_execution_settings.get("execution_config_base"), dict) else {}
+        doc["execution_config_extra"] = normalized_execution_settings.get("execution_config_extra") if isinstance(normalized_execution_settings.get("execution_config_extra"), dict) else {}
+        doc["view_config"] = normalized_execution_settings.get("view_config") if isinstance(normalized_execution_settings.get("view_config"), dict) else {"advanced_exec_config_modal": True}
+        doc.pop("broker_type", None)
         doc["portfolio"] = doc.get("portfolio") if isinstance(doc.get("portfolio"), dict) else {}
         doc["portfolio"]["portfolio"] = portfolio_id
         doc["portfolio"]["group_name"] = resolved_portfolio_group_name
@@ -1979,6 +2153,8 @@ async def portfolio_activate(payload: dict):
 async def portfolio_start_group(group_id: str, activation_mode: str = "algo-backtest"):
     normalized_group_id = str(group_id or "").strip()
     normalized_mode = str(activation_mode or "").strip() or "algo-backtest"
+    if normalized_mode == "forward-test":
+        normalized_mode = "fast-forward"
 
     if not normalized_group_id:
         raise HTTPException(status_code=400, detail="group_id is required")
@@ -2010,6 +2186,90 @@ async def portfolio_start_group(group_id: str, activation_mode: str = "algo-back
         "activation_mode": normalized_mode,
         "count": len(normalized_records),
         "records": normalized_records,
+    }
+
+
+@router.post("/portfolio/execution-settings/update")
+async def portfolio_execution_settings_update(payload: dict):
+    portfolio_id = str(payload.get("portfolio_id") or "").strip()
+    source_strategy_id = str(payload.get("source_strategy_id") or "").strip()
+    activation_mode = str(payload.get("activation_mode") or "").strip() or "live"
+    execution_settings = payload.get("execution_settings") if isinstance(payload.get("execution_settings"), dict) else {}
+
+    if not portfolio_id:
+        raise HTTPException(status_code=400, detail="portfolio_id is required")
+    if not source_strategy_id:
+        raise HTTPException(status_code=400, detail="source_strategy_id is required")
+    if not execution_settings:
+        raise HTTPException(status_code=400, detail="execution_settings is required")
+
+    db = MongoData()
+    try:
+        strategy_oid = ObjectId(source_strategy_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid source_strategy_id")
+
+    saved_strategy = db._db["saved_strategies"].find_one({"_id": strategy_oid}) or {}
+    if not saved_strategy:
+        raise HTTPException(status_code=404, detail="Saved strategy not found")
+
+    normalized_settings = _normalize_execution_settings_payload(saved_strategy, execution_settings, activation_mode)
+    now_iso = datetime.utcnow().isoformat()
+    now_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+    saved_update = db._db["saved_strategies"].update_one(
+        {"_id": strategy_oid},
+        {"$set": {
+            "execution_config_base": normalized_settings.get("execution_config_base") or {},
+            "execution_config_extra": normalized_settings.get("execution_config_extra") or {},
+            "view_config": normalized_settings.get("view_config") or {"advanced_exec_config_modal": True},
+            "updated_at": now_iso,
+        }}
+    )
+
+    executed_col = db._db["executed_strategies"]
+    latest_execution = executed_col.find_one(
+        {"portfolio_id": portfolio_id, "source_strategy_id": source_strategy_id},
+        sort=[("created_at", -1)],
+    ) or {}
+
+    executed_update_count = 0
+    if latest_execution:
+        executed_result = executed_col.update_one(
+            {"_id": latest_execution["_id"]},
+            {"$set": {
+                "strategy_detail_snapshot.execution_config_base": normalized_settings.get("execution_config_base") or {},
+                "strategy_detail_snapshot.execution_config_extra": normalized_settings.get("execution_config_extra") or {},
+                "strategy_detail_snapshot.view_config": normalized_settings.get("view_config") or {"advanced_exec_config_modal": True},
+                "updated_at": now_ts,
+            }}
+        )
+        executed_update_count = int(executed_result.modified_count or 0)
+
+    algo_query = {
+        "portfolio.portfolio": portfolio_id,
+        "activation_mode": activation_mode,
+        "source_strategy_id": source_strategy_id,
+    }
+    algo_result = db._db["algo_trades"].update_many(
+        algo_query,
+        {"$set": {
+            "execution_config_base": normalized_settings.get("execution_config_base") or {},
+            "execution_config_extra": normalized_settings.get("execution_config_extra") or {},
+            "view_config": normalized_settings.get("view_config") or {"advanced_exec_config_modal": True},
+            "updated_at": now_ts,
+        }}
+    )
+
+    return {
+        "success": True,
+        "portfolio_id": portfolio_id,
+        "source_strategy_id": source_strategy_id,
+        "activation_mode": activation_mode,
+        "saved_strategy_updated": int(saved_update.modified_count or 0),
+        "executed_strategy_updated": executed_update_count,
+        "algo_trades_updated": int(algo_result.modified_count or 0),
+        "execution_settings": normalized_settings,
     }
 
 
@@ -2045,7 +2305,8 @@ async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest
             "trade_status": item.get("trade_status"),
             "active_on_server": bool(item.get("active_on_server")),
             "activation_mode": item.get("activation_mode") or normalized_mode,
-            "broker_type": item.get("broker_type") or "",
+            "broker": item.get("broker") or "",
+            "user_id": item.get("user_id") or "",
             "ticker": item.get("ticker") or "",
             "creation_ts": item.get("creation_ts") or "",
             "entry_time": item.get("entry_time") or "",
@@ -2056,6 +2317,7 @@ async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest
     # Populate string leg IDs with full algo_trade_positions_history docs (single batch query)
     populated_records = _populate_history_legs(db._db, raw_records)
     populated_records = _attach_leg_feature_statuses(db._db, populated_records)
+    populated_records = _attach_broker_configuration_details(db._db, populated_records)
     records = [_enrich_execution_record_with_pnl(rec) for rec in populated_records]
 
     return {
@@ -2299,30 +2561,365 @@ async def get_notifications(
     }
 
 
+@router.get("/broker-configurations")
+async def list_broker_configurations(broker_type: str = ""):
+    normalized_broker_type = str(broker_type or "").strip()
+    query = {}
+    if normalized_broker_type:
+        query["broker_type"] = normalized_broker_type
+
+    db = MongoData()
+    try:
+        cursor = db._db["broker_configuration"].find(
+            query,
+            {
+                "_id": 1,
+                "name": 1,
+                "broker_name": 1,
+                "display_name": 1,
+                "title": 1,
+                "broker": 1,
+                "broker_type": 1,
+                "broker_icon": 1,
+                "provider": 1,
+                "vendor": 1,
+            },
+        )
+        records = []
+        for item in cursor:
+            broker_id = str(item.get("_id") or "").strip()
+            if not broker_id:
+                continue
+            broker_doc = dict(item)
+            broker_doc["_id"] = broker_id
+            records.append({
+                "_id": broker_id,
+                "name": _extract_broker_configuration_label(broker_doc, broker_id),
+                "broker_type": str(item.get("broker_type") or "").strip(),
+                "broker_icon": str(item.get("broker_icon") or "").strip(),
+            })
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load broker configurations: {exc}") from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "count": len(records),
+        "records": records,
+    }
+
+
+@router.post("/broker-stoploss-settings/save")
+async def save_broker_stoploss_settings(payload: dict):
+    def _as_int(value, field_name: str) -> int:
+        if value is None or str(value).strip() == "":
+            raise HTTPException(status_code=400, detail=f"{field_name} is required")
+        try:
+            return int(value)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"{field_name} must be an integer") from exc
+
+    def _as_nullable_int(value, field_name: str):
+        if value is None or str(value).strip() == "":
+            return None
+        try:
+            return int(value)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"{field_name} must be an integer or null") from exc
+
+    def _normalize_optional_block(value, field_name: str):
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"{field_name} must be an object or null")
+        if "InstrumentMove" not in value or "StopLossMove" not in value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field_name} must include InstrumentMove and StopLossMove",
+            )
+        return {
+            "InstrumentMove": _as_int(value.get("InstrumentMove"), f"{field_name}.InstrumentMove"),
+            "StopLossMove": _as_int(value.get("StopLossMove"), f"{field_name}.StopLossMove"),
+        }
+
+    document = {
+        "broker_type": "Broker.Backtest",
+        "creation_ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": 1,
+        "activation_mode": str(payload.get("activation_mode") or "algo-backtest").strip() or "algo-backtest",
+        "user_id": _resolve_app_user_id(payload.get("user_id")),
+        "broker": str(payload.get("broker") or "").strip() or None,
+        "StopLoss": _as_nullable_int(payload.get("StopLoss"), "StopLoss"),
+        "Target": _as_nullable_int(payload.get("Target"), "Target"),
+        "OverallTrailSL": _normalize_optional_block(payload.get("OverallTrailSL"), "OverallTrailSL"),
+        "LockAndTrail": _normalize_optional_block(payload.get("LockAndTrail"), "LockAndTrail"),
+    }
+
+    db = MongoData()
+    try:
+        collection = db._db["algo_borker_stoploss_settings"]
+        update_query = None
+        if document["user_id"] and document["broker"] and document["activation_mode"]:
+            update_query = {
+                "user_id": document["user_id"],
+                "broker": document["broker"],
+                "activation_mode": document["activation_mode"],
+            }
+
+        state_reset: dict = {}          # fields to clear when config changes
+        state_reset_reason: list = []   # human-readable list of what was reset
+
+        if update_query:
+            # Fetch existing doc — need config fields to detect changes
+            existing_doc = collection.find_one(update_query, {
+                "_id": 1, "creation_ts": 1,
+                "StopLoss": 1, "Target": 1,
+                "LockAndTrail": 1, "OverallTrailSL": 1,
+            })
+            updated_document = dict(document)
+            updated_document["updated_ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if existing_doc and existing_doc.get("creation_ts"):
+                updated_document["creation_ts"] = existing_doc["creation_ts"]
+
+            # ── Detect config changes and reset affected state ──────────────
+            # Any change to LockAndTrail, OverallTrailSL, StopLoss or Target
+            # invalidates the persisted lock/trail state. Clear it so the very
+            # next tick starts fresh (signatures also cleared so tick processor
+            # doesn't need to wait for a date change).
+
+            old_lat   = (existing_doc or {}).get("LockAndTrail")
+            old_trail = (existing_doc or {}).get("OverallTrailSL")
+            old_sl    = (existing_doc or {}).get("StopLoss")
+            old_tgt   = (existing_doc or {}).get("Target")
+
+            new_lat   = document["LockAndTrail"]
+            new_trail = document["OverallTrailSL"]
+            new_sl    = document["StopLoss"]
+            new_tgt   = document["Target"]
+
+            # LockAndTrail state reset
+            lock_config_changed = (
+                old_lat   != new_lat   or
+                old_trail != new_trail or
+                old_sl    != new_sl    or
+                old_tgt   != new_tgt
+            )
+            if lock_config_changed and existing_doc:
+                state_reset.update({
+                    "lock_settings_sig":   "",      # tick processor resets on next tick
+                    "lock_activated":      False,
+                    "current_lock_floor":  0.0,
+                    "lock_peak_mtm":       0.0,
+                    "lock_activated_at":   None,
+                    "lock_activation_mtm": 0.0,
+                })
+                if old_lat != new_lat:
+                    state_reset_reason.append("LockAndTrail changed")
+                if old_trail != new_trail:
+                    state_reset_reason.append("OverallTrailSL changed")
+                if old_sl != new_sl:
+                    state_reset_reason.append("StopLoss changed")
+                if old_tgt != new_tgt:
+                    state_reset_reason.append("Target changed")
+
+            # OverallTrailSL standalone (Case A) state reset
+            # Only applies when LockAndTrail is null
+            sl_trail_changed = (old_trail != new_trail or old_sl != new_sl)
+            if sl_trail_changed and not new_lat and existing_doc:
+                state_reset.update({
+                    "sl_settings_sig": "",          # tick processor resets on next tick
+                    "sl_peak_mtm":     0.0,
+                    "effective_sl":    new_sl,
+                })
+                if "OverallTrailSL changed" not in state_reset_reason:
+                    state_reset_reason.append("OverallTrailSL (standalone) changed")
+
+            updated_document.update(state_reset)
+
+            result = collection.update_one(
+                update_query,
+                {"$set": updated_document},
+                upsert=True,
+            )
+            inserted_id = result.upserted_id or (existing_doc and existing_doc.get("_id"))
+            operation = "created" if result.upserted_id else "updated"
+            document = updated_document
+        else:
+            result = collection.insert_one(document)
+            inserted_id = result.inserted_id
+            operation = "created"
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save broker stoploss settings: {exc}") from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    # ── Emit ALL broker settings for this user after save ────────────────────
+    await emit_broker_settings_for_user(
+        document.get("user_id") or "",
+        document.get("activation_mode") or "",
+    )
+
+    return {
+        "success": True,
+        "id": str(inserted_id) if inserted_id is not None else "",
+        "operation": operation,
+        "state_reset": state_reset_reason if state_reset_reason else None,
+        "settings": {
+            "broker_type":    document["broker_type"],
+            "creation_ts":    document["creation_ts"],
+            "status":         document["status"],
+            "activation_mode": document["activation_mode"],
+            "user_id":        document["user_id"],
+            "broker":         document["broker"],
+            "StopLoss":       document["StopLoss"],
+            "Target":         document["Target"],
+            "OverallTrailSL": document["OverallTrailSL"],
+            "LockAndTrail":   document["LockAndTrail"],
+        },
+        # Current runtime state after save (reflects reset if triggered)
+        "lock_state": {
+            "lock_activated":      document.get("lock_activated", False),
+            "current_lock_floor":  document.get("current_lock_floor", 0.0),
+            "lock_peak_mtm":       document.get("lock_peak_mtm", 0.0),
+            "lock_activated_at":   document.get("lock_activated_at"),
+            "lock_activation_mtm": document.get("lock_activation_mtm", 0.0),
+            "effective_sl":        document.get("effective_sl"),
+            "sl_peak_mtm":         document.get("sl_peak_mtm", 0.0),
+        },
+    }
+
+
+@router.get("/get_broker_stoploss_settings/{user_id}/{broker}/{activation_mode}")
+async def get_broker_stoploss_settings(user_id: str, broker: str, activation_mode: str):
+    normalized_user_id = str(user_id or "").strip()
+    normalized_broker = str(broker or "").strip()
+    normalized_activation_mode = str(activation_mode or "").strip() or "algo-backtest"
+
+    if not normalized_user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if not normalized_broker:
+        raise HTTPException(status_code=400, detail="broker is required")
+
+    db = MongoData()
+    try:
+        document = db._db["algo_borker_stoploss_settings"].find_one(
+            {
+                "user_id": normalized_user_id,
+                "broker": normalized_broker,
+                "activation_mode": normalized_activation_mode,
+            },
+            {"_id": 0},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load broker stoploss settings: {exc}") from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "found": document is not None,
+        "settings": document,
+    }
+
+
 @router.get("/algo-backtest-simulator")
 async def algo_backtest_simulator(
     listen_timestamp: str = Query(..., description="Backtest listen timestamp in YYYY-MM-DDTHH:MM:SS"),
     autoload: bool = Query(True, description="Frontend autoload status for reference"),
+    activation_mode: str = Query("algo-backtest", description="Activation mode: algo-backtest, fast-forward, or live"),
 ):
     normalized_timestamp = str(listen_timestamp or "").strip()
     if not normalized_timestamp:
         raise HTTPException(status_code=400, detail="listen_timestamp is required")
     if len(normalized_timestamp) < 19:
         raise HTTPException(status_code=400, detail="listen_timestamp must be in YYYY-MM-DDTHH:MM:SS format")
+    normalized_mode = str(activation_mode or "algo-backtest").strip() or "algo-backtest"
+    if normalized_mode not in {"algo-backtest", "fast-forward", "live"}:
+        raise HTTPException(status_code=400, detail=f"activation_mode must be algo-backtest, fast-forward, or live")
 
     db = MongoData()
     try:
-        result = run_backtest_simulation_step(
-            db,
-            normalized_timestamp,
-            activation_mode="algo-backtest",
-        )
-        # Build socket messages exactly once — broadcast reuses them to avoid
-        # a second _populate_legs_from_history DB call.
-        socket_messages = build_backtest_simulation_socket_messages(db, result)
-        delivered = await broadcast_backtest_simulation_step(
-            db, result, prebuilt_messages=socket_messages
-        )
+        if normalized_mode == "live":
+            from features.execution_socket import (
+                _append_momentum_pending_to_contracts,
+                _build_active_contracts_from_records,
+                _extract_running_positions,
+                _load_running_trade_records,
+            )
+            from features.kite_event import broker_live_tick
+            from features.live_tick_dispatcher import _run_entries_for_mode
+
+            live_now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            trade_date = live_now[:10]
+            listen_hhmm = live_now[11:16]
+            _start_monitor_services(trade_date=trade_date)
+
+            _run_entries_for_mode(
+                db,
+                trade_date,
+                "live",
+                listen_hhmm,
+                live_now,
+            )
+            live_records = _load_running_trade_records(db, trade_date, activation_mode="live")
+            broker_result = broker_live_tick(
+                db,
+                trade_date,
+                live_now,
+                dict(ticker_manager.ltp_map),
+                activation_mode="live",
+                running_trades=live_records,
+            )
+            live_records = _load_running_trade_records(db, trade_date, activation_mode="live")
+            active_contracts = _build_active_contracts_from_records(
+                live_records,
+                db=db,
+                trade_date=trade_date,
+                market_cache=None,
+                activation_mode="live",
+            )
+            _append_momentum_pending_to_contracts(active_contracts, db, live_records)
+            live_ltp = _build_live_ltp_payload(active_contracts, live_now)
+            position_snapshot = _extract_running_positions(
+                db,
+                trade_date,
+                listen_hhmm,
+                include_position_snapshots=True,
+                running_trades=None,
+                market_cache=None,
+                activation_mode="live",
+            )
+            result = {
+                "listen_timestamp": live_now,
+                "listen_time": live_now[11:19],
+                "trade_date": trade_date,
+                "records": live_records,
+                "entry_snapshots": [],
+                "entries_executed": [],
+                "actions_taken": list(broker_result.get("actions_taken") or []),
+                "ltp": live_ltp,
+                "open_positions": list(position_snapshot.get("open_positions") or []),
+                "active_leg_tokens": list(position_snapshot.get("active_leg_tokens") or []),
+                "count": len(live_records),
+                "open_positions_count": len(position_snapshot.get("open_positions") or []),
+            }
+        else:
+            result = run_backtest_simulation_step(
+                db,
+                normalized_timestamp,
+                activation_mode=normalized_mode,
+            )
+        delivered = await broadcast_backtest_simulation_step(db, result)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"algo-backtest-simulator failed: {exc}") from exc
     finally:
@@ -2353,3 +2950,1573 @@ async def algo_backtest_simulator(
 
 app.include_router(router)
 app.include_router(socket_router)
+app.include_router(mock_kite_socket_router)
+
+
+# ─── Kite Broker Endpoints ────────────────────────────────────────────────────
+
+# Temporary in-memory store: session_id → broker_doc_id
+# Cleared after use (one-time use per login)
+_kite_pending: dict = {}
+
+
+@app.get("/broker/kite/login-url")
+async def kite_login_url():
+    url = get_login_url()
+    return {"login_url": url}
+
+
+@app.get("/live/kite-callback", response_class=HTMLResponse)
+async def kite_live_callback(request: Request):
+    """
+    Kite console redirect URL: http://localhost:8000/live/kite-callback
+    Handles: ?status=success&request_token=xxx&action=login&type=login
+    """
+    status        = request.query_params.get("status", "").strip()
+    request_token = request.query_params.get("request_token", "").strip()
+    state         = request.query_params.get("state", "").strip()
+    broker_doc_id = _kite_pending.pop(state, "") if state else ""
+
+    if status != "success" or not request_token:
+        return HTMLResponse(content=_kite_popup_html(
+            success=False,
+            message=f"Login failed or no token received (status={status})",
+        ))
+
+    try:
+        session = generate_session(request_token)
+    except Exception as e:
+        return HTMLResponse(content=_kite_popup_html(
+            success=False,
+            message=f"Session error: {e}",
+        ))
+
+    if broker_doc_id:
+        try:
+            save_kite_session(db._db, broker_doc_id, session)
+        except Exception:
+            pass
+    else:
+        try:
+            _save_market_kite_session(session)
+        except Exception:
+            pass
+
+    return HTMLResponse(content=_kite_popup_html(
+        success=True,
+        message="Login successful",
+        access_token=session.get("access_token", ""),
+        user_id=session.get("user_id", ""),
+        user_name=session.get("user_name", ""),
+        broker_doc_id=broker_doc_id,
+    ))
+
+
+@app.get("/broker/kite/login")
+async def kite_login(broker_doc_id: str = ""):
+    """
+    Hit this URL directly → auto redirect to Zerodha login page.
+    After login, Zerodha redirects back → access_token auto generated & saved.
+
+    Usage:
+      http://localhost:8000/broker/kite/login
+      http://localhost:8000/broker/kite/login?broker_doc_id=<mongo_id>
+    """
+    import secrets
+    session_id = secrets.token_hex(16)
+    _kite_pending[session_id] = broker_doc_id
+
+    login_url = get_login_url()
+    redirect_to = f"{login_url}&state={session_id}"
+    return RedirectResponse(url=redirect_to)
+
+
+
+@app.get("/broker/kite/redirect", response_class=HTMLResponse)
+async def kite_redirect(request: Request):
+    """
+    Zerodha redirects here after login with ?request_token=xxx
+    Auto-generates access_token, saves to MongoDB, closes popup,
+    and sends result back to parent window via postMessage.
+    """
+    request_token = request.query_params.get("request_token", "").strip()
+    error_msg     = request.query_params.get("error", "").strip()
+
+    # Recover broker_doc_id from pending session (set during /broker/kite/login)
+    state         = request.query_params.get("state", "").strip()
+    broker_doc_id = _kite_pending.pop(state, "") or request.query_params.get("broker_doc_id", "").strip()
+
+    if error_msg or not request_token:
+        return HTMLResponse(content=_kite_popup_html(
+            success=False,
+            message=error_msg or "No request_token received",
+        ))
+
+    try:
+        session = generate_session(request_token)
+    except Exception as e:
+        return HTMLResponse(content=_kite_popup_html(
+            success=False,
+            message=f"Session error: {e}",
+        ))
+
+    if broker_doc_id:
+        try:
+            save_kite_session(db._db, broker_doc_id, session)
+        except Exception:
+            pass
+    else:
+        try:
+            _save_market_kite_session(session)
+        except Exception:
+            pass
+
+    return HTMLResponse(content=_kite_popup_html(
+        success=True,
+        message="Login successful",
+        access_token=session.get("access_token", ""),
+        user_id=session.get("user_id", ""),
+        user_name=session.get("user_name", ""),
+        broker_doc_id=broker_doc_id,
+    ))
+
+
+def _kite_popup_html(
+    success: bool,
+    message: str,
+    access_token: str = "",
+    user_id: str = "",
+    user_name: str = "",
+    broker_doc_id: str = "",
+) -> str:
+    payload = {
+        "type":          "KITE_LOGIN",
+        "success":       success,
+        "message":       message,
+        "access_token":  access_token,
+        "user_id":       user_id,
+        "user_name":     user_name,
+        "broker_doc_id": broker_doc_id,
+    }
+    import json as _json
+    payload_js = _json.dumps(payload)
+    status_color = "#22c55e" if success else "#ef4444"
+    status_icon  = "✓" if success else "✗"
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kite Login</title>
+  <style>
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; margin: 0;
+      background: #0f172a; color: #f1f5f9;
+    }}
+    .card {{
+      text-align: center; padding: 2rem;
+      background: #1e293b; border-radius: 12px;
+      border: 1px solid #334155;
+    }}
+    .icon {{ font-size: 3rem; color: {status_color}; }}
+    h2 {{ margin: 0.5rem 0; }}
+    p {{ color: #94a3b8; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">{status_icon}</div>
+    <h2>{"Login Successful" if success else "Login Failed"}</h2>
+    <p>{message}</p>
+    <p style="font-size:0.8rem">This window will close automatically...</p>
+  </div>
+  <script>
+    const payload = {payload_js};
+    if (window.opener) {{
+      window.opener.postMessage(payload, "*");
+    }}
+    setTimeout(() => window.close(), 1500);
+  </script>
+</body>
+</html>"""
+
+
+@app.get("/broker/kite/access-token/{broker_doc_id}")
+async def kite_get_access_token(broker_doc_id: str):
+    token = get_stored_access_token(db._db, broker_doc_id)
+    if not token:
+        raise HTTPException(status_code=404, detail="No access token found")
+    return {"access_token": token}
+
+
+# ─── Live Market Data (KiteTicker) ───────────────────────────────────────────
+
+_LIVE_CONTROL_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Trade Control</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a; color: #f1f5f9;
+      min-height: 100vh; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .card {
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: 16px; padding: 2.5rem 3rem;
+      width: 420px; text-align: center;
+    }
+    .title {
+      font-size: 1.25rem; font-weight: 600; color: #94a3b8;
+      margin-bottom: 2rem; letter-spacing: 0.05em; text-transform: uppercase;
+    }
+    .status-row {
+      display: flex; align-items: center; justify-content: center;
+      gap: 0.6rem; margin-bottom: 2rem;
+    }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #475569; transition: background 0.3s;
+    }
+    .dot.running    { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: pulse 1.5s infinite; }
+    .dot.stopped    { background: #ef4444; }
+    .dot.connecting { background: #f59e0b; animation: pulse 0.8s infinite; }
+    .dot.error      { background: #ef4444; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .status-text { font-size: 1rem; font-weight: 500; color: #cbd5e1; text-transform: capitalize; }
+    .btn {
+      width: 100%; padding: 1rem; border: none; border-radius: 10px;
+      font-size: 1.1rem; font-weight: 600; cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s; letter-spacing: 0.03em;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-start { background: #22c55e; color: #fff; }
+    .btn-start:hover:not(:disabled) { opacity: 0.9; }
+    .btn-stop  { background: #ef4444; color: #fff; }
+    .btn-stop:hover:not(:disabled)  { opacity: 0.9; }
+    .stats {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 0.75rem; margin-top: 1.75rem;
+    }
+    .stat-box {
+      background: #0f172a; border: 1px solid #1e293b;
+      border-radius: 8px; padding: 0.75rem;
+    }
+    .stat-label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+    .stat-value { font-size: 1.1rem; font-weight: 700; color: #e2e8f0; }
+    .spot-section { margin-top: 1.5rem; text-align: left; }
+    .spot-title { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+    .spot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .spot-item {
+      background: #0f172a; border: 1px solid #1e293b;
+      border-radius: 8px; padding: 0.5rem 0.75rem;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .spot-name  { font-size: 0.75rem; color: #94a3b8; font-weight: 600; }
+    .spot-price { font-size: 0.85rem; color: #22c55e; font-weight: 700; }
+    .spot-price.na { color: #475569; }
+    .error-msg {
+      margin-top: 1rem; font-size: 0.8rem; color: #f87171;
+      background: #1a0a0a; border-radius: 6px; padding: 0.5rem 0.75rem; display: none;
+    }
+    .started-at { margin-top: 1rem; font-size: 0.72rem; color: #475569; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="title">Live Trade Control</div>
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <span class="status-text" id="statusText">Loading...</span>
+  </div>
+  <button class="btn" id="actionBtn" disabled onclick="handleAction()">...</button>
+  <div class="stats">
+    <div class="stat-box">
+      <div class="stat-label">Ticks Received</div>
+      <div class="stat-value" id="tickCount">—</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">LTP Tokens</div>
+      <div class="stat-value" id="ltpCount">—</div>
+    </div>
+  </div>
+  <div class="spot-section">
+    <div class="spot-title">Spot Prices</div>
+    <div class="spot-grid">
+      <div class="spot-item"><span class="spot-name">NIFTY</span><span class="spot-price na" id="spot-NIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">BANKNIFTY</span><span class="spot-price na" id="spot-BANKNIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">FINNIFTY</span><span class="spot-price na" id="spot-FINNIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">SENSEX</span><span class="spot-price na" id="spot-SENSEX">—</span></div>
+    </div>
+  </div>
+  <div class="error-msg" id="errorMsg"></div>
+  <div class="started-at" id="startedAt"></div>
+</div>
+<script>
+  const API = '';
+
+  async function fetchStatus() {
+    try {
+      const res  = await fetch(API + '/live/status');
+      const data = await res.json();
+      renderStatus(data);
+    } catch(e) {
+      renderStatus({ status: 'error', error: 'Cannot reach server' });
+    }
+  }
+
+  function renderStatus(data) {
+    const status = data.status || 'stopped';
+    document.getElementById('dot').className       = 'dot ' + status;
+    document.getElementById('statusText').textContent = status;
+
+    const btn = document.getElementById('actionBtn');
+    btn.disabled = false;
+    if (status === 'running') {
+      btn.textContent = 'Stop Live Trading';
+      btn.className   = 'btn btn-stop';
+    } else if (status === 'connecting') {
+      btn.textContent = 'Connecting...';
+      btn.className   = 'btn btn-start';
+      btn.disabled    = true;
+    } else {
+      btn.textContent = 'Start Live Trading';
+      btn.className   = 'btn btn-start';
+    }
+
+    document.getElementById('tickCount').textContent =
+      data.tick_count !== undefined ? data.tick_count.toLocaleString() : '—';
+    document.getElementById('ltpCount').textContent =
+      data.ltp_count !== undefined ? data.ltp_count.toLocaleString() : '—';
+
+    const spotMap = data.spot_map || {};
+    ['NIFTY','BANKNIFTY','FINNIFTY','SENSEX'].forEach(sym => {
+      const el = document.getElementById('spot-' + sym);
+      const v  = spotMap[sym];
+      if (!el) return;
+      if (v) {
+        el.textContent = '\\u20B9' + Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+        el.className = 'spot-price';
+      } else {
+        el.textContent = '—';
+        el.className = 'spot-price na';
+      }
+    });
+
+    const errEl = document.getElementById('errorMsg');
+    if (data.error) { errEl.textContent = data.error; errEl.style.display = 'block'; }
+    else            { errEl.style.display = 'none'; }
+
+    const startEl = document.getElementById('startedAt');
+    startEl.textContent = data.started_at
+      ? 'Started: ' + data.started_at.replace('T',' ').slice(0,19)
+      : '';
+  }
+
+  async function handleAction() {
+    const btn    = document.getElementById('actionBtn');
+    const status = document.getElementById('statusText').textContent;
+    btn.disabled    = true;
+    btn.textContent = 'Please wait...';
+    try {
+      const url = status === 'running' ? '/live/stop' : '/live/start';
+      await fetch(API + url + '?ui=1');
+    } catch(e) { console.error(e); }
+    setTimeout(fetchStatus, 800);
+    setTimeout(fetchStatus, 2000);
+    setTimeout(fetchStatus, 4000);
+  }
+
+  fetchStatus();
+  setInterval(fetchStatus, 3000);
+</script>
+</body>
+</html>"""
+
+
+def _start_ticker_bg():
+    """Run in background thread — loads tokens from DB and starts KiteTicker."""
+    _db = MongoData()
+    try:
+        if ticker_manager.status == "running":
+            ticker_manager.restart(_db._db)
+        else:
+            ticker_manager.start(_db._db)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("ticker start error: %s", exc)
+    finally:
+        try:
+            _db.close()
+        except Exception:
+            pass
+
+
+def _build_monitor_control_html() -> str:
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live + Fast-Forward Monitor</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at top, rgba(34, 197, 94, 0.14), transparent 34%),
+        linear-gradient(160deg, #07111f 0%, #0f172a 55%, #111827 100%);
+      color: #e5eefb;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }}
+    .card {{
+      width: min(560px, calc(100vw - 32px));
+      background: rgba(10, 19, 34, 0.94);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: 0 22px 70px rgba(0, 0, 0, 0.35);
+    }}
+    .eyebrow {{
+      color: #7dd3fc;
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }}
+    .title {{
+      font-size: 30px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }}
+    .subtitle {{
+      color: #94a3b8;
+      font-size: 14px;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }}
+    .hero {{
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(125, 211, 252, 0.12);
+      border-radius: 18px;
+      padding: 18px 20px;
+      margin-bottom: 18px;
+    }}
+    .status-row {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 600;
+    }}
+    .dot {{
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: #64748b;
+      box-shadow: 0 0 0 transparent;
+    }}
+    .dot.running {{ background: #22c55e; box-shadow: 0 0 12px rgba(34, 197, 94, 0.8); }}
+    .dot.connecting {{ background: #f59e0b; box-shadow: 0 0 12px rgba(245, 158, 11, 0.8); }}
+    .dot.stopped {{ background: #ef4444; box-shadow: 0 0 12px rgba(239, 68, 68, 0.45); }}
+    .clock-box {{
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }}
+    .clock-label {{
+      color: #64748b;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }}
+    .clock-value {{
+      margin-top: 6px;
+      font-size: 18px;
+      font-weight: 700;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }}
+    .stat {{
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 16px;
+      padding: 14px 16px;
+    }}
+    .stat-label {{
+      font-size: 11px;
+      color: #64748b;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }}
+    .stat-value {{
+      font-size: 19px;
+      font-weight: 700;
+      line-height: 1.35;
+      word-break: break-word;
+    }}
+    .actions {{
+      display: flex;
+      gap: 12px;
+      margin-bottom: 18px;
+    }}
+    .btn {{
+      flex: 1;
+      border: none;
+      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.12s ease, opacity 0.2s ease;
+    }}
+    .btn:active {{ transform: scale(0.985); }}
+    .btn-primary {{ background: linear-gradient(135deg, #22c55e, #16a34a); color: #04110a; }}
+    .btn-danger {{ background: linear-gradient(135deg, #f97316, #ef4444); color: #fff7ed; }}
+    .btn-secondary {{ background: #1e293b; color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.18); }}
+    .btn:disabled {{ opacity: 0.55; cursor: not-allowed; }}
+    .panel {{
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 18px;
+      padding: 16px;
+    }}
+    .panel-title {{
+      color: #cbd5e1;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }}
+    .strategies {{
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 220px;
+      overflow: auto;
+    }}
+    .strategy-item {{
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: rgba(8, 15, 28, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.1);
+    }}
+    .strategy-name {{
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }}
+    .strategy-meta {{
+      color: #94a3b8;
+      font-size: 12px;
+      line-height: 1.5;
+    }}
+    .empty {{
+      color: #94a3b8;
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 10px 4px 2px;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="eyebrow">Auto Monitor</div>
+    <div class="title">Live + Fast-Forward Monitor</div>
+    <div class="subtitle">
+      Single control page for both <b>live</b> and <b>fast-forward</b>. The backend supervisor starts automatically,
+      refreshes active strategies every second, and keeps the live execution path highest priority.
+    </div>
+
+    <div class="hero">
+      <div class="status-row">
+        <span class="dot stopped" id="statusDot"></span>
+        <span id="statusText">Loading...</span>
+      </div>
+      <div class="clock-box">
+        <div class="clock-label">Server Time</div>
+        <div class="clock-value" id="serverTime">--</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="stat">
+        <div class="stat-label">Trade Date</div>
+        <div class="stat-value" id="tradeDateValue">--</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Live Count</div>
+        <div class="stat-value" id="liveCountValue">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Started At</div>
+        <div class="stat-value" id="startedAtValue">--</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Fast-Forward Count</div>
+        <div class="stat-value" id="ffCountValue">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Last Tick</div>
+        <div class="stat-value" id="lastTickValue">--</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Ticker Ticks</div>
+        <div class="stat-value" id="tickCountValue">0</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="toggleBtn" onclick="toggleMonitor()" disabled>Loading...</button>
+      <button class="btn btn-secondary" onclick="refreshStatus()">Refresh</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Live Strategies</div>
+      <div class="strategies" id="strategiesBox">
+        <div class="empty">Checking active live strategies...</div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top: 14px;">
+      <div class="panel-title">Fast-Forward Strategies</div>
+      <div class="strategies" id="ffStrategiesBox">
+        <div class="empty">Checking active fast-forward strategies...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function formatDateTime(value) {{
+      if (!value) return '--';
+      return String(value).replace('T', ' ').slice(0, 19);
+    }}
+
+    function escapeHtml(value) {{
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }}
+
+    async function startMonitorSilently() {{
+      try {{
+        await fetch('/monitor/start');
+      }} catch (err) {{
+        console.error(err);
+      }}
+    }}
+
+    async function refreshStatus() {{
+      try {{
+        const res = await fetch('/monitor/status');
+        const data = await res.json();
+        renderStatus(data);
+      }} catch (err) {{
+        console.error(err);
+      }}
+    }}
+
+    function renderStatus(data) {{
+      const running = !!data.running;
+      const status = data.monitor_status || (running ? 'running' : 'stopped');
+      const button = document.getElementById('toggleBtn');
+      const statusDot = document.getElementById('statusDot');
+      const statusText = document.getElementById('statusText');
+      const serverTime = document.getElementById('serverTime');
+      const tradeDate = document.getElementById('tradeDateValue');
+      const startedAt = document.getElementById('startedAtValue');
+      const lastTick = document.getElementById('lastTickValue');
+      const liveCountValue = document.getElementById('liveCountValue');
+      const ffCountValue = document.getElementById('ffCountValue');
+      const tickCountValue = document.getElementById('tickCountValue');
+      const strategiesBox = document.getElementById('strategiesBox');
+      const ffStrategiesBox = document.getElementById('ffStrategiesBox');
+
+      statusDot.className = 'dot ' + (running ? 'running' : 'stopped');
+      statusText.textContent = running ? 'Listening' : 'Stopped';
+      serverTime.textContent = formatDateTime(data.server_time);
+      tradeDate.textContent = data.trade_date || '--';
+      startedAt.textContent = formatDateTime(data.started_at);
+      lastTick.textContent = formatDateTime(data.last_tick_at);
+      liveCountValue.textContent = String(((data.counts || {}).live) || 0);
+      ffCountValue.textContent = String(((data.counts || {})['fast-forward']) || 0);
+      tickCountValue.textContent = String(data.tick_count || 0);
+
+      button.disabled = false;
+      button.textContent = running ? 'Stop Listening' : 'Start Listening';
+      button.className = 'btn ' + (running ? 'btn-danger' : 'btn-primary');
+      button.dataset.running = running ? '1' : '0';
+
+      const recordsByMode = data.records_by_mode || {{}};
+      const liveRecords = Array.isArray(recordsByMode.live) ? recordsByMode.live : [];
+      const ffRecords = Array.isArray(recordsByMode['fast-forward']) ? recordsByMode['fast-forward'] : [];
+
+      function renderRecords(records, emptyText) {{
+        if (!records.length) {{
+          return '<div class="empty">' + emptyText + '</div>';
+        }}
+        return records.map(function(record) {{
+          return (
+            '<div class="strategy-item">' +
+              '<div class="strategy-name">' + escapeHtml(record.name || '-') + '</div>' +
+              '<div class="strategy-meta">' +
+                'Group: ' + escapeHtml(record.group_name || '-') + '<br>' +
+                'Ticker: ' + escapeHtml(record.ticker || '-') + '<br>' +
+                'Mode: ' + escapeHtml(record.activation_mode || '-') + '<br>' +
+                'Entry: ' + escapeHtml(record.entry_time || '-') + ' | Exit: ' + escapeHtml(record.exit_time || '-') + '<br>' +
+                'Open Legs: ' + escapeHtml(record.open_legs || 0) + '/' + escapeHtml(record.total_legs || 0) +
+              '</div>' +
+            '</div>'
+          );
+        }}).join('');
+      }}
+
+      strategiesBox.innerHTML = renderRecords(
+        liveRecords,
+        'No active live strategies right now. Supervisor still keeps checking every second.'
+      );
+      ffStrategiesBox.innerHTML = renderRecords(
+        ffRecords,
+        'No active fast-forward strategies right now. Supervisor still keeps checking every second.'
+      );
+    }}
+
+    async function toggleMonitor() {{
+      const button = document.getElementById('toggleBtn');
+      const running = button.dataset.running === '1';
+      button.disabled = true;
+      button.textContent = 'Please wait...';
+      try {{
+        const path = running ? '/monitor/stop' : '/monitor/start';
+        await fetch(path);
+      }} catch (err) {{
+        console.error(err);
+      }}
+      setTimeout(refreshStatus, 400);
+      setTimeout(refreshStatus, 1200);
+    }}
+
+    startMonitorSilently().then(function() {{
+      refreshStatus();
+      setInterval(refreshStatus, 1000);
+    }});
+  </script>
+</body>
+</html>"""
+
+
+def _start_monitor_services(trade_date: str = '') -> dict:
+    import threading
+
+    normalized_trade_date = str(trade_date or '').strip() or datetime.now().strftime('%Y-%m-%d')
+    if ticker_manager.status not in ('running', 'connecting'):
+        threading.Thread(target=_start_ticker_bg, daemon=True).start()
+    live_fast_monitor_supervisor.start(trade_date=normalized_trade_date)
+    return {
+        'ok': True,
+        'message': 'Global monitor started',
+        'trade_date': live_fast_monitor_supervisor.trade_date,
+    }
+
+
+def _build_monitor_status_payload() -> dict:
+    supervisor_status = live_fast_monitor_supervisor.get_status()
+    ticker_status = ticker_manager.get_status()
+    return {
+        'server_time': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+        'running': bool(supervisor_status.get('running')),
+        'monitor_status': 'running' if bool(supervisor_status.get('running')) else 'stopped',
+        'trade_date': str(supervisor_status.get('trade_date') or datetime.now().strftime('%Y-%m-%d')),
+        'started_at': str(supervisor_status.get('started_at') or ''),
+        'last_tick_at': str(supervisor_status.get('last_tick_at') or ''),
+        'last_refresh_at': str(supervisor_status.get('last_refresh_at') or ''),
+        'counts': supervisor_status.get('counts') or {},
+        'records_by_mode': supervisor_status.get('records_by_mode') or {},
+        'ticker_status': str(ticker_status.get('status') or ''),
+        'tick_count': ticker_status.get('tick_count'),
+        'ltp_count': ticker_status.get('ltp_count'),
+        'spot_map': ticker_status.get('spot_map') or {},
+    }
+
+
+def _build_live_ltp_payload(active_contracts: list[dict], now_ts: str) -> list[dict]:
+    payload: list[dict] = []
+    for contract in (active_contracts or []):
+        token = str(contract.get("token") or "").strip()
+        option_type = str(contract.get("option") or "").strip()
+        if option_type == "SPOT":
+            underlying = str(contract.get("underlying") or "").strip().upper()
+            spot_price = float(ticker_manager.get_spot(underlying) or 0.0)
+            if spot_price <= 0:
+                continue
+            payload.append({
+                "token": token,
+                "timestamp": now_ts,
+                "ltp": spot_price,
+                "bb_qty": 0,
+                "bb_price": 0.0,
+                "ba_qty": 0,
+                "ba_price": 0.0,
+                "vol_in_day": 0,
+                "underlying": underlying,
+                "option_type": "SPOT",
+            })
+            continue
+
+        live_ltp = float(ticker_manager.get_ltp(token) or 0.0)
+        if live_ltp <= 0:
+            continue
+        payload.append({
+            "token": token,
+            "timestamp": now_ts,
+            "ltp": live_ltp,
+            "bb_qty": 0,
+            "bb_price": 0.0,
+            "ba_qty": 0,
+            "ba_price": 0.0,
+            "vol_in_day": 0,
+            "expiry": str(contract.get("expiry_date") or ""),
+            "strike": contract.get("strike"),
+            "option_type": option_type,
+        })
+    return payload
+
+
+def _save_market_kite_session(session: dict) -> None:
+    update_fields = {
+        "access_token": session.get("access_token"),
+        "login_time": datetime.now().isoformat(),
+        "user_id": session.get("user_id"),
+        "user_name": session.get("user_name"),
+    }
+    local_db = MongoData()
+    try:
+        local_db._db["kite_market_config"].update_one(
+            {"enabled": True},
+            {"$set": update_fields},
+            upsert=True,
+        )
+    finally:
+        local_db.close()
+
+
+def _clear_market_kite_session() -> None:
+    local_db = MongoData()
+    try:
+        local_db._db["kite_market_config"].update_one(
+            {"enabled": True},
+            {"$set": {"access_token": "", "login_time": datetime.now().isoformat()}},
+            upsert=True,
+        )
+    finally:
+        local_db.close()
+
+
+def _get_kite_market_session_status() -> tuple[bool, str]:
+    local_db = MongoData()
+    try:
+        cfg = local_db._db["kite_market_config"].find_one(
+            {"enabled": True},
+            {"access_token": 1},
+        ) or {}
+        access_token = str(cfg.get("access_token") or "").strip()
+        if not access_token:
+            return False, "Access token not found"
+    finally:
+        local_db.close()
+
+    try:
+        kite = get_kite_instance(access_token)
+        kite.profile()
+        return True, "Access token valid"
+    except Exception as exc:
+        try:
+            _clear_market_kite_session()
+        except Exception:
+            pass
+        return False, f"Access token invalid or expired: {exc}"
+
+
+def _has_ready_kite_market_session() -> bool:
+    is_ready, _ = _get_kite_market_session_status()
+    return is_ready
+
+
+def _build_monitor_kite_login_page(trade_date: str = '', reason: str = '') -> str:
+    normalized_trade_date = str(trade_date or '').strip()
+    retry_url = "/monitor/start"
+    if normalized_trade_date:
+        retry_url += f"?trade_date={normalized_trade_date}"
+    reason_text = str(reason or "No Kite session found").strip()
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kite Login Required</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at top, rgba(59, 130, 246, 0.16), transparent 34%),
+        linear-gradient(155deg, #07111f 0%, #0f172a 58%, #111827 100%);
+      color: #e2e8f0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }}
+    .card {{
+      width: min(520px, calc(100vw - 32px));
+      background: rgba(9, 17, 31, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 28px;
+      padding: 34px 28px;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+      text-align: center;
+    }}
+    .badge {{
+      display: inline-block;
+      padding: 9px 16px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      color: #7dd3fc;
+      letter-spacing: 0.14em;
+      font-size: 12px;
+      text-transform: uppercase;
+    }}
+    h1 {{
+      margin: 18px 0 12px;
+      font-size: 32px;
+      line-height: 1.15;
+      color: #f8fafc;
+    }}
+    p {{
+      margin: 0 auto;
+      max-width: 420px;
+      color: #94a3b8;
+      line-height: 1.7;
+      font-size: 15px;
+    }}
+    .actions {{
+      margin-top: 28px;
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }}
+    .btn {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 220px;
+      padding: 16px 22px;
+      border-radius: 18px;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      font-size: 17px;
+      font-weight: 700;
+    }}
+    .btn.primary {{
+      background: linear-gradient(135deg, #38bdf8, #2563eb);
+      color: #eff6ff;
+      box-shadow: 0 16px 32px rgba(37, 99, 235, 0.24);
+    }}
+    .btn.secondary {{
+      background: #1e293b;
+      color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+    }}
+    .hint {{
+      margin-top: 18px;
+      color: #7dd3fc;
+      font-size: 13px;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Kite Required</div>
+    <h1>Connect Kite API First</h1>
+    <p>
+      Monitor start needs a valid Kite access token. Login popup will open, save the access token,
+      and then this page will automatically start the server listener.
+    </p>
+    <p style="margin-top:14px;color:#7dd3fc;font-size:13px;">Reason: {reason_text}</p>
+    <div class="actions">
+      <button class="btn primary" onclick="openKiteLogin()">Connect Kite API</button>
+      <a class="btn secondary" href="/monitor/stop">Open Stop Page</a>
+    </div>
+    <div class="hint" id="hintText">Waiting for Kite login...</div>
+  </div>
+
+  <script>
+    let kitePopup = null;
+
+    function openKiteLogin() {{
+      kitePopup = window.open('/broker/kite/login', 'kiteLogin', 'width=540,height=720');
+      if (!kitePopup) {{
+        document.getElementById('hintText').textContent = 'Popup blocked. Please allow popups and click again.';
+        return;
+      }}
+      document.getElementById('hintText').textContent = 'Kite login popup opened. Complete login to continue.';
+    }}
+
+    window.addEventListener('message', function(event) {{
+      const data = event.data || {{}};
+      if (data.type !== 'KITE_LOGIN') return;
+      if (!data.success) {{
+        document.getElementById('hintText').textContent = data.message || 'Kite login failed.';
+        return;
+      }}
+      document.getElementById('hintText').textContent = 'Kite login successful. Starting monitor...';
+      window.location.href = {json.dumps(retry_url)};
+    }});
+
+    setTimeout(openKiteLogin, 250);
+  </script>
+</body>
+</html>"""
+
+
+def _build_monitor_action_page(*, running: bool, trade_date: str = '') -> str:
+    title = 'Monitor Running' if running else 'Monitor Stopped'
+    status_text = 'Listening is active' if running else 'Listening is stopped'
+    button_label = 'Stop Listening' if running else 'Start Listening'
+    button_href = '/monitor/stop' if running else '/monitor/start'
+    button_class = 'danger' if running else 'success'
+    trade_date_text = str(trade_date or '').strip() or datetime.now().strftime('%Y-%m-%d')
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at top, rgba(56, 189, 248, 0.18), transparent 32%),
+        linear-gradient(155deg, #06101d 0%, #0f172a 58%, #111827 100%);
+      color: #e2e8f0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }}
+    .shell {{
+      width: min(540px, calc(100vw - 32px));
+      padding: 18px;
+    }}
+    .card {{
+      background: rgba(9, 17, 31, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 28px;
+      padding: 34px 28px;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+      text-align: center;
+    }}
+    .pill {{
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 16px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #cbd5e1;
+    }}
+    .dot {{
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: {('#22c55e' if running else '#ef4444')};
+      box-shadow: 0 0 14px {('rgba(34, 197, 94, 0.85)' if running else 'rgba(239, 68, 68, 0.7)')};
+    }}
+    h1 {{
+      margin: 20px 0 12px;
+      font-size: 34px;
+      line-height: 1.15;
+      color: #f8fafc;
+    }}
+    p {{
+      margin: 0 auto;
+      max-width: 420px;
+      font-size: 15px;
+      line-height: 1.7;
+      color: #94a3b8;
+    }}
+    .meta {{
+      margin-top: 18px;
+      font-size: 13px;
+      color: #7dd3fc;
+      letter-spacing: 0.06em;
+      font-variant-numeric: tabular-nums;
+    }}
+    .actions {{
+      margin-top: 28px;
+      display: flex;
+      justify-content: center;
+    }}
+    .btn {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 240px;
+      padding: 16px 24px;
+      border-radius: 18px;
+      text-decoration: none;
+      font-size: 18px;
+      font-weight: 700;
+      transition: transform 0.12s ease, opacity 0.2s ease;
+    }}
+    .btn:active {{ transform: scale(0.985); }}
+    .btn.success {{
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      color: #04110a;
+      box-shadow: 0 16px 32px rgba(22, 163, 74, 0.28);
+    }}
+    .btn.danger {{
+      background: linear-gradient(135deg, #fb7185, #ef4444);
+      color: #fff7ed;
+      box-shadow: 0 16px 32px rgba(239, 68, 68, 0.24);
+    }}
+    .link-row {{
+      margin-top: 18px;
+      font-size: 14px;
+    }}
+    .link-row a {{
+      color: #7dd3fc;
+      text-decoration: none;
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <div class="pill"><span class="dot"></span>{status_text}</div>
+      <h1>{title}</h1>
+      <p>
+        Single monitor service for live and fast-forward is currently
+        {'running and checking active strategies every second.' if running else 'stopped. Click below to start listening again.'}
+      </p>
+      <div class="meta">Trade Date: {trade_date_text}</div>
+      <div class="actions">
+        <a class="btn {button_class}" href="{button_href}">{button_label}</a>
+      </div>
+      <div class="link-row"><a href="/monitor">Open Full Monitor</a></div>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+@app.get("/live/start")
+async def live_start(trade_date: str = Query(default=''), ui: str = Query(default='')):
+    """Start KiteTicker + live monitor background loop."""
+    import threading
+    if ticker_manager.status not in ("running", "connecting"):
+        threading.Thread(target=_start_ticker_bg, daemon=True).start()
+    live_monitor_loop.start(trade_date=trade_date)
+    if ui:
+        return HTMLResponse(content=_LIVE_CONTROL_HTML)
+    return {"ok": True, "message": "Live monitor started", "trade_date": live_monitor_loop.trade_date}
+
+
+@app.get("/live/stop")
+async def live_stop(ui: str = Query(default='')):
+    """Stop KiteTicker + live monitor background loop."""
+    ticker_manager.stop()
+    live_monitor_loop.stop()
+    if ui:
+        return HTMLResponse(content=_LIVE_CONTROL_HTML)
+    return {"ok": True, "message": "Live monitor stopped"}
+
+
+@app.get("/live/status")
+async def live_status():
+    """JSON status for polling."""
+    return ticker_manager.get_status()
+
+
+@app.get("/monitor", response_class=HTMLResponse)
+async def monitor_page(trade_date: str = Query(default='')):
+    _start_monitor_services(trade_date=trade_date)
+    return HTMLResponse(content=_build_monitor_control_html())
+
+
+@app.get("/monitor/start")
+async def monitor_start(trade_date: str = Query(default='')):
+    is_ready, reason = _get_kite_market_session_status()
+    if not is_ready:
+        return HTMLResponse(content=_build_monitor_kite_login_page(trade_date=trade_date, reason=reason))
+    payload = _start_monitor_services(trade_date=trade_date)
+    return HTMLResponse(
+        content=_build_monitor_action_page(
+            running=True,
+            trade_date=str(payload.get('trade_date') or trade_date or ''),
+        )
+    )
+
+
+@app.get("/monitor/stop")
+async def monitor_stop():
+    trade_date = live_fast_monitor_supervisor.trade_date
+    ticker_manager.stop()
+    live_fast_monitor_supervisor.stop()
+    live_monitor_loop.stop()
+    return HTMLResponse(
+        content=_build_monitor_action_page(
+            running=False,
+            trade_date=trade_date,
+        )
+    )
+
+
+@app.get("/monitor/status")
+async def monitor_status():
+    return _build_monitor_status_payload()
+
+
+@app.get("/live/ltp/{token}")
+async def live_ltp(token: str):
+    ltp = ticker_manager.get_ltp(token)
+    if ltp is None:
+        raise HTTPException(status_code=404, detail=f"No LTP for token {token}")
+    return {"token": token, "ltp": ltp}
+
+
+# ─── Mock Ticker ──────────────────────────────────────────────────────────────
+
+_MOCK_CONTROL_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mock Ticker Control</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a; color: #f1f5f9;
+      min-height: 100vh; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .card {
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: 16px; padding: 2.5rem 3rem;
+      width: 460px; text-align: center;
+    }
+    .title {
+      font-size: 1.25rem; font-weight: 600; color: #a78bfa;
+      margin-bottom: 0.5rem; letter-spacing: 0.05em; text-transform: uppercase;
+    }
+    .subtitle {
+      font-size: 0.75rem; color: #475569;
+      margin-bottom: 2rem;
+    }
+    .status-row {
+      display: flex; align-items: center; justify-content: center;
+      gap: 0.6rem; margin-bottom: 1.5rem;
+    }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #475569; transition: background 0.3s;
+    }
+    .dot.running    { background: #a78bfa; box-shadow: 0 0 8px #a78bfa; animation: pulse 1.5s infinite; }
+    .dot.connecting { background: #f59e0b; animation: pulse 0.8s infinite; }
+    .dot.stopped    { background: #ef4444; }
+    .dot.error      { background: #ef4444; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .status-text { font-size: 1rem; font-weight: 500; color: #cbd5e1; text-transform: capitalize; }
+    .mock-time-badge {
+      font-size: 0.78rem; color: #a78bfa; margin-bottom: 1.25rem;
+      font-variant-numeric: tabular-nums; min-height: 1.2em;
+    }
+    /* Time picker row — only shown when stopped */
+    .time-row {
+      display: flex; gap: 0.5rem; margin-bottom: 1.25rem;
+    }
+    .time-input {
+      flex: 1; padding: 0.65rem 0.75rem;
+      background: #0f172a; border: 1px solid #334155;
+      border-radius: 8px; color: #e2e8f0; font-size: 0.875rem; outline: none;
+      color-scheme: dark;
+    }
+    .time-input:focus { border-color: #7c3aed; }
+    .btn {
+      width: 100%; padding: 1rem; border: none; border-radius: 10px;
+      font-size: 1.1rem; font-weight: 600; cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s; letter-spacing: 0.03em;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-start { background: #7c3aed; color: #fff; }
+    .btn-start:hover:not(:disabled) { opacity: 0.9; }
+    .btn-stop  { background: #ef4444; color: #fff; }
+    .btn-stop:hover:not(:disabled)  { opacity: 0.9; }
+    .stats {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 0.75rem; margin-top: 1.75rem;
+    }
+    .stat-box {
+      background: #0f172a; border: 1px solid #1e293b;
+      border-radius: 8px; padding: 0.75rem;
+    }
+    .stat-label { font-size: 0.65rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+    .stat-value { font-size: 1rem; font-weight: 700; color: #e2e8f0; }
+    .spot-section { margin-top: 1.5rem; text-align: left; }
+    .spot-title { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+    .spot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .spot-item { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 0.5rem 0.75rem; display: flex; justify-content: space-between; align-items: center; }
+    .spot-name  { font-size: 0.75rem; color: #94a3b8; font-weight: 600; }
+    .spot-price { font-size: 0.85rem; color: #a78bfa; font-weight: 700; }
+    .spot-price.na { color: #475569; }
+    .error-msg { margin-top: 1rem; font-size: 0.8rem; color: #f87171; background: #1a0a0a; border-radius: 6px; padding: 0.5rem 0.75rem; display: none; }
+    .started-at { margin-top: 1rem; font-size: 0.72rem; color: #475569; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="title">Mock Ticker</div>
+  <div class="subtitle">Simulates Kite WebSocket using historical DB data</div>
+
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <span class="status-text" id="statusText">Loading...</span>
+  </div>
+
+  <div class="mock-time-badge" id="mockTimeBadge"></div>
+
+  <!-- Time picker — hidden when running -->
+  <div class="time-row" id="timeRow">
+    <input class="time-input" type="datetime-local" id="mockTimeInput" step="60" />
+  </div>
+
+  <button class="btn btn-start" id="actionBtn" disabled onclick="handleAction()">...</button>
+
+  <div class="stats">
+    <div class="stat-box">
+      <div class="stat-label">Ticks</div>
+      <div class="stat-value" id="tickCount">—</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">LTP Tokens</div>
+      <div class="stat-value" id="ltpCount">—</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Subscribed</div>
+      <div class="stat-value" id="subCount">—</div>
+    </div>
+  </div>
+
+  <div class="spot-section">
+    <div class="spot-title">Mock Spot Prices</div>
+    <div class="spot-grid">
+      <div class="spot-item"><span class="spot-name">NIFTY</span><span class="spot-price na" id="spot-NIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">BANKNIFTY</span><span class="spot-price na" id="spot-BANKNIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">FINNIFTY</span><span class="spot-price na" id="spot-FINNIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">SENSEX</span><span class="spot-price na" id="spot-SENSEX">—</span></div>
+    </div>
+  </div>
+
+  <div class="error-msg" id="errorMsg"></div>
+  <div class="started-at" id="startedAt"></div>
+</div>
+
+<script>
+  const API = '';   // same origin
+
+  async function fetchStatus() {
+    try {
+      const res  = await fetch(API + '/mock/status');
+      const data = await res.json();
+      renderStatus(data);
+    } catch(e) {
+      renderStatus({ status: 'error', error: 'Cannot reach server' });
+    }
+  }
+
+  function renderStatus(data) {
+    const status = data.status || 'stopped';
+    document.getElementById('dot').className       = 'dot ' + status;
+    document.getElementById('statusText').textContent = status;
+
+    const btn      = document.getElementById('actionBtn');
+    const timeRow  = document.getElementById('timeRow');
+    const badgeEl  = document.getElementById('mockTimeBadge');
+
+    btn.disabled = false;
+
+    if (status === 'running' || status === 'connecting') {
+      btn.textContent = 'Stop Mock Server';
+      btn.className   = 'btn btn-stop';
+      if (status === 'connecting') btn.disabled = true;
+      timeRow.style.display = 'none';
+      badgeEl.textContent   = data.mock_time
+        ? '\\u25B6 Simulating: ' + data.mock_time.replace('T', ' ')
+        : '';
+    } else {
+      btn.textContent       = 'Start Listening';
+      btn.className         = 'btn btn-start';
+      timeRow.style.display = 'flex';
+      const inputEl = document.getElementById('mockTimeInput');
+      if (inputEl && data.mock_time) {
+        inputEl.value = data.mock_time.slice(0, 16);
+      }
+      badgeEl.textContent   = data.mock_time
+        ? 'Last stopped at: ' + data.mock_time.replace('T', ' ')
+        : 'Set simulation start time above';
+    }
+
+    document.getElementById('tickCount').textContent =
+      data.tick_count !== undefined ? data.tick_count.toLocaleString() : '—';
+    document.getElementById('ltpCount').textContent =
+      data.ltp_count !== undefined ? data.ltp_count.toLocaleString() : '—';
+    document.getElementById('subCount').textContent =
+      data.subscribed_tokens !== undefined ? data.subscribed_tokens.toLocaleString() : '—';
+
+    const spotMap = data.spot_map || {};
+    ['NIFTY','BANKNIFTY','FINNIFTY','SENSEX'].forEach(sym => {
+      const el  = document.getElementById('spot-' + sym);
+      const val = spotMap[sym];
+      if (!el) return;
+      if (val) {
+        el.textContent = '\\u20B9' + Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+        el.className = 'spot-price';
+      } else {
+        el.textContent = '—';
+        el.className = 'spot-price na';
+      }
+    });
+
+    const errEl = document.getElementById('errorMsg');
+    if (data.error) { errEl.textContent = data.error; errEl.style.display = 'block'; }
+    else            { errEl.style.display = 'none'; }
+
+    const startEl = document.getElementById('startedAt');
+    startEl.textContent = data.started_at
+      ? 'Started: ' + data.started_at.replace('T',' ').slice(0,19)
+      : '';
+  }
+
+  async function handleAction() {
+    const btn    = document.getElementById('actionBtn');
+    const status = document.getElementById('statusText').textContent;
+    btn.disabled    = true;
+    btn.textContent = 'Please wait...';
+
+    try {
+      if (status === 'running') {
+        await fetch(API + '/mock/stop');
+      } else {
+        const raw = document.getElementById('mockTimeInput').value;
+        if (!raw) {
+          await fetch(API + '/mock/start');
+        } else {
+          const timeStr = raw.length === 16 ? raw + ':00' : raw;
+          await fetch(API + '/mock/start?time=' + encodeURIComponent(timeStr));
+        }
+      }
+    } catch(e) { console.error(e); }
+
+    setTimeout(fetchStatus, 600);
+    setTimeout(fetchStatus, 1800);
+    setTimeout(fetchStatus, 4000);
+  }
+
+  fetchStatus();
+  setInterval(fetchStatus, 2000);
+</script>
+</body>
+</html>"""
+
+
+def _start_mock_bg(time_str: str) -> None:
+    """Run in a daemon thread — sets mock time then starts MockTicker."""
+    result = mock_ticker_manager.set_mock_time(time_str)
+    if not result.get("ok"):
+        import logging
+        logging.getLogger(__name__).error("mock set_mock_time failed: %s", result)
+        return
+    _db = MongoData()
+    try:
+        mock_ticker_manager.start(_db)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("mock start error: %s", exc)
+    finally:
+        try:
+            _db.close()
+        except Exception:
+            pass
+
+
+@app.get("/mock/start")
+async def mock_start(time: str = Query(default="")):
+    """
+    Start mock ticker.
+    Pass ?time=2025-11-03T09:15:00 to set the simulation start time.
+    If time is omitted, the last saved mock time is resumed.
+    Returns HTML control page.
+    """
+    if mock_ticker_manager.status not in ("running", "connecting"):
+        resume_time = (time or mock_ticker_manager.mock_current_time or "").strip()
+        if resume_time:
+            import threading
+            threading.Thread(target=_start_mock_bg, args=(resume_time,), daemon=True).start()
+    live_monitor_loop.start()
+    return HTMLResponse(content=_MOCK_CONTROL_HTML)
+
+
+@app.get("/mock/stop")
+async def mock_stop():
+    """Stop mock ticker. Returns HTML control page."""
+    mock_ticker_manager.stop()
+    live_monitor_loop.stop()
+    return HTMLResponse(content=_MOCK_CONTROL_HTML)
+
+
+@app.get("/mock/status")
+async def mock_status():
+    """JSON status — polled by the control page every 2 s."""
+    return mock_ticker_manager.get_status()
+
+
+@app.get("/mock/ltp/{token}")
+async def mock_ltp(token: str):
+    ltp = mock_ticker_manager.get_ltp(token)
+    if ltp is None:
+        raise HTTPException(status_code=404, detail=f"No mock LTP for token {token}")
+    return {"token": token, "ltp": ltp}

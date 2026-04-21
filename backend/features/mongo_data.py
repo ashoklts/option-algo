@@ -4,19 +4,27 @@ mongo_data.py
 Single bulk-load from MongoDB — no per-candle queries during backtest.
 """
 
+import logging
 from pymongo import MongoClient
 from typing import Optional
 
 MONGO_URI = "mongodb://localhost:27017"
 DB_NAME   = "stock_data"
 
+_log = logging.getLogger("db_activity")
+
 
 class MongoData:
     def __init__(self, uri: str = MONGO_URI):
-        self._client = MongoClient(uri)
-        self._db     = self._client[DB_NAME]
-        self._chain  = self._db["option_chain"]
-        self._hols   = self._db["market_holidays"]
+        try:
+            self._client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            self._db     = self._client[DB_NAME]
+            self._chain  = self._db["option_chain"]
+            self._hols   = self._db["market_holidays"]
+            _log.debug("[DB CONNECT]  uri=%s  db=%s", uri, DB_NAME)
+        except Exception as exc:
+            _log.error("[DB CONNECT ERROR]  uri=%s  error=%s", uri, exc, exc_info=True)
+            raise
 
     def get_holidays(self) -> set:
         docs = self._hols.find({}, {"date": 1, "_id": 0})
@@ -79,4 +87,7 @@ class MongoData:
         return list(cursor)
 
     def close(self):
-        self._client.close()
+        try:
+            self._client.close()
+        except Exception as exc:
+            _log.error("[DB CLOSE ERROR]  error=%s", exc, exc_info=True)
