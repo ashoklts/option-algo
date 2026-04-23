@@ -30,6 +30,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from dotenv import load_dotenv
@@ -151,14 +152,14 @@ class FlatTradeAdapter:
 
     def _post(self, endpoint: str, data: dict) -> object:
         url = f"{_BASE_URL}/{endpoint}"
-        payload = {
-            "jData": json.dumps(data, separators=(",", ":")),
-            "jKey": self.jkey,
-        }
+        payload_data = dict(data)
+        if payload_data.get("tsym"):
+            payload_data["tsym"] = quote(str(payload_data["tsym"]), safe="")
+        body = f"jData={json.dumps(payload_data, separators=(',', ':'))}&jKey={self.jkey}"
         resp = requests.post(
             url,
-            data=payload,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data=body,
+            headers={"Content-Type": "application/json"},
             timeout=10,
         )
         try:
