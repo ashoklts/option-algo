@@ -147,6 +147,7 @@ class FlatTradeAdapter:
         variety: str = "regular",    # ignored — FlatTrade has no variety concept
         price: float = 0.0,
         trigger_price: float = 0.0,
+        validity: str = "DAY",
     ) -> str:
         _prctyp = {
             "LIMIT":   "LMT",
@@ -166,7 +167,7 @@ class FlatTradeAdapter:
             "prd":         "I" if product == "MIS" else "M",
             "trantype":    "B" if transaction_type == "BUY" else "S",
             "prctyp":      _prctyp,
-            "ret":         "DAY",
+            "ret":         str(validity or "DAY").upper(),
             "ordersource": "API",
         }
         if _prctyp in ("SL-LMT", "SL-MKT") and trigger_price:
