@@ -3235,14 +3235,13 @@ def _kite_popup_html(
     <div class="icon">{status_icon}</div>
     <h2>{"Login Successful" if success else "Login Failed"}</h2>
     <p>{message}</p>
-    <p style="font-size:0.8rem">This window will close automatically...</p>
+    <p style="font-size:0.8rem">You can close this window after checking the URL.</p>
   </div>
   <script>
     const payload = {payload_js};
     if (window.opener) {{
       window.opener.postMessage(payload, "*");
     }}
-    setTimeout(() => window.close(), 1500);
   </script>
 </body>
 </html>"""
@@ -3373,7 +3372,16 @@ async def flattrade_login(broker_doc_id: str = ""):
     _flattrade_pending[state] = broker_doc_id
     login_url = ft_login_url(state=state)
     log.info("FlatTrade login started broker_doc_id=%s state=%s", broker_doc_id or "-", state)
-    return RedirectResponse(url=login_url)
+    response = RedirectResponse(url=login_url)
+    if broker_doc_id:
+        response.set_cookie(
+            key="flattrade_broker_doc_id",
+            value=broker_doc_id,
+            max_age=600,
+            httponly=True,
+            samesite="lax",
+        )
+    return response
 
 
 @app.get("/broker/flattrade/redirect", response_class=HTMLResponse)
@@ -3392,6 +3400,8 @@ async def flattrade_redirect(request: Request):
     if not broker_doc_id and ":" in state:
         from urllib.parse import unquote
         broker_doc_id = unquote(state.rsplit(":", 1)[-1]).strip()
+    if not broker_doc_id:
+        broker_doc_id = request.cookies.get("flattrade_broker_doc_id", "").strip()
 
     if error_msg or not request_code:
         log.error(
@@ -3401,11 +3411,13 @@ async def flattrade_redirect(request: Request):
             error_msg or "-",
             bool(request_code),
         )
-        return HTMLResponse(content=_broker_popup_html(
+        response = HTMLResponse(content=_broker_popup_html(
             broker="FlatTrade",
             success=False,
             message=error_msg or "No request code received",
         ))
+        response.delete_cookie("flattrade_broker_doc_id")
+        return response
 
     try:
         session = ft_generate_session(request_code)
@@ -3415,11 +3427,13 @@ async def flattrade_redirect(request: Request):
             state or "-",
             broker_doc_id or "-",
         )
-        return HTMLResponse(content=_broker_popup_html(
+        response = HTMLResponse(content=_broker_popup_html(
             broker="FlatTrade",
             success=False,
             message=f"Session error: {exc}",
         ))
+        response.delete_cookie("flattrade_broker_doc_id")
+        return response
 
     if broker_doc_id:
         try:
@@ -3428,15 +3442,21 @@ async def flattrade_redirect(request: Request):
             _local_db.close()
         except Exception as exc:
             log.exception("FlatTrade session DB save failed broker_doc_id=%s", broker_doc_id)
-            return HTMLResponse(content=_broker_popup_html(
+            response = HTMLResponse(content=_broker_popup_html(
                 broker="FlatTrade",
                 success=False,
                 message=f"Token generated but DB save failed: {exc}",
             ))
+            response.delete_cookie("flattrade_broker_doc_id")
+            return response
     else:
-        log.warning("FlatTrade login succeeded but broker_doc_id was empty; token not saved")
+        log.warning(
+            "FlatTrade login succeeded but broker_doc_id was empty; token not saved state=%s query=%s",
+            state or "-",
+            dict(request.query_params),
+        )
 
-    return HTMLResponse(content=_broker_popup_html(
+    response = HTMLResponse(content=_broker_popup_html(
         broker="FlatTrade",
         success=True,
         message="Login successful",
@@ -3445,6 +3465,8 @@ async def flattrade_redirect(request: Request):
         user_name=session.get("clientid", ""),
         broker_doc_id=broker_doc_id,
     ))
+    response.delete_cookie("flattrade_broker_doc_id")
+    return response
 
 
 def _broker_popup_html(
