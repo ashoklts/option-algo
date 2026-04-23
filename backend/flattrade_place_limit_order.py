@@ -19,24 +19,56 @@ import sys
 
 from bson import ObjectId
 
-from features.flattrade_broker import get_flattrade_instance
+from features.flattrade_broker import _is_flattrade_doc, get_flattrade_instance
 from features.mongo_data import MongoData
 
 
-def _load_broker_doc(broker_doc_id: str) -> dict:
+def _has_token(doc: dict) -> bool:
+    return bool(str(
+        doc.get("access_token")
+        or doc.get("jKey")
+        or doc.get("jkey")
+        or doc.get("token")
+        or ""
+    ).strip())
+
+
+def _load_broker_doc(broker_doc_id: str = "") -> dict:
     db = MongoData()
     try:
-        doc = db._db["broker_configuration"].find_one({"_id": ObjectId(broker_doc_id)})
+        collection = db._db["broker_configuration"]
+        if broker_doc_id:
+            doc = collection.find_one({"_id": ObjectId(broker_doc_id)})
+        else:
+            docs = list(collection.find({}))
+            connected_flattrade_docs = [
+                doc for doc in docs
+                if _is_flattrade_doc(doc) and _has_token(doc)
+            ]
+            if len(connected_flattrade_docs) == 1:
+                doc = connected_flattrade_docs[0]
+            elif len(connected_flattrade_docs) > 1:
+                ids = ", ".join(str(doc.get("_id")) for doc in connected_flattrade_docs)
+                raise SystemExit(
+                    "Multiple connected FlatTrade brokers found. "
+                    f"Please pass --broker_doc_id. Available ids: {ids}"
+                )
+            else:
+                doc = next((doc for doc in docs if _is_flattrade_doc(doc)), None)
     finally:
         db.close()
     if not doc:
-        raise SystemExit(f"Broker document not found: {broker_doc_id}")
+        raise SystemExit(
+            f"Broker document not found: {broker_doc_id}"
+            if broker_doc_id
+            else "Connected FlatTrade broker not found. Login FlatTrade first or pass --broker_doc_id."
+        )
     return doc
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Place a manual FlatTrade LIMIT option order")
-    parser.add_argument("--broker_doc_id", required=True, help="Mongo broker_configuration _id")
+    parser.add_argument("--broker_doc_id", default="", help="Mongo broker_configuration _id. Optional if one FlatTrade broker is connected.")
     parser.add_argument("--symbol", required=True, help="FlatTrade trading symbol / tsym exactly as broker expects")
     parser.add_argument("--exchange", default="NFO", help="NFO or BFO. Default: NFO")
     parser.add_argument("--side", choices=["BUY", "SELL"], required=True)
@@ -81,7 +113,7 @@ def main() -> int:
     }
 
     print("FlatTrade LIMIT order test")
-    print("Broker doc:", args.broker_doc_id)
+    print("Broker doc:", broker_doc.get("_id"))
     print("User id:", user_id)
     print("Order:", order)
 
