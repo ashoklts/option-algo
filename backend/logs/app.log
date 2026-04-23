@@ -184,3 +184,4 @@ Traceback (most recent call last):
     raise ValueError(f"FlatTrade session error: {data.get('emsg', data)}")
 ValueError: FlatTrade session error: Invalid Input : INVALID_IP
 2026-04-23 19:03:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 19:15:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
