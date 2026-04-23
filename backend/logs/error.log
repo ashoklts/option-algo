@@ -3,3 +3,21 @@
 2026-04-23 09:37:42  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
 2026-04-23 09:37:42  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
 2026-04-23 09:37:42  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-23 10:21:58  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-04-23 10:21:58  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-04-23 10:21:58  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-04-23 10:31:54  ERROR     features.execution_socket            execute-orders initial emit error: No replica set members found yet, Timeout: 5.0s, Topology Description: <TopologyDescription id: 69e9a7bd5bb43d2e50cc1f81, topology_type: ReplicaSetNoPrimary, servers: [<ServerDescription ('ac-llfjck1-shard-00-00.e66us4f.mongodb.net', 27017) server_type: Unknown, rtt: None>, <ServerDescription ('ac-llfjck1-shard-00-01.e66us4f.mongodb.net', 27017) server_type: Unknown, rtt: None>, <ServerDescription ('ac-llfjck1-shard-00-02.e66us4f.mongodb.net', 27017) server_type: Unknown, rtt: None>]>
+2026-04-23 11:46:49  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-23 11:46:49  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-23 11:46:49  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-23 11:46:52  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 1. Next retry in around: 3 seconds
+2026-04-23 11:47:02  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 2. Next retry in around: 10 seconds
+2026-04-23 11:47:31  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 3. Next retry in around: 30 seconds
+2026-04-23 11:48:24  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 4. Next retry in around: 53 seconds
+2026-04-23 13:16:31  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-23 13:16:31  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-23 13:16:31  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-23 13:16:34  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 1. Next retry in around: 3 seconds
+2026-04-23 13:16:42  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 2. Next retry in around: 8 seconds
+2026-04-23 13:17:01  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 3. Next retry in around: 19 seconds
+2026-04-23 13:17:40  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 4. Next retry in around: 39 seconds

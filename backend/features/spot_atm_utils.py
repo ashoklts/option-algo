@@ -46,7 +46,7 @@ def _ist_today() -> str:
 
 def _load_kite_instruments(force: bool = False) -> dict[tuple, dict]:
     """
-    Load NFO instruments from Kite and cache them for the trading day.
+    Load option instruments from Kite and cache them for the trading day.
     Returns the cache dict (may be empty if Kite not configured).
     Thread-safe.
     """
@@ -60,44 +60,59 @@ def _load_kite_instruments(force: bool = False) -> dict[tuple, dict]:
         try:
             from features.kite_broker_ws import get_common_credentials, is_configured  # type: ignore
             if not is_configured():
+                try:
+                    from features.mongo_data import MongoData  # type: ignore
+                    from features.kite_broker_ws import load_credentials_from_db  # type: ignore
+
+                    _db = MongoData()
+                    try:
+                        load_credentials_from_db(_db)
+                    finally:
+                        _db.close()
+                except Exception as exc:
+                    log.warning('[kite_instruments] credential load error: %s', exc)
+
+            if not is_configured():
+                log.warning('[kite_instruments] Kite access token not configured')
                 return _kite_inst_cache
 
             from kiteconnect import KiteConnect  # type: ignore
             api_key, access_token = get_common_credentials()
             if not api_key or not access_token:
+                log.warning('[kite_instruments] api_key/access_token missing after credential load')
                 return _kite_inst_cache
 
             kite = KiteConnect(api_key=api_key)
             kite.set_access_token(access_token)
-            instruments = kite.instruments('NFO')
-
             new_cache: dict[tuple, dict] = {}
-            for inst in instruments:
-                name      = str(inst.get('name') or '').strip().upper()
-                inst_type = str(inst.get('instrument_type') or '').strip().upper()
-                exp       = inst.get('expiry')
-                stk       = inst.get('strike')
-                tok       = inst.get('instrument_token')
-                sym       = str(inst.get('tradingsymbol') or '').strip()
+            for segment in ('NFO', 'BFO'):
+                instruments = kite.instruments(segment)
+                for inst in instruments:
+                    name      = str(inst.get('name') or '').strip().upper()
+                    inst_type = str(inst.get('instrument_type') or '').strip().upper()
+                    exp       = inst.get('expiry')
+                    stk       = inst.get('strike')
+                    tok       = inst.get('instrument_token')
+                    sym       = str(inst.get('tradingsymbol') or '').strip()
 
-                if not (name and inst_type in ('CE', 'PE') and exp and stk is not None and tok):
-                    continue
+                    if not (name and inst_type in ('CE', 'PE') and exp and stk is not None and tok):
+                        continue
 
-                try:
-                    exp_str = exp.strftime('%Y-%m-%d')
-                except AttributeError:
-                    exp_str = str(exp)[:10]
+                    try:
+                        exp_str = exp.strftime('%Y-%m-%d')
+                    except AttributeError:
+                        exp_str = str(exp)[:10]
 
-                key = (name, exp_str, float(stk), inst_type)
-                new_cache[key] = {
-                    'token':    int(tok),
-                    'symbol':   sym,
-                    'exchange': str(inst.get('exchange') or 'NFO'),
-                }
+                    key = (name, exp_str, float(stk), inst_type)
+                    new_cache[key] = {
+                        'token':    int(tok),
+                        'symbol':   sym,
+                        'exchange': str(inst.get('exchange') or segment),
+                    }
 
             _kite_inst_cache = new_cache
             _kite_inst_date  = today
-            log.info('[kite_instruments] loaded %d NFO instruments for %s', len(new_cache), today)
+            log.info('[kite_instruments] loaded %d option instruments for %s', len(new_cache), today)
 
         except Exception as exc:
             log.warning('[kite_instruments] load error: %s', exc)
@@ -170,12 +185,12 @@ def get_kite_chain_doc(
     }
 
 
-def get_kite_expiries(underlying: str, from_date: str) -> list[str]:
+def get_kite_expiries(underlying: str, from_date: str, *, force_refresh: bool = False) -> list[str]:
     """
     Return sorted expiry date strings for *underlying* >= from_date
     from the Kite instruments cache.  Used by live / fast-forward mode.
     """
-    cache = _load_kite_instruments()
+    cache = _load_kite_instruments(force=force_refresh)
     und   = str(underlying or '').strip().upper()
     expiries: set[str] = set()
     for (name, exp, _strike, _type) in cache:
@@ -184,7 +199,7 @@ def get_kite_expiries(underlying: str, from_date: str) -> list[str]:
     return sorted(expiries)
 
 
-def list_kite_option_contracts(underlying: str, expiry: str) -> list[dict]:
+def list_kite_option_contracts(underlying: str, expiry: str, *, force_refresh: bool = False) -> list[dict]:
     """
     Return all cached Kite option contracts for an underlying + expiry.
 
@@ -205,7 +220,7 @@ def list_kite_option_contracts(underlying: str, expiry: str) -> list[dict]:
     if not und or not exp:
         return []
 
-    cache = _load_kite_instruments()
+    cache = _load_kite_instruments(force=force_refresh)
     contracts: list[dict] = []
     for (name, exp_key, strike, option_type), inst in cache.items():
         if name != und or exp_key != exp:

@@ -332,12 +332,21 @@ def resolve_fast_forward_pending_entry_snapshot(
     spot_price, quote_instrument = get_fast_forward_quote_spot_price(db, trade, underlying)
     if spot_price <= 0:
         try:
-            from features.kite_ticker import ticker_manager
-            spot_price = _safe_float(ticker_manager.get_spot(underlying))
+            from features.live_monitor_socket import _get_active_ticker_manager
+            spot_price = _safe_float(_get_active_ticker_manager().get_spot(underlying))
         except Exception:
             spot_price = 0.0
     if spot_price <= 0:
         spot_price = _safe_float(fallback_spot_price)
+    # fallback to DB if ticker has no data (e.g. server restart)
+    if spot_price <= 0:
+        try:
+            from features.execution_socket import get_index_spot_at_time
+            _index_spot_col = db._db['option_chain_index_spot']
+            _spot_doc = get_index_spot_at_time(_index_spot_col, underlying, now_ts)
+            spot_price = _safe_float((_spot_doc or {}).get('spot_price'))
+        except Exception:
+            spot_price = 0.0
     if spot_price <= 0:
         return {}
 

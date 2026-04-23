@@ -3234,10 +3234,10 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
             )
         if not index_spot_doc:
             if activation_mode in {'fast-forward', 'live'}:
-                # Live/FF: never query historical DB — get spot directly from Kite ticker
+                # Live/FF: get spot directly from Kite ticker
                 try:
-                    from features.kite_ticker import ticker_manager as _tm_spot_fb
-                    _kite_spot_fb = _safe_float(_tm_spot_fb.get_spot(underlying))
+                    from features.live_monitor_socket import _get_active_ticker_manager
+                    _kite_spot_fb = _safe_float(_get_active_ticker_manager().get_spot(underlying))
                     if _kite_spot_fb > 0:
                         index_spot_doc = {
                             'underlying': underlying,
@@ -3247,6 +3247,16 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                         }
                 except Exception:
                     pass
+                # fast-forward: fallback to DB if ticker has no data (e.g. server restart)
+                if not index_spot_doc and activation_mode == 'fast-forward':
+                    index_spot_col = db._db['option_chain_index_spot']
+                    index_spot_doc = get_index_spot_at_time(
+                        index_spot_col,
+                        underlying,
+                        snapshot_timestamp or now_ts,
+                        market_cache=market_cache,
+                        activation_mode=activation_mode,
+                    )
             else:
                 index_spot_col = db._db['option_chain_index_spot']
                 index_spot_doc = get_index_spot_at_time(

@@ -45,6 +45,7 @@ from features.kite_broker import (
 )
 from features.kite_ticker import ticker_manager
 from features.mock_ticker import mock_ticker_manager
+from features.spot_atm_utils import get_kite_expiries, list_kite_option_contracts
 from features.execution_socket import (
     broadcast_backtest_simulation_step,
     emit_broker_settings_for_user,
@@ -57,6 +58,7 @@ from features.execution_socket import (
 from features.live_fast_monitor import live_fast_monitor_supervisor
 from features.live_monitor_socket import live_monitor_loop
 from features.mock_kite_socket import mock_kite_socket_router
+from features.kite_broker_ws import load_credentials_from_db
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -4809,6 +4811,92 @@ def _start_mock_bg(time_str: str) -> None:
             pass
 
 
+def _sync_active_option_tokens(instrument: str) -> dict:
+    normalized_instrument = str(instrument or "").strip().upper()
+    if not normalized_instrument:
+        raise HTTPException(status_code=400, detail="Instrument is required")
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    db = MongoData()
+    try:
+        credentials_loaded = load_credentials_from_db(db)
+        active_tokens_col = db._db["active_option_tokens"]
+        active_tokens_col.create_index(
+            [("instrument", 1), ("expiry", 1), ("strike", 1), ("option_type", 1)],
+            name="idx_active_option_contract",
+        )
+
+        expiries = get_kite_expiries(normalized_instrument, today_str, force_refresh=True)
+        if not expiries:
+            return {
+                "instrument": normalized_instrument,
+                "expiries": [],
+                "contracts_processed": 0,
+                "created": 0,
+                "updated": 0,
+                "message": "No active option contracts found",
+                "credentials_loaded": credentials_loaded,
+                "hint": (
+                    "Check kite_market_config access_token/login if this instrument should have live contracts"
+                ),
+            }
+
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        created_count = 0
+        updated_count = 0
+        contracts_processed = 0
+
+        for expiry_index, expiry in enumerate(expiries):
+            contracts = list_kite_option_contracts(
+                normalized_instrument,
+                expiry,
+                force_refresh=(expiry_index == 0),
+            )
+            for contract in contracts:
+                contracts_processed += 1
+                query = {
+                    "instrument": normalized_instrument,
+                    "expiry": str(contract.get("expiry") or "").strip()[:10],
+                    "strike": contract.get("strike"),
+                    "option_type": str(contract.get("option_type") or "").strip().upper(),
+                }
+                update_payload = {
+                    "instrument": normalized_instrument,
+                    "expiry": query["expiry"],
+                    "strike": query["strike"],
+                    "option_type": query["option_type"],
+                    "token": str(contract.get("token") or "").strip(),
+                    "tokens": str(contract.get("tokens") or contract.get("token") or "").strip(),
+                    "symbol": str(contract.get("symbol") or "").strip(),
+                    "exchange": str(contract.get("exchange") or "").strip(),
+                    "updated_at": now_ts,
+                }
+                result = active_tokens_col.update_one(
+                    query,
+                    {
+                        "$set": update_payload,
+                        "$setOnInsert": {"created_at": now_ts},
+                    },
+                    upsert=True,
+                )
+                if result.upserted_id is not None:
+                    created_count += 1
+                elif result.matched_count:
+                    updated_count += 1
+
+        return {
+            "instrument": normalized_instrument,
+            "expiries": expiries,
+            "contracts_processed": contracts_processed,
+            "created": created_count,
+            "updated": updated_count,
+            "credentials_loaded": credentials_loaded,
+            "message": "active_option_tokens sync completed",
+        }
+    finally:
+        db.close()
+
+
 @app.get("/mock/start")
 async def mock_start(time: str = Query(default="")):
     """
@@ -4824,6 +4912,11 @@ async def mock_start(time: str = Query(default="")):
             threading.Thread(target=_start_mock_bg, args=(resume_time,), daemon=True).start()
     live_monitor_loop.start()
     return HTMLResponse(content=_MOCK_CONTROL_HTML)
+
+
+@app.get("/get_active_tokens/{instrument}")
+async def get_active_tokens(instrument: str):
+    return _sync_active_option_tokens(instrument)
 
 
 @app.get("/mock/stop")

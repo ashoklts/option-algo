@@ -160,12 +160,43 @@ def get_spot_doc_at_time(
         cached = get_cached_spot_doc(market_cache, underlying, snapshot_ts)
         if cached:
             return cached
-        doc = index_spot_col.find_one({'underlying': underlying, 'timestamp': snapshot_ts})
+        norm_ts = str(snapshot_ts or '').strip()
+        variants: list[str] = []
+        for candidate in [
+            norm_ts,
+            norm_ts.replace('T', ' ').rstrip('Z'),
+            norm_ts.replace(' ', 'T').rstrip('Z'),
+        ]:
+            normalized = str(candidate or '').strip()
+            if normalized and normalized not in variants:
+                variants.append(normalized)
+
+        doc = {}
+        for ts in variants:
+            doc = index_spot_col.find_one({'underlying': underlying, 'timestamp': ts})
+            if doc:
+                break
+
         if not doc:
-            doc = index_spot_col.find_one(
-                {'underlying': underlying, 'timestamp': {'$lte': snapshot_ts}},
-                sort=[('timestamp', DESCENDING)],
-            )
+            for ts in variants:
+                doc = index_spot_col.find_one(
+                    {'underlying': underlying, 'timestamp': {'$lte': ts}},
+                    sort=[('timestamp', DESCENDING)],
+                )
+                if doc:
+                    break
+
+        if not doc:
+            for ts in variants:
+                prefix = ts[:16]
+                if not prefix:
+                    continue
+                doc = index_spot_col.find_one(
+                    {'underlying': underlying, 'timestamp': {'$regex': '^' + re.escape(prefix)}},
+                    sort=[('timestamp', DESCENDING)],
+                )
+                if doc:
+                    break
         return doc or {}
     except Exception as exc:
         import logging
