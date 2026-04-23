@@ -45,13 +45,25 @@ http://localhost:8000/get_active_tokens/BANKNIFTY
 http://localhost:8000/get_active_tokens/SENSEX
 
 
+https://finedgealgo.com/portfolios.html
+
+https://finedgealgo.com/monitor/stop
+
+
 flattrade login
 
 https://auth.flattrade.in/?app_key=<YOUR_API_KEY>
 
 http://localhost:8000/broker/flattrade/redirect
 
+https://finedgealgo.com/broker/flattrade/redirect
+https://finedgealgo.com/broker/flattrade/postback
+
+https://large-morally-ant.ngrok-free.app/broker/flattrade/redirect
+
 http://localhost:8000/broker/flattrade/postback
+
+https://large-morally-ant.ngrok-free.app/broker/flattrade/postback
 
 
 ssh -i "finedgealgo.pem" ec2-user@ec2-13-202-184-58.ap-south-1.compute.amazonaws.com

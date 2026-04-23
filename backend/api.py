@@ -3364,11 +3364,15 @@ async def flattrade_login(broker_doc_id: str = ""):
       http://localhost:8000/broker/flattrade/login?broker_doc_id=<mongo_id>
     """
     import secrets
+    from urllib.parse import quote
     from features.flattrade_broker import get_login_url as ft_login_url
     session_id = secrets.token_hex(16)
-    _flattrade_pending[session_id] = broker_doc_id
-    login_url = ft_login_url(state=session_id)
-    log.info("FlatTrade login started broker_doc_id=%s state=%s", broker_doc_id or "-", session_id)
+    state = session_id
+    if broker_doc_id:
+        state = f"{session_id}:{quote(broker_doc_id, safe='')}"
+    _flattrade_pending[state] = broker_doc_id
+    login_url = ft_login_url(state=state)
+    log.info("FlatTrade login started broker_doc_id=%s state=%s", broker_doc_id or "-", state)
     return RedirectResponse(url=login_url)
 
 
@@ -3385,6 +3389,9 @@ async def flattrade_redirect(request: Request):
     error_msg     = request.query_params.get("error", "").strip()
     state         = request.query_params.get("state", "").strip()
     broker_doc_id = _flattrade_pending.pop(state, "") or request.query_params.get("broker_doc_id", "").strip()
+    if not broker_doc_id and ":" in state:
+        from urllib.parse import unquote
+        broker_doc_id = unquote(state.rsplit(":", 1)[-1]).strip()
 
     if error_msg or not request_code:
         log.error(
