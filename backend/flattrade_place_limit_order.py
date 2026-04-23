@@ -44,15 +44,30 @@ def main() -> int:
     parser.add_argument("--price", type=float, required=True)
     parser.add_argument("--product", choices=["NRML", "MIS"], default="NRML")
     parser.add_argument("--validity", default="DAY", help="FlatTrade ret value, e.g. DAY or EOS")
+    parser.add_argument("--user-id", default="", help="Optional FlatTrade uid override, e.g. FT056897")
+    parser.add_argument("--jkey", default="", help="Optional FlatTrade jKey override. Prefer DB token when possible.")
     parser.add_argument("--place", action="store_true", help="Actually place the order. Omit for dry-run.")
     args = parser.parse_args()
 
     broker_doc = _load_broker_doc(args.broker_doc_id)
-    user_id = str(broker_doc.get("user_id") or "").strip()
-    access_token = str(broker_doc.get("access_token") or "").strip()
+    user_id = str(args.user_id or broker_doc.get("user_id") or broker_doc.get("clientid") or broker_doc.get("uid") or "").strip()
+    access_token = str(
+        args.jkey
+        or broker_doc.get("access_token")
+        or broker_doc.get("jKey")
+        or broker_doc.get("jkey")
+        or broker_doc.get("token")
+        or ""
+    ).strip()
 
     if not user_id or not access_token:
-        raise SystemExit("FlatTrade broker is not connected: missing user_id/access_token in DB")
+        visible_keys = sorted(k for k in broker_doc.keys() if k != "access_token")
+        raise SystemExit(
+            "FlatTrade broker is not connected: missing user_id/access_token in DB\n"
+            f"Broker doc name: {broker_doc.get('name') or broker_doc.get('broker_name') or '-'}\n"
+            f"Available keys: {visible_keys}\n"
+            "Tip: verify the id from /algo/broker-configurations, or pass --user-id and --jkey for a one-off test."
+        )
 
     order = {
         "tradingsymbol": args.symbol,
