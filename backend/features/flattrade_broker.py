@@ -59,8 +59,30 @@ def get_login_url(state: str = "") -> str:
     return url
 
 
+def _session_token(session: dict) -> str:
+    return str(
+        session.get("token")
+        or session.get("access_token")
+        or session.get("jKey")
+        or session.get("jkey")
+        or session.get("susertoken")
+        or ""
+    ).strip()
+
+
+def _session_user_id(session: dict) -> str:
+    return str(
+        session.get("clientid")
+        or session.get("uid")
+        or session.get("actid")
+        or session.get("user_id")
+        or session.get("client")
+        or ""
+    ).strip()
+
+
 def generate_session(request_code: str) -> dict:
-    """Exchange request_code for jKey. Returns {"token": jKey, "clientid": uid, ...}."""
+    """Exchange request_code for jKey/session token."""
     if not FLATTRADE_API_KEY or not FLATTRADE_API_SECRET:
         raise ValueError("FLATTRADE_API_KEY / FLATTRADE_API_SECRET not set in .env")
 
@@ -78,7 +100,7 @@ def generate_session(request_code: str) -> dict:
     )
     resp.raise_for_status()
     data = resp.json()
-    if data.get("stat") == "Not_Ok" or not data.get("token"):
+    if data.get("stat") == "Not_Ok" or not _session_token(data):
         log.error("FlatTrade token exchange failed: %s", data.get("emsg", data))
         raise ValueError(f"FlatTrade session error: {data.get('emsg', data)}")
     return data
@@ -88,12 +110,16 @@ def save_flattrade_session(db, broker_doc_id: str, session: dict) -> None:
     """Persist jKey and login time into broker_configuration."""
     from bson import ObjectId
     from datetime import datetime, timezone
+    token = _session_token(session)
+    user_id = _session_user_id(session)
+    if not token:
+        raise ValueError(f"FlatTrade login response did not include a session token. Keys: {sorted(session.keys())}")
     db["broker_configuration"].update_one(
         {"_id": ObjectId(broker_doc_id)},
         {"$set": {
-            "access_token": session.get("token"),
-            "user_id":      session.get("clientid"),
-            "user_name":    session.get("clientid"),
+            "access_token": token,
+            "user_id":      user_id,
+            "user_name":    user_id,
             "login_time":   datetime.now(timezone.utc).isoformat(),
         }},
     )

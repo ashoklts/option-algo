@@ -3390,6 +3390,7 @@ async def flattrade_redirect(request: Request):
     FlatTrade redirects here after login with ?code=<request_code>&state=<session_id>.
     Exchanges the code for a jKey session token and saves it to broker_configuration.
     """
+    from features.flattrade_broker import _session_token, _session_user_id
     from features.flattrade_broker import generate_session as ft_generate_session
     from features.flattrade_broker import save_flattrade_session
 
@@ -3460,9 +3461,9 @@ async def flattrade_redirect(request: Request):
         broker="FlatTrade",
         success=True,
         message="Login successful",
-        access_token=session.get("token", ""),
-        user_id=session.get("clientid", ""),
-        user_name=session.get("clientid", ""),
+        access_token=_session_token(session),
+        user_id=_session_user_id(session),
+        user_name=_session_user_id(session),
         broker_doc_id=broker_doc_id,
     ))
     response.delete_cookie("flattrade_broker_doc_id")
