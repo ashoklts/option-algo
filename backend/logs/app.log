@@ -167,3 +167,20 @@
 2026-04-23 13:20:31  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=putLeg4_re_2026-04-23131911_re_2026-04-23131954  exit_reason=stoploss  exit_price=183.6  ts=2026-04-23T13:20:31
 2026-04-23 13:20:48  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=4: ₹225.72 → ₹220.72
 2026-04-23 13:20:48  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=5: ₹269.14 → ₹264.14
+2026-04-23 14:04:22  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 18:38:18  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 18:44:43  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 18:46:57  INFO      api                                  [FLATTRADE POSTBACK] order_id=23010376 status=OPEN fill_price=0.0 fill_qty=0
+2026-04-23 18:53:58  INFO      api                                  [FLATTRADE POSTBACK] order_id=23010376 status=OPEN fill_price=0.0 fill_qty=0
+2026-04-23 19:00:05  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 19:00:17  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 19:01:09  INFO      api                                  FlatTrade login started broker_doc_id=69e8f91d0e59052e21916992 state=d429c739a361608c3abee0105b697fbf
+2026-04-23 19:01:42  ERROR     features.flattrade_broker            FlatTrade token exchange failed: Invalid Input : INVALID_IP
+2026-04-23 19:01:42  ERROR     api                                  FlatTrade token exchange failed state=- broker_doc_id=-
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/api.py", line 3403, in flattrade_redirect
+    session = ft_generate_session(request_code)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 83, in generate_session
+    raise ValueError(f"FlatTrade session error: {data.get('emsg', data)}")
+ValueError: FlatTrade session error: Invalid Input : INVALID_IP
+2026-04-23 19:03:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs

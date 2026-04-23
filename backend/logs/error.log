@@ -21,3 +21,11 @@
 2026-04-23 13:16:42  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 2. Next retry in around: 8 seconds
 2026-04-23 13:17:01  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 3. Next retry in around: 19 seconds
 2026-04-23 13:17:40  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 4. Next retry in around: 39 seconds
+2026-04-23 19:01:42  ERROR     features.flattrade_broker            FlatTrade token exchange failed: Invalid Input : INVALID_IP
+2026-04-23 19:01:42  ERROR     api                                  FlatTrade token exchange failed state=- broker_doc_id=-
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/api.py", line 3403, in flattrade_redirect
+    session = ft_generate_session(request_code)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 83, in generate_session
+    raise ValueError(f"FlatTrade session error: {data.get('emsg', data)}")
+ValueError: FlatTrade session error: Invalid Input : INVALID_IP

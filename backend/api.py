@@ -28,6 +28,7 @@ import uuid
 from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, APIRouter, Query, Request
@@ -2299,7 +2300,7 @@ async def portfolio_execution_settings_update(payload: dict):
 
 
 @router.get("/trades/list")
-async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest", trade_status: int | None = None):
+async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest", trade_status: Optional[int] = None):
     """
     List algo trade execution records by activation mode and creation date.
 
@@ -2355,7 +2356,7 @@ async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest
 
 
 @router.get("/executions")
-async def list_algo_executions(environment: str = "algo-backtest", is_signal: bool = False, date: str = "", trade_status: int | None = None):
+async def list_algo_executions(environment: str = "algo-backtest", is_signal: bool = False, date: str = "", trade_status: Optional[int] = None):
     """
     List execution records using an environment-based query shape.
 
@@ -3366,7 +3367,9 @@ async def flattrade_login(broker_doc_id: str = ""):
     from features.flattrade_broker import get_login_url as ft_login_url
     session_id = secrets.token_hex(16)
     _flattrade_pending[session_id] = broker_doc_id
-    return RedirectResponse(url=ft_login_url(state=session_id))
+    login_url = ft_login_url(state=session_id)
+    log.info("FlatTrade login started broker_doc_id=%s state=%s", broker_doc_id or "-", session_id)
+    return RedirectResponse(url=login_url)
 
 
 @app.get("/broker/flattrade/redirect", response_class=HTMLResponse)
@@ -3384,6 +3387,13 @@ async def flattrade_redirect(request: Request):
     broker_doc_id = _flattrade_pending.pop(state, "") or request.query_params.get("broker_doc_id", "").strip()
 
     if error_msg or not request_code:
+        log.error(
+            "FlatTrade redirect failed before token exchange state=%s broker_doc_id=%s error=%s has_code=%s",
+            state or "-",
+            broker_doc_id or "-",
+            error_msg or "-",
+            bool(request_code),
+        )
         return HTMLResponse(content=_broker_popup_html(
             broker="FlatTrade",
             success=False,
@@ -3393,6 +3403,11 @@ async def flattrade_redirect(request: Request):
     try:
         session = ft_generate_session(request_code)
     except Exception as exc:
+        log.exception(
+            "FlatTrade token exchange failed state=%s broker_doc_id=%s",
+            state or "-",
+            broker_doc_id or "-",
+        )
         return HTMLResponse(content=_broker_popup_html(
             broker="FlatTrade",
             success=False,
@@ -3404,8 +3419,15 @@ async def flattrade_redirect(request: Request):
             _local_db = MongoData()
             save_flattrade_session(_local_db._db, broker_doc_id, session)
             _local_db.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.exception("FlatTrade session DB save failed broker_doc_id=%s", broker_doc_id)
+            return HTMLResponse(content=_broker_popup_html(
+                broker="FlatTrade",
+                success=False,
+                message=f"Token generated but DB save failed: {exc}",
+            ))
+    else:
+        log.warning("FlatTrade login succeeded but broker_doc_id was empty; token not saved")
 
     return HTMLResponse(content=_broker_popup_html(
         broker="FlatTrade",

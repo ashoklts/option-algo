@@ -29,16 +29,19 @@ import hashlib
 import json
 import logging
 import os
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(_ROOT / ".env")
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 log = logging.getLogger(__name__)
 
-FLATTRADE_API_KEY    = os.getenv("FLATTRADE_API_KEY", "")
-FLATTRADE_API_SECRET = os.getenv("FLATTRADE_API_SECRET", "")
+FLATTRADE_API_KEY    = os.getenv("FLATTRADE_API_KEY", "").strip()
+FLATTRADE_API_SECRET = os.getenv("FLATTRADE_API_SECRET", "").strip()
 
 _AUTH_URL    = "https://auth.flattrade.in/"
 _TOKEN_URL   = "https://authapi.flattrade.in/trade/apitoken"
@@ -48,6 +51,8 @@ _BASE_URL    = "https://piconnect.flattrade.in/PiConnectTP"
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def get_login_url(state: str = "") -> str:
+    if not FLATTRADE_API_KEY:
+        log.error("FlatTrade login URL requested but FLATTRADE_API_KEY is missing")
     url = f"{_AUTH_URL}?app_key={FLATTRADE_API_KEY}"
     if state:
         url += f"&state={state}"
@@ -56,6 +61,9 @@ def get_login_url(state: str = "") -> str:
 
 def generate_session(request_code: str) -> dict:
     """Exchange request_code for jKey. Returns {"token": jKey, "clientid": uid, ...}."""
+    if not FLATTRADE_API_KEY or not FLATTRADE_API_SECRET:
+        raise ValueError("FLATTRADE_API_KEY / FLATTRADE_API_SECRET not set in .env")
+
     checksum = hashlib.sha256(
         f"{FLATTRADE_API_KEY}{request_code}{FLATTRADE_API_SECRET}".encode()
     ).hexdigest()
@@ -71,6 +79,7 @@ def generate_session(request_code: str) -> dict:
     resp.raise_for_status()
     data = resp.json()
     if data.get("stat") == "Not_Ok" or not data.get("token"):
+        log.error("FlatTrade token exchange failed: %s", data.get("emsg", data))
         raise ValueError(f"FlatTrade session error: {data.get('emsg', data)}")
     return data
 
