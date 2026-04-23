@@ -1,0 +1,56 @@
+For example you have selected ATM CE strike with Buy position in strategy. Now if your SL/Target hits, it will select the same strike for re-entry and wait for the price to come on the initial entry price. If it comes, it will take an entry.
+
+Reentry Settings
+
+
+Reentry Settings
+Example :- Assume you created a strategy
+
+Underlying :- Nifty
+
+Entry :- 09:20
+
+Strike :- ATM CE
+
+Positon :- Buy
+
+SL :- 30 Points
+
+Re-Cost = 1 (It means it will take max 1 entry on SL hit, you can enter max 20)
+
+Reentry Settings
+_Assume at 9:20 spot is at 18502 so ATM strike is 18500 and 18500 CE premium is 200
+
+Your SL is at = 200 - 30 = 170 and at 09:45 it hits
+
+Now it will select the same 18500 CE strike for re-entry and will wait if the price comes back to 200. If it comes at 200, it will take an entry at 200._
+
+RE-COST (Re-Entry At Cost Reverse)
+This option enables you to re-enter in the original leg at initial entry price in reverse position. For example you have selected ATM CE strike with Buy position in strategy. Now if your SL/Target hit, it will select the same strike in Sell position for re-entry and wait for the price to come on initial entry price. If it comes, it will take an entry in ATM CE Sell position at initial entry price.
+
+Reentry Settings
+
+
+Reentry Settings
+Example :- Assume you created a strategy
+
+Underlying :- Nifty
+
+Entry :- 09:20
+
+Strike :- ATM CE
+
+Positon :- Buy
+
+SL :- 30 Points
+
+Re-Cost Reverse = 1 (It means it will take max 1 entry on SL hit, you can enter max 20)
+
+Reentry Settings
+_Assume at 9:20 spot is at 18502 so ATM strike is 18500 and 18500 CE premium is 200
+
+Your SL is at = 200 - 30 = 170 and at 09:45 it hits
+
+Now it will select the same 18500 CE strike for re-entry and will wait if the price comes back to 200. If it comes at 200, it will take entry at 200 and reverse the CE Buy Position to CE Sell._
+
+So it will take re entry in 18500 CE Sell position at 200.

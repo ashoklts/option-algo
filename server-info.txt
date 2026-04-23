@@ -31,3 +31,7 @@ python3 /home/ashok-innoppl/Documents/option_simulator/option-chain-update.py --
 
 
 python3 /home/ashok-innoppl/Documents/option_simulator/option-chain-update-monthly.py --month 2025-11
+
+monitor start
+http://localhost:8000/monitor/start
+http://localhost:8000/monitor/stop

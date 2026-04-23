@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Trade Control</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a;
+      color: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 2.5rem 3rem;
+      width: 420px;
+      text-align: center;
+    }
+
+    .title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 2rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    /* Status indicator */
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6rem;
+      margin-bottom: 2rem;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #475569;
+      transition: background 0.3s;
+    }
+    .dot.running  { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: pulse 1.5s infinite; }
+    .dot.stopped  { background: #ef4444; }
+    .dot.connecting { background: #f59e0b; animation: pulse 0.8s infinite; }
+    .dot.error    { background: #ef4444; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    .status-text {
+      font-size: 1rem;
+      font-weight: 500;
+      color: #cbd5e1;
+      text-transform: capitalize;
+    }
+
+    /* Main action button */
+    .btn {
+      width: 100%;
+      padding: 1rem;
+      border: none;
+      border-radius: 10px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      letter-spacing: 0.03em;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-start {
+      background: #22c55e;
+      color: #fff;
+    }
+    .btn-start:hover:not(:disabled) { opacity: 0.9; }
+
+    .btn-stop {
+      background: #ef4444;
+      color: #fff;
+    }
+    .btn-stop:hover:not(:disabled) { opacity: 0.9; }
+
+    /* Stats grid */
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin-top: 1.75rem;
+    }
+    .stat-box {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 0.75rem;
+    }
+    .stat-label {
+      font-size: 0.7rem;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.3rem;
+    }
+    .stat-value {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+
+    /* Spot prices */
+    .spot-section {
+      margin-top: 1.5rem;
+      text-align: left;
+    }
+    .spot-title {
+      font-size: 0.7rem;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+    .spot-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+    .spot-item {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .spot-name  { font-size: 0.75rem; color: #94a3b8; font-weight: 600; }
+    .spot-price { font-size: 0.85rem; color: #22c55e; font-weight: 700; }
+    .spot-price.na { color: #475569; }
+
+    .error-msg {
+      margin-top: 1rem;
+      font-size: 0.8rem;
+      color: #f87171;
+      background: #1a0a0a;
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      display: none;
+    }
+
+    .started-at {
+      margin-top: 1rem;
+      font-size: 0.72rem;
+      color: #475569;
+    }
+
+    /* Mock link */
+    .mock-link {
+      margin-top: 1.5rem;
+      text-align: center;
+    }
+    .mock-link a {
+      font-size: 0.8rem;
+      color: #7c3aed;
+      text-decoration: none;
+      border: 1px solid #4c1d95;
+      padding: 0.45rem 1rem;
+      border-radius: 8px;
+      display: inline-block;
+      transition: background 0.2s;
+    }
+    .mock-link a:hover { background: #1e1040; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="title">Live Trade Control</div>
+
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <span class="status-text" id="statusText">Loading...</span>
+  </div>
+
+  <button class="btn" id="actionBtn" disabled onclick="handleAction()">...</button>
+
+  <div class="stats">
+    <div class="stat-box">
+      <div class="stat-label">Ticks Received</div>
+      <div class="stat-value" id="tickCount">—</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">LTP Tokens</div>
+      <div class="stat-value" id="ltpCount">—</div>
+    </div>
+  </div>
+
+  <div class="spot-section">
+    <div class="spot-title">Spot Prices</div>
+    <div class="spot-grid" id="spotGrid">
+      <div class="spot-item"><span class="spot-name">NIFTY</span><span class="spot-price na" id="spot-NIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">BANKNIFTY</span><span class="spot-price na" id="spot-BANKNIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">FINNIFTY</span><span class="spot-price na" id="spot-FINNIFTY">—</span></div>
+      <div class="spot-item"><span class="spot-name">SENSEX</span><span class="spot-price na" id="spot-SENSEX">—</span></div>
+    </div>
+  </div>
+
+  <div class="error-msg" id="errorMsg"></div>
+  <div class="started-at" id="startedAt"></div>
+
+  <div class="mock-link">
+    <a href="http://localhost:8000/mock/start">&#9654; Mock Ticker</a>
+  </div>
+</div>
+
+<script>
+  const API = 'http://localhost:8000';
+  let polling = null;
+
+  async function fetchStatus() {
+    try {
+      const res  = await fetch(`${API}/live/status`);
+      const data = await res.json();
+      renderStatus(data);
+    } catch (e) {
+      renderStatus({ status: 'error', error: 'Cannot reach server' });
+    }
+  }
+
+  function renderStatus(data) {
+    const status   = data.status || 'stopped';
+    const dot      = document.getElementById('dot');
+    const text     = document.getElementById('statusText');
+    const btn      = document.getElementById('actionBtn');
+    const errEl    = document.getElementById('errorMsg');
+    const startEl  = document.getElementById('startedAt');
+
+    // dot color
+    dot.className = 'dot ' + status;
+    text.textContent = status;
+
+    // button
+    btn.disabled = false;
+    if (status === 'running') {
+      btn.textContent  = 'Stop Live Trading';
+      btn.className    = 'btn btn-stop';
+    } else if (status === 'connecting') {
+      btn.textContent  = 'Connecting...';
+      btn.className    = 'btn btn-start';
+      btn.disabled     = true;
+    } else {
+      btn.textContent  = 'Start Live Trading';
+      btn.className    = 'btn btn-start';
+    }
+
+    // stats
+    document.getElementById('tickCount').textContent =
+      data.tick_count !== undefined ? data.tick_count.toLocaleString() : '—';
+    document.getElementById('ltpCount').textContent =
+      data.ltp_count !== undefined ? data.ltp_count.toLocaleString() : '—';
+
+    // spot prices
+    const spotMap = data.spot_map || {};
+    ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'].forEach(sym => {
+      const el  = document.getElementById('spot-' + sym);
+      const val = spotMap[sym];
+      if (el) {
+        if (val) {
+          el.textContent = '₹' + Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+          el.className = 'spot-price';
+        } else {
+          el.textContent = '—';
+          el.className = 'spot-price na';
+        }
+      }
+    });
+
+    // error
+    if (data.error) {
+      errEl.textContent = data.error;
+      errEl.style.display = 'block';
+    } else {
+      errEl.style.display = 'none';
+    }
+
+    // started at
+    if (data.started_at) {
+      startEl.textContent = 'Started: ' + data.started_at.replace('T', ' ').slice(0, 19);
+    } else {
+      startEl.textContent = '';
+    }
+  }
+
+  async function handleAction() {
+    const btn    = document.getElementById('actionBtn');
+    const status = document.getElementById('statusText').textContent;
+
+    btn.disabled = true;
+    btn.textContent = 'Please wait...';
+
+    try {
+      if (status === 'running') {
+        await fetch(`${API}/live/stop`);
+      } else {
+        await fetch(`${API}/live/start`);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+
+    // Poll quickly after action
+    setTimeout(fetchStatus, 800);
+    setTimeout(fetchStatus, 2000);
+    setTimeout(fetchStatus, 4000);
+  }
+
+  // Start polling
+  fetchStatus();
+  polling = setInterval(fetchStatus, 3000);
+</script>
+
+</body>
+</html>

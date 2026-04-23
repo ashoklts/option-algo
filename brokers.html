@@ -1,0 +1,414 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+  <title>Broker Login</title>
+  <link rel="shortcut icon" type="image/x-icon" href="https://www.stockmock.in/images/favicon.ico" />
+  <script src="./assets/js/jquery-3.2.1.min.js"></script>
+  <script src="./assets/js/bootstrap.min.js"></script>
+  <link rel="stylesheet" href="./assets/css/style.css">
+  <link rel="stylesheet" type="text/css" href="./assets/css/bs4.css" />
+  <link rel="stylesheet" type="text/css" href="./assets/css/main.css" />
+
+  <style>
+    body {
+      background: #0f172a;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    .page-header {
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .page-header h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 0;
+      color: #f1f5f9;
+    }
+
+    .page-body {
+      max-width: 860px;
+      margin: 32px auto;
+      padding: 0 16px;
+    }
+
+    .section-title {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 14px;
+    }
+
+    /* ── Broker card ─────────────────────────────────────────── */
+    .broker-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .broker-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .broker-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #94a3b8;
+      flex-shrink: 0;
+    }
+
+    .broker-icon img {
+      width: 32px;
+      height: 32px;
+      object-fit: contain;
+    }
+
+    .broker-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .broker-name {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #f1f5f9;
+      margin-bottom: 3px;
+    }
+
+    .broker-meta {
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+
+    .broker-meta .user-id {
+      color: #94a3b8;
+      font-weight: 500;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 20px;
+      margin-left: 8px;
+    }
+
+    .status-badge.logged-in {
+      background: rgba(34, 197, 94, 0.15);
+      color: #22c55e;
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .status-badge.logged-out {
+      background: rgba(239, 68, 68, 0.12);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.25);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .broker-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    /* ── Buttons ──────────────────────────────────────────────── */
+    .btn-login {
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      padding: 8px 18px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+
+    .btn-login:hover {
+      background: #2563eb;
+    }
+
+    .btn-login:disabled {
+      background: #334155;
+      color: #64748b;
+      cursor: not-allowed;
+    }
+
+    .btn-login.loading {
+      background: #1d4ed8;
+      cursor: wait;
+    }
+
+    .btn-relogin {
+      background: transparent;
+      color: #64748b;
+      border: 1px solid #334155;
+      border-radius: 7px;
+      padding: 8px 14px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-relogin:hover {
+      border-color: #94a3b8;
+      color: #f1f5f9;
+    }
+
+    /* ── States ───────────────────────────────────────────────── */
+    .loading-placeholder {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px 20px;
+      color: #64748b;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+
+    .alert {
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.8rem;
+      margin-bottom: 14px;
+    }
+
+    .alert-success {
+      background: rgba(34, 197, 94, 0.12);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      color: #86efac;
+    }
+
+    .alert-error {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      color: #fca5a5;
+    }
+
+    #alert-box {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="root">
+  <div data-app-header data-header-base="."></div>
+
+  <!-- Page header -->
+  <div class="page-header">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+         stroke-width="1.5" stroke="currentColor" style="width:20px;height:20px;color:#64748b">
+      <path stroke-linecap="round" stroke-linejoin="round"
+            d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25
+               2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25
+               2.25v10.5A2.25 2.25 0 004.5 19.5z"/>
+    </svg>
+    <h1>Broker Login</h1>
+  </div>
+
+  <div class="page-body">
+
+    <!-- Alert box -->
+    <div id="alert-box" class="alert"></div>
+
+    <p class="section-title">Your Broker Accounts</p>
+
+    <div id="broker-list" class="broker-list">
+      <div class="loading-placeholder">Loading brokers...</div>
+    </div>
+
+  </div>
+</div>
+
+<script src="./assets/js/app-header.js"></script>
+<script src="./assets/js/kite-login.js"></script>
+<script src="./assets/js/flattrade-login.js"></script>
+
+<script>
+(function () {
+  // Use same base URL as rest of the app
+  var ALGO_API = (window.APP_ALGO_API_BASE_URL || "http://localhost:8000/algo").replace(/\/+$/, "");
+  var BACKEND  = ALGO_API.replace(/\/algo$/, "");
+  var brokerListEl = document.getElementById("broker-list");
+  var alertBox     = document.getElementById("alert-box");
+
+  /* ── Alert helper ───────────────────────────────────────── */
+  function showAlert(msg, type) {
+    alertBox.className = "alert alert-" + (type || "success");
+    alertBox.textContent = msg;
+    alertBox.style.display = "block";
+    setTimeout(function () { alertBox.style.display = "none"; }, 4000);
+  }
+
+  /* ── Detect broker type from doc name only (icon can be wrong in DB) ── */
+  function isFlatTrade(broker) {
+    var name = (broker.name || "").toLowerCase();
+    return name.indexOf("flattrade") !== -1;
+  }
+
+  /* ── Format login time ──────────────────────────────────── */
+  function formatLoginTime(iso) {
+    if (!iso) return "";
+    try {
+      var d = new Date(iso);
+      return "Last login: " + d.toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit"
+      });
+    } catch (e) { return iso; }
+  }
+
+  /* ── Broker icon HTML ───────────────────────────────────── */
+  function brokerIconHtml(broker) {
+    if (broker.broker_icon) {
+      return '<img src="./assets/images/brokers/' + broker.broker_icon
+           + '" alt="' + broker.name + '" onerror="this.style.display=\'none\'">';
+    }
+    var letter = (broker.name || "B").replace(/[^A-Za-z]/g, "")[0] || "B";
+    return letter.toUpperCase();
+  }
+
+  /* ── Render broker list ─────────────────────────────────── */
+  function renderBrokers(records) {
+    if (!records || records.length === 0) {
+      brokerListEl.innerHTML =
+        '<div class="loading-placeholder">No broker configurations found.</div>';
+      return;
+    }
+
+    brokerListEl.innerHTML = records.map(function (broker) {
+      var loggedIn = broker.is_logged_in;
+      var badge = loggedIn
+        ? '<span class="status-badge logged-in"><span class="status-dot"></span>Connected</span>'
+        : '<span class="status-badge logged-out"><span class="status-dot"></span>Not logged in</span>';
+
+      var meta = "";
+      if (broker.user_id)    meta += '<span class="user-id">' + broker.user_id + '</span>&nbsp;&nbsp;';
+      if (broker.login_time) meta += formatLoginTime(broker.login_time);
+
+      var loginBtn = '<button class="btn-login" onclick="doLogin(this,\'' + broker._id + '\')">'
+        + '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2"'
+        + ' stroke="currentColor" style="width:13px;height:13px">'
+        + '<path stroke-linecap="round" stroke-linejoin="round"'
+        + ' d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5'
+        + ' 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9"/></svg>'
+        + (loggedIn ? "Re-Login" : "Login") + '</button>';
+
+      return '<div class="broker-card" data-broker-id="' + broker._id + '"'
+        + ' data-is-flattrade="' + (isFlatTrade(broker) ? "1" : "0") + '">'
+        + '<div class="broker-icon">' + brokerIconHtml(broker) + '</div>'
+        + '<div class="broker-info">'
+        + '<div class="broker-name">' + broker.name + badge + '</div>'
+        + (meta ? '<div class="broker-meta">' + meta + '</div>' : '')
+        + '</div>'
+        + '<div class="broker-actions">' + loginBtn + '</div>'
+        + '</div>';
+    }).join("");
+  }
+
+  /* ── Login handler ──────────────────────────────────────── */
+  window.doLogin = function (btn, brokerDocId) {
+    var card        = btn.closest(".broker-card");
+    var isFT        = card && card.dataset.isFlattrade === "1";
+    var originalText = btn.innerHTML;
+
+    btn.disabled = true;
+    btn.classList.add("loading");
+    btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"'
+      + ' stroke-width="2" stroke="currentColor" style="width:13px;height:13px;'
+      + 'animation:spin 1s linear infinite">⏳</svg> Opening...';
+
+    try {
+      var loginFn = isFT ? window.flattradeLogin : window.kiteLogin;
+      if (typeof loginFn !== "function") {
+        throw new Error((isFT ? "FlatTrade" : "Kite") + " login script not loaded");
+      }
+
+      loginFn({ brokerDocId: brokerDocId })
+        .then(function (result) {
+          showAlert(
+            "✓ " + (isFT ? "FlatTrade" : "Kite") + " login successful! "
+            + (result.user_id || result.user_name ? "(" + (result.user_id || result.user_name) + ")" : ""),
+            "success"
+          );
+          fetchBrokers(); // reload to show updated login_time
+        })
+        .catch(function (err) {
+          if (err && err.indexOf && err.indexOf("closed by user") !== -1) {
+            showAlert("Login window closed.", "error");
+          } else {
+            showAlert("Login failed: " + (err || "Unknown error"), "error");
+          }
+          btn.disabled = false;
+          btn.classList.remove("loading");
+          btn.innerHTML = originalText;
+        });
+    } catch (err) {
+      showAlert("Login failed: " + ((err && err.message) || err || "Unknown error"), "error");
+      btn.disabled = false;
+      btn.classList.remove("loading");
+      btn.innerHTML = originalText;
+    }
+  };
+
+  /* ── Fetch and render ───────────────────────────────────── */
+  function fetchBrokers() {
+    brokerListEl.innerHTML = '<div class="loading-placeholder">Loading...</div>';
+    fetch(ALGO_API + "/broker-configurations?broker_type=live")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        renderBrokers(Array.isArray(data.records) ? data.records : []);
+      })
+      .catch(function (err) {
+        brokerListEl.innerHTML =
+          '<div class="loading-placeholder" style="color:#f87171">Failed to load brokers: ' + err.message + '</div>';
+      });
+  }
+
+  fetchBrokers();
+})();
+</script>
+
+</body>
+</html>

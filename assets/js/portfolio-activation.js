@@ -15,6 +15,7 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
     var portfolioId = params.get('strategy_id');
     var activationMode = (params.get('status') || '').trim() || 'algo-backtest';
     var requestedCurrentDateTime = (params.get('current_datetime') || '').trim();
+    document.body.setAttribute('data-activation-mode', activationMode);
     var titleEl = document.getElementById('portfolio-page-title');
     var selectedCountEl = document.getElementById('portfolio-selected-count');
     var selectedTotalEl = document.getElementById('portfolio-selected-total');
@@ -36,6 +37,8 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
     var qtyValueEl = document.getElementById('portfolio-qty-value');
     var qtyDecrementBtn = document.getElementById('portfolio-qty-decrement');
     var qtyIncrementBtn = document.getElementById('portfolio-qty-increment');
+    var brokerFilter = document.getElementById('portfolio-broker-filter');
+    var brokerSelect = document.getElementById('portfolio-broker-select');
     var editPortfolioLinkBtn = document.getElementById('portfolio-edit-link-btn');
     var slippageFilter = document.getElementById('portfolio-slippage-filter');
     var slippageButton = document.querySelector('[data-portfolio-slippage-button]');
@@ -59,6 +62,769 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
     var loadedPortfolioName = '';
     var loadedPortfolioData = null;
     var toastTimer = null;
+    var availableBrokers = [];
+    var DEFAULT_BACKTEST_BROKER_TYPE_ID = '69dcf57211877c164638d2aa';
+    var DEFAULT_ACTIVATION_USER_ID = '69dcf52711877c164638d2a7';
+    var executionConfigModalState = {
+        strategyId: '',
+        strategyName: '',
+        detail: null,
+        workingDetail: null,
+        activeLegIndex: 0
+    };
+
+    function isExecutionConfigEditableMode() {
+        var normalizedMode = String(activationMode || '').trim().toLowerCase();
+        return normalizedMode === 'live' || normalizedMode === 'fast-forward' || normalizedMode === 'fast-forwarding';
+    }
+
+    function cloneJson(value) {
+        if (value === null || value === undefined) {
+            return value;
+        }
+        try {
+            return JSON.parse(JSON.stringify(value));
+        } catch (error) {
+            return value;
+        }
+    }
+
+    function createDefaultLegExecutionConfig() {
+        return {
+            ProductType: 'ProductType.NRML',
+            ExitOrder: {
+                Type: 'OrderType.Limit',
+                Value: {
+                    Buffer: {
+                        Type: 'BufferType.Points',
+                        Value: { TriggerBuffer: 0, LimitBuffer: 3 }
+                    },
+                    Modification: {
+                        ModificationFrequency: 5,
+                        ContinuousMonitoring: 'True',
+                        MarketOrderAfter: 1
+                    }
+                }
+            },
+            EntryOrder: {
+                Type: 'OrderType.Limit',
+                Value: {
+                    Buffer: {
+                        Type: 'BufferType.Points',
+                        Value: { TriggerBuffer: 0, LimitBuffer: 3 }
+                    },
+                    Modification: {
+                        MarketOrderAfter: 40
+                    }
+                }
+            },
+            ReferenceForTgtSL: 'PriceReferenceType.Trigger',
+            EntryDelay: 0
+        };
+    }
+
+    function ensureExecutionConfigDetail(detail, strategyState) {
+        var normalizedDetail = detail && typeof detail === 'object' ? detail : {};
+        var fullConfig = normalizedDetail.full_config && typeof normalizedDetail.full_config === 'object'
+            ? normalizedDetail.full_config
+            : (normalizedDetail.full_config = {});
+        var strategy = fullConfig.strategy && typeof fullConfig.strategy === 'object'
+            ? fullConfig.strategy
+            : (fullConfig.strategy = {});
+        var parentLegs = Array.isArray(strategy.ListOfLegConfigs) ? strategy.ListOfLegConfigs : [];
+        var executionBase = normalizedDetail.execution_config_base && typeof normalizedDetail.execution_config_base === 'object'
+            ? normalizedDetail.execution_config_base
+            : {};
+        var executionExtra = normalizedDetail.execution_config_extra && typeof normalizedDetail.execution_config_extra === 'object'
+            ? normalizedDetail.execution_config_extra
+            : {};
+        var legExecutionList = Array.isArray(executionExtra.ListOfLegExecutionConfig)
+            ? executionExtra.ListOfLegExecutionConfig.slice()
+            : [];
+
+        normalizedDetail.execution_config_base = Object.assign({
+            Multiplier: strategyState && strategyState.qty_multiplier ? intOrDefault(strategyState.qty_multiplier, 1) : 1,
+            LikeBacktester: activationMode !== 'live',
+            MarginAutoSquareOff: true,
+            TimeDelta: 0
+        }, executionBase);
+
+        while (legExecutionList.length < parentLegs.length) {
+            legExecutionList.push(createDefaultLegExecutionConfig());
+        }
+        if (legExecutionList.length > parentLegs.length) {
+            legExecutionList = legExecutionList.slice(0, parentLegs.length);
+        }
+        legExecutionList = legExecutionList.map(function (item) {
+            var mergedItem = cloneJson(createDefaultLegExecutionConfig());
+            if (item && typeof item === 'object') {
+                if (item.ProductType) {
+                    mergedItem.ProductType = item.ProductType;
+                }
+                if (item.ReferenceForTgtSL || item.Reference) {
+                    mergedItem.ReferenceForTgtSL = item.ReferenceForTgtSL || item.Reference;
+                }
+                if (item.EntryDelay !== undefined) {
+                    mergedItem.EntryDelay = intOrDefault(item.EntryDelay, 0);
+                }
+                if (item.EntryOrder && typeof item.EntryOrder === 'object') {
+                    mergedItem.EntryOrder = Object.assign({}, mergedItem.EntryOrder, cloneJson(item.EntryOrder));
+                    if (item.EntryOrder.Value && item.EntryOrder.Value.Buffer) {
+                        mergedItem.EntryOrder.Value = mergedItem.EntryOrder.Value || {};
+                        mergedItem.EntryOrder.Value.Buffer = Object.assign(
+                            {},
+                            mergedItem.EntryOrder.Value.Buffer || {},
+                            cloneJson(item.EntryOrder.Value.Buffer)
+                        );
+                        mergedItem.EntryOrder.Value.Buffer.Value = Object.assign(
+                            {},
+                            (mergedItem.EntryOrder.Value.Buffer && mergedItem.EntryOrder.Value.Buffer.Value) || {},
+                            cloneJson((item.EntryOrder.Value.Buffer || {}).Value || {})
+                        );
+                    }
+                    if (item.EntryOrder.Value && item.EntryOrder.Value.Modification) {
+                        mergedItem.EntryOrder.Value = mergedItem.EntryOrder.Value || {};
+                        mergedItem.EntryOrder.Value.Modification = Object.assign(
+                            {},
+                            mergedItem.EntryOrder.Value.Modification || {},
+                            cloneJson(item.EntryOrder.Value.Modification)
+                        );
+                    }
+                }
+                if (item.ExitOrder && typeof item.ExitOrder === 'object') {
+                    mergedItem.ExitOrder = Object.assign({}, mergedItem.ExitOrder, cloneJson(item.ExitOrder));
+                    if (item.ExitOrder.Value && item.ExitOrder.Value.Buffer) {
+                        mergedItem.ExitOrder.Value = mergedItem.ExitOrder.Value || {};
+                        mergedItem.ExitOrder.Value.Buffer = Object.assign(
+                            {},
+                            mergedItem.ExitOrder.Value.Buffer || {},
+                            cloneJson(item.ExitOrder.Value.Buffer)
+                        );
+                        mergedItem.ExitOrder.Value.Buffer.Value = Object.assign(
+                            {},
+                            (mergedItem.ExitOrder.Value.Buffer && mergedItem.ExitOrder.Value.Buffer.Value) || {},
+                            cloneJson((item.ExitOrder.Value.Buffer || {}).Value || {})
+                        );
+                    }
+                    if (item.ExitOrder.Value && item.ExitOrder.Value.Modification) {
+                        mergedItem.ExitOrder.Value = mergedItem.ExitOrder.Value || {};
+                        mergedItem.ExitOrder.Value.Modification = Object.assign(
+                            {},
+                            mergedItem.ExitOrder.Value.Modification || {},
+                            cloneJson(item.ExitOrder.Value.Modification)
+                        );
+                    }
+                }
+            }
+            return mergedItem;
+        });
+
+        normalizedDetail.execution_config_extra = Object.assign({}, executionExtra, {
+            ListOfLegExecutionConfig: legExecutionList
+        });
+        return normalizedDetail;
+    }
+
+    function intOrDefault(value, fallback) {
+        var parsed = parseInt(value, 10);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    function getExecutionLegConfigs(detail) {
+        var executionExtra = detail && detail.execution_config_extra && typeof detail.execution_config_extra === 'object'
+            ? detail.execution_config_extra
+            : {};
+        return Array.isArray(executionExtra.ListOfLegExecutionConfig) ? executionExtra.ListOfLegExecutionConfig : [];
+    }
+
+    function getParentLegConfigs(detail) {
+        var fullConfig = detail && detail.full_config && typeof detail.full_config === 'object' ? detail.full_config : {};
+        var strategy = fullConfig.strategy && typeof fullConfig.strategy === 'object' ? fullConfig.strategy : {};
+        return Array.isArray(strategy.ListOfLegConfigs) ? strategy.ListOfLegConfigs : [];
+    }
+
+    function cleanExecutionEnum(value, fallback) {
+        var normalized = String(value || fallback || '').trim();
+        if (!normalized) {
+            return fallback || '';
+        }
+        return normalized.indexOf('.') !== -1 ? normalized.split('.').pop() : normalized;
+    }
+
+    function toExecutionEnum(prefix, value, fallback) {
+        var normalized = cleanExecutionEnum(value, fallback);
+        return normalized ? prefix + '.' + normalized : (fallback || '');
+    }
+
+
+    function getExecutionConfigModal() {
+        var existing = document.getElementById('portfolio-execution-config-modal');
+        if (existing) {
+            return existing;
+        }
+        var modal = document.createElement('div');
+        modal.id = 'portfolio-execution-config-modal';
+        modal.className = 'pec-modal';
+        modal.hidden = true;
+        modal.innerHTML = ''
+            + '<div class="pec-backdrop" data-close-execution-config></div>'
+            + '<div class="pec-dialog" role="dialog" aria-modal="true" aria-labelledby="pec-title">'
+            + '  <div class="pec-header">'
+            + '    <h2 class="pec-title" id="pec-title">Edit execution</h2>'
+            + '    <button type="button" class="pec-close" data-close-execution-config aria-label="Close">&times;</button>'
+            + '  </div>'
+            + '  <div class="pec-body">'
+            + '    <div class="pec-warning">'
+            + '      <svg class="pec-warning-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clip-rule="evenodd"/></svg>'
+            + '      <span>Your limit and stop-loss limit orders will be monitored for <span id="pec-monitor-seconds">50</span> seconds. If the order remains open after this period, it will be cancelled and the strategy will be marked as an error.</span>'
+            + '    </div>'
+            + '    <a href="javascript:void(0)" class="pec-learn-more">Learn more about execution settings</a>'
+            + '    <div class="pec-settings-row">'
+            + '      <div class="pec-setting-group">'
+            + '        <span class="pec-setting-label">Auto Sq Off on Margin Error</span>'
+            + '        <label class="pec-toggle-switch">'
+            + '          <input type="checkbox" id="pec-margin-auto" data-execution-base-field="marginAutoSquareOff">'
+            + '          <span class="pec-toggle-track"></span>'
+            + '        </label>'
+            + '      </div>'
+            + '      <div class="pec-setting-group">'
+            + '        <span class="pec-setting-label">Trade monitoring</span>'
+            + '        <div class="pec-pill-group" id="pec-monitoring-group">'
+            + '          <button type="button" class="pec-pill" data-monitoring-mode="ltp">on LTP</button>'
+            + '          <button type="button" class="pec-pill" data-monitoring-mode="candle">on Candle Close</button>'
+            + '        </div>'
+            + '        <a href="javascript:void(0)" class="pec-sub-link">Know more</a>'
+            + '      </div>'
+            + '      <div class="pec-setting-group">'
+            + '        <span class="pec-setting-label">Strategy execution time</span>'
+            + '        <input type="time" class="pec-time-input" id="pec-exec-time" step="1" data-execution-base-field="strategyExecutionTime">'
+            + '        <a href="javascript:void(0)" class="pec-sub-link">How to use?</a>'
+            + '      </div>'
+            + '    </div>'
+            + '    <div class="pec-tabs" id="pec-tabs"></div>'
+            + '    <div id="pec-panel-empty" class="pec-panel-empty" hidden>No parent legs found for this strategy.</div>'
+            + '    <div class="pec-panel" id="pec-panel"></div>'
+            + '    <div class="pec-json-preview" id="pec-json-preview" hidden>'
+            + '      <div class="pec-json-title">Generated JSON</div>'
+            + '      <pre class="pec-json-pre" id="pec-json-pre"></pre>'
+            + '    </div>'
+            + '  </div>'
+            + '  <div class="pec-footer">'
+            + '    <button type="button" class="pec-btn-cancel" data-close-execution-config>Cancel</button>'
+            + '    <button type="button" class="pec-btn-save" data-save-execution-config>Update Execution Settings</button>'
+            + '  </div>'
+            + '</div>';
+        document.body.appendChild(modal);
+        return modal;
+    }
+
+    function setExecutionConfigModalVisibility(show) {
+        var modal = getExecutionConfigModal();
+        modal.hidden = !show;
+        document.body.classList.toggle('portfolio-execution-config-open', !!show);
+    }
+
+    function buildPecFieldRow(labelHtml, controlHtml) {
+        return '<div class="pec-field-row">'
+            + '<span class="pec-field-label">' + labelHtml + '</span>'
+            + '<div class="pec-field-control">' + controlHtml + '</div>'
+            + '</div>';
+    }
+
+    function buildPecLegPanel(_legConfig, executionConfig, legIndex) {
+        var entryBuffer = (((executionConfig.EntryOrder || {}).Value || {}).Buffer || {});
+        var entryBufferValue = entryBuffer.Value || {};
+        var exitBuffer = (((executionConfig.ExitOrder || {}).Value || {}).Buffer || {});
+        var exitBufferValue = exitBuffer.Value || {};
+        var exitModification = (((executionConfig.ExitOrder || {}).Value || {}).Modification || {});
+        var li = String(legIndex);
+
+        return '<div class="pec-leg-section">'
+            + '<div class="pec-leg-header">'
+            + '  <strong class="pec-leg-name">Leg ' + (legIndex + 1) + '</strong>'
+            + '  <button type="button" class="pec-copy-btn" data-copy-to-legs="' + li + '">'
+            + '    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="pec-copy-icon"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>'
+            + '    Copy To Legs'
+            + '  </button>'
+            + '</div>'
+            + '<div class="pec-leg-grid">'
+
+            + '<div class="pec-leg-col">'
+            + buildPecFieldRow('NRML/MIS', '<select data-execution-field="product" data-leg-index="' + li + '">' + buildExecutionOptions(['NRML', 'MIS'], cleanExecutionEnum(executionConfig.ProductType, 'NRML')) + '</select>')
+            + buildPecFieldRow('Tgt/SL Ref Price <span class="pec-info-icon">&#9432;</span>', '<select data-execution-field="reference" data-leg-index="' + li + '">' + buildExecutionOptions(['Trigger', 'LTP'], cleanExecutionEnum(executionConfig.ReferenceForTgtSL, 'Trigger')) + '</select>')
+            + buildPecFieldRow('Delay entry by <span class="pec-info-icon">&#9432;</span>', '<div class="pec-input-unit"><input type="number" min="0" step="1" data-execution-field="entryDelay" data-leg-index="' + li + '" value="' + String(intOrDefault(executionConfig.EntryDelay, 0)) + '"><span class="pec-unit">SEC</span></div>')
+            + '</div>'
+
+            + '<div class="pec-leg-col">'
+            + '<div class="pec-order-heading">Entry Order Type</div>'
+            + buildPecFieldRow('Entry Order Type', '<select data-execution-field="entryOrderType" data-leg-index="' + li + '">' + buildExecutionOptions(['MPP', 'Market', 'Limit'], cleanExecutionEnum((executionConfig.EntryOrder || {}).Type, 'Limit')) + '</select>')
+            + buildPecFieldRow('Buffer type', '<select data-execution-field="entryBufferType" data-leg-index="' + li + '">' + buildExecutionOptions(['Points', 'Percent'], cleanExecutionEnum(entryBuffer.Type, 'Points')) + '</select>')
+            + buildPecFieldRow('Trigger buffer', '<input type="number" step="0.1" data-execution-field="entryTriggerBuffer" data-leg-index="' + li + '" value="' + String(Number(entryBufferValue.TriggerBuffer || 0)) + '">')
+            + buildPecFieldRow('Limit buffer', '<input type="number" step="0.1" data-execution-field="entryLimitBuffer" data-leg-index="' + li + '" value="' + String(Number(entryBufferValue.LimitBuffer || 0)) + '">')
+            + '</div>'
+
+            + '<div class="pec-leg-col">'
+            + '<div class="pec-order-heading">Exit Order Type</div>'
+            + buildPecFieldRow('Exit Order Type', '<select data-execution-field="exitOrderType" data-leg-index="' + li + '">' + buildExecutionOptions(['MPP', 'Market', 'Limit'], cleanExecutionEnum((executionConfig.ExitOrder || {}).Type, 'Limit')) + '</select>')
+            + buildPecFieldRow('Buffer type <span class="pec-info-icon">&#9432;</span>', '<select data-execution-field="exitBufferType" data-leg-index="' + li + '">' + buildExecutionOptions(['Points', 'Percent'], cleanExecutionEnum(exitBuffer.Type, 'Points')) + '</select>')
+            + buildPecFieldRow('Trigger buffer', '<input type="number" step="0.1" data-execution-field="exitTriggerBuffer" data-leg-index="' + li + '" value="' + String(Number(exitBufferValue.TriggerBuffer || 0)) + '">')
+            + buildPecFieldRow('Limit buffer', '<input type="number" step="0.1" data-execution-field="exitLimitBuffer" data-leg-index="' + li + '" value="' + String(Number(exitBufferValue.LimitBuffer || 0)) + '">')
+            + buildPecFieldRow('Monitoring', '<select data-execution-field="exitMonitoring" data-leg-index="' + li + '">' + buildExecutionOptions(['Continuous', 'Periodic'], String(exitModification.ContinuousMonitoring) === 'True' ? 'Continuous' : 'Periodic') + '</select>')
+            + buildPecFieldRow('Frequency', '<div class="pec-input-unit"><input type="number" min="1" step="1" data-execution-field="exitFrequency" data-leg-index="' + li + '" value="' + String(intOrDefault(exitModification.ModificationFrequency, 5)) + '"><span class="pec-unit">sec</span></div>')
+            + '</div>'
+
+            + '</div>'
+            + '</div>';
+    }
+
+    function renderExecutionConfigModal() {
+        var modal = getExecutionConfigModal();
+        var titleEl = modal.querySelector('#pec-title');
+        var marginToggle = modal.querySelector('#pec-margin-auto');
+        var monitoringGroup = modal.querySelector('#pec-monitoring-group');
+        var execTimeInput = modal.querySelector('#pec-exec-time');
+        var tabsContainer = modal.querySelector('#pec-tabs');
+        var panelContainer = modal.querySelector('#pec-panel');
+        var emptyState = modal.querySelector('#pec-panel-empty');
+        var workingDetail = executionConfigModalState.workingDetail;
+        var parentLegs = getParentLegConfigs(workingDetail);
+        var legExecutionList = getExecutionLegConfigs(workingDetail);
+        var activeLegIndex = Math.max(0, Math.min(executionConfigModalState.activeLegIndex, Math.max(parentLegs.length - 1, 0)));
+        var baseConfig = workingDetail && workingDetail.execution_config_base && typeof workingDetail.execution_config_base === 'object'
+            ? workingDetail.execution_config_base : {};
+
+        executionConfigModalState.activeLegIndex = activeLegIndex;
+
+        if (titleEl) {
+            titleEl.textContent = 'Edit execution for ' + (executionConfigModalState.strategyName || 'Strategy');
+        }
+        if (marginToggle) {
+            marginToggle.checked = !!baseConfig.MarginAutoSquareOff;
+        }
+        if (monitoringGroup) {
+            var isCandle = baseConfig.LikeBacktester !== false;
+            monitoringGroup.querySelectorAll('[data-monitoring-mode]').forEach(function (btn) {
+                var mode = btn.getAttribute('data-monitoring-mode');
+                btn.classList.toggle('is-active', mode === (isCandle ? 'candle' : 'ltp'));
+            });
+        }
+        if (execTimeInput) {
+            execTimeInput.value = String(baseConfig.StrategyExecutionTime || '');
+        }
+
+        if (!parentLegs.length) {
+            if (emptyState) emptyState.hidden = false;
+            tabsContainer.innerHTML = '';
+            panelContainer.innerHTML = '';
+            return;
+        }
+        if (emptyState) emptyState.hidden = true;
+
+        tabsContainer.innerHTML = parentLegs.map(function (_leg, index) {
+            return '<button type="button" class="pec-tab' + (index === activeLegIndex ? ' is-active' : '')
+                + '" data-execution-config-tab="' + String(index) + '">Leg ' + (index + 1) + '</button>';
+        }).join('');
+
+        var legConfig = parentLegs[activeLegIndex] || {};
+        var executionConfig = legExecutionList[activeLegIndex] || createDefaultLegExecutionConfig();
+        panelContainer.innerHTML = buildPecLegPanel(legConfig, executionConfig, activeLegIndex);
+    }
+
+    function buildExecutionOptions(options, selectedValue) {
+        return (options || []).map(function (option) {
+            var isSelected = String(option) === String(selectedValue);
+            return '<option value="' + option + '"' + (isSelected ? ' selected' : '') + '>' + option + '</option>';
+        }).join('');
+    }
+
+    function normalizeWeekdaysPayload(selectedDays) {
+        var normalizedList = Array.isArray(selectedDays) ? selectedDays.map(function (day) {
+            return String(day || '').trim().toLowerCase();
+        }) : [];
+        return {
+            friday: normalizedList.indexOf('f') !== -1 || normalizedList.indexOf('friday') !== -1,
+            monday: normalizedList.indexOf('m') !== -1 || normalizedList.indexOf('monday') !== -1,
+            saturday: normalizedList.indexOf('sa') !== -1 || normalizedList.indexOf('saturday') !== -1,
+            sunday: normalizedList.indexOf('su') !== -1 || normalizedList.indexOf('sunday') !== -1,
+            thursday: normalizedList.indexOf('th') !== -1 || normalizedList.indexOf('thursday') !== -1,
+            tuesday: normalizedList.indexOf('t') !== -1 || normalizedList.indexOf('tuesday') !== -1,
+            wednesday: normalizedList.indexOf('w') !== -1 || normalizedList.indexOf('wednesday') !== -1
+        };
+    }
+
+    function buildExecutionConfigJsonPayload() {
+        var strategyId = executionConfigModalState.strategyId;
+        var workingDetail = executionConfigModalState.workingDetail;
+        var row = strategyId ? document.querySelector('#portfolio-strategy-rows [data-strategy-id="' + CSS.escape(strategyId) + '"]') : null;
+        var weekdays = parseRowJsonAttribute(row, 'data-strategy-weekdays', ['M', 'T', 'W', 'Th', 'F']);
+        var dte = normalizeDteValues(parseRowJsonAttribute(row, 'data-strategy-dte', []));
+        var baseConfig = workingDetail && workingDetail.execution_config_base && typeof workingDetail.execution_config_base === 'object'
+            ? cloneJson(workingDetail.execution_config_base)
+            : {};
+        var extraConfig = workingDetail && workingDetail.execution_config_extra && typeof workingDetail.execution_config_extra === 'object'
+            ? cloneJson(workingDetail.execution_config_extra)
+            : {};
+        var viewConfig = workingDetail && workingDetail.view_config && typeof workingDetail.view_config === 'object'
+            ? cloneJson(workingDetail.view_config)
+            : { advanced_exec_config_modal: true };
+
+        baseConfig.Multiplier = intOrDefault(baseConfig.Multiplier, 1);
+        baseConfig.LikeBacktester = !!baseConfig.LikeBacktester;
+        baseConfig.MarginAutoSquareOff = !!baseConfig.MarginAutoSquareOff;
+        baseConfig.TimeDelta = intOrDefault(baseConfig.TimeDelta, 0);
+        delete baseConfig.StrategyExecutionTime;
+
+        return {
+            execution_config_base: baseConfig,
+            execution_config_extra: {
+                ListOfLegExecutionConfig: getExecutionLegConfigs({ execution_config_extra: extraConfig }).map(function (item) {
+                    return cloneJson(item);
+                })
+            },
+            is_weekdays: currentFilterMode === 'Weekdays',
+            dte: currentFilterMode === 'Weekdays' ? [] : dte,
+            weekdays: normalizeWeekdaysPayload(weekdays),
+            view_config: viewConfig
+        };
+    }
+
+    function renderExecutionConfigJsonPreview(payload) {
+        var modal = getExecutionConfigModal();
+        var previewWrap = modal.querySelector('#pec-json-preview');
+        var previewPre = modal.querySelector('#pec-json-pre');
+        if (!previewWrap || !previewPre) {
+            return;
+        }
+        previewPre.textContent = JSON.stringify(payload, null, 4);
+        previewWrap.hidden = false;
+    }
+
+    function renderExecutionConfigAction(row) {
+        if (!row) {
+            return;
+        }
+        row.querySelectorAll('[data-strategy-action]').forEach(function (node) {
+            node.remove();
+        });
+        if (!isExecutionConfigEditableMode()) {
+            return;
+        }
+        var strategyId = String(row.getAttribute('data-strategy-id') || '');
+        if (!strategyId) {
+            return;
+        }
+        var actionWrap = document.createElement('div');
+        actionWrap.className = 'portfolio-strategy-action';
+        actionWrap.setAttribute('data-strategy-action', 'true');
+        actionWrap.innerHTML = '<button type="button" class="portfolio-strategy-action-btn" data-edit-execution-config="' + strategyId + '">Edit Configuration</button>';
+        var metaEl = row.querySelector('[data-strategy-meta]');
+        if (metaEl) {
+            metaEl.insertAdjacentElement('afterend', actionWrap);
+        } else {
+            row.appendChild(actionWrap);
+        }
+    }
+
+    function updateExecutionConfigField(legIndex, fieldName, rawValue) {
+        var workingDetail = executionConfigModalState.workingDetail;
+        var legConfigs = getExecutionLegConfigs(workingDetail);
+        var legConfig = legConfigs[legIndex];
+        if (!legConfig) {
+            return;
+        }
+        if (fieldName === 'product') {
+            legConfig.ProductType = toExecutionEnum('ProductType', rawValue, 'ProductType.NRML');
+            return;
+        }
+        if (fieldName === 'reference') {
+            legConfig.ReferenceForTgtSL = rawValue === 'LTP' ? 'PriceReferenceType.LTP' : 'PriceReferenceType.Trigger';
+            return;
+        }
+        if (fieldName === 'entryDelay') {
+            legConfig.EntryDelay = intOrDefault(rawValue, 0);
+            return;
+        }
+        if (fieldName === 'entryOrderType') {
+            legConfig.EntryOrder.Type = toExecutionEnum('OrderType', rawValue, 'OrderType.Limit');
+            return;
+        }
+        if (fieldName === 'entryBufferType') {
+            legConfig.EntryOrder.Value.Buffer.Type = toExecutionEnum('BufferType', rawValue, 'BufferType.Points');
+            return;
+        }
+        if (fieldName === 'entryTriggerBuffer') {
+            legConfig.EntryOrder.Value.Buffer.Value.TriggerBuffer = Number(rawValue || 0);
+            return;
+        }
+        if (fieldName === 'entryLimitBuffer') {
+            legConfig.EntryOrder.Value.Buffer.Value.LimitBuffer = Number(rawValue || 0);
+            return;
+        }
+        if (fieldName === 'exitOrderType') {
+            legConfig.ExitOrder.Type = toExecutionEnum('OrderType', rawValue, 'OrderType.Limit');
+            return;
+        }
+        if (fieldName === 'exitBufferType') {
+            legConfig.ExitOrder.Value.Buffer.Type = toExecutionEnum('BufferType', rawValue, 'BufferType.Points');
+            return;
+        }
+        if (fieldName === 'exitTriggerBuffer') {
+            legConfig.ExitOrder.Value.Buffer.Value.TriggerBuffer = Number(rawValue || 0);
+            return;
+        }
+        if (fieldName === 'exitLimitBuffer') {
+            legConfig.ExitOrder.Value.Buffer.Value.LimitBuffer = Number(rawValue || 0);
+            return;
+        }
+        if (fieldName === 'exitMonitoring') {
+            legConfig.ExitOrder.Value.Modification.ContinuousMonitoring = rawValue === 'Periodic' ? 'False' : 'True';
+            return;
+        }
+        if (fieldName === 'exitFrequency') {
+            legConfig.ExitOrder.Value.Modification.ModificationFrequency = Math.max(1, intOrDefault(rawValue, 5));
+        }
+    }
+
+    function openExecutionConfigModal(strategyId) {
+        if (!strategyId) {
+            return;
+        }
+        var detailMap = window._portfolioStrategyDetails || {};
+        var renderedStrategies = window._portfolioRenderedStrategies || {};
+        var detail = detailMap[strategyId];
+        var strategy = renderedStrategies[strategyId];
+        var strategyName = (strategy && strategy.name) || (detail && detail.name) || 'Strategy';
+        if (!detail) {
+            showToast('Strategy details are not available for configuration.', 'error');
+            return;
+        }
+
+        executionConfigModalState.strategyId = strategyId;
+        executionConfigModalState.strategyName = strategyName;
+        executionConfigModalState.detail = detail;
+        executionConfigModalState.workingDetail = ensureExecutionConfigDetail(cloneJson(detail), strategy || {});
+        executionConfigModalState.activeLegIndex = 0;
+
+        var workingBase = executionConfigModalState.workingDetail.execution_config_base;
+        if (!workingBase.StrategyExecutionTime) {
+            var rawEntryTime = (strategy && strategy.entry_time) || '';
+            var t12 = String(rawEntryTime).trim();
+            var m12 = t12.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+            if (m12) {
+                var h = parseInt(m12[1], 10);
+                var mn = m12[2];
+                var sc = m12[3] || '00';
+                var ampm = (m12[4] || '').toUpperCase();
+                if (ampm === 'AM' && h === 12) h = 0;
+                if (ampm === 'PM' && h !== 12) h += 12;
+                workingBase.StrategyExecutionTime = String(h).padStart(2, '0') + ':' + mn + ':' + sc;
+            } else if (/^\d{2}:\d{2}(:\d{2})?$/.test(t12)) {
+                workingBase.StrategyExecutionTime = t12.length === 5 ? t12 + ':00' : t12;
+            }
+        }
+        renderExecutionConfigModal();
+        setExecutionConfigModalVisibility(true);
+    }
+
+    function saveExecutionConfigModal() {
+        var strategyId = executionConfigModalState.strategyId;
+        var detailMap = window._portfolioStrategyDetails || {};
+        if (!strategyId || !detailMap[strategyId] || !executionConfigModalState.workingDetail) {
+            setExecutionConfigModalVisibility(false);
+            return;
+        }
+        detailMap[strategyId] = ensureExecutionConfigDetail(cloneJson(executionConfigModalState.workingDetail), window._portfolioRenderedStrategies[strategyId] || {});
+        window._portfolioStrategyDetails = detailMap;
+        var generatedPayload = buildExecutionConfigJsonPayload();
+        return fetch(getPortfolioActivationApiUrl('portfolio/execution-settings/update'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                portfolio_id: portfolioId,
+                source_strategy_id: strategyId,
+                activation_mode: activationMode,
+                execution_settings: generatedPayload
+            })
+        }).then(function (response) {
+            return response.json().catch(function () {
+                return {};
+            }).then(function (data) {
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Failed to update execution settings');
+                }
+                return data;
+            });
+        }).then(function (data) {
+            window._lastExecutionConfigPayload = data && data.execution_settings ? data.execution_settings : generatedPayload;
+            console.log('Execution configuration payload', window._lastExecutionConfigPayload);
+            renderExecutionConfigJsonPreview(window._lastExecutionConfigPayload);
+            showToast('Execution settings updated successfully.');
+        }).catch(function (error) {
+            window._lastExecutionConfigPayload = generatedPayload;
+            console.log('Execution configuration payload', generatedPayload);
+            renderExecutionConfigJsonPreview(generatedPayload);
+            showToast(error.message || 'Failed to update execution settings', 'error');
+        });
+    }
+
+    function updateExecutionConfigBaseField(fieldName, rawValue) {
+        var workingDetail = executionConfigModalState.workingDetail;
+        if (!workingDetail || !workingDetail.execution_config_base) {
+            return;
+        }
+        var baseConfig = workingDetail.execution_config_base;
+        if (fieldName === 'marginAutoSquareOff') {
+            baseConfig.MarginAutoSquareOff = !!rawValue;
+        } else if (fieldName === 'strategyExecutionTime') {
+            baseConfig.StrategyExecutionTime = String(rawValue || '');
+        }
+    }
+
+    function bindExecutionConfigModalEvents() {
+        if (document.documentElement.dataset.boundExecutionConfigModal === 'true') {
+            return;
+        }
+        document.documentElement.dataset.boundExecutionConfigModal = 'true';
+
+        document.addEventListener('click', function (event) {
+            var closeTrigger = event.target.closest('[data-close-execution-config]');
+            if (closeTrigger) {
+                setExecutionConfigModalVisibility(false);
+                var modal = getExecutionConfigModal();
+                var previewWrap = modal.querySelector('#pec-json-preview');
+                if (previewWrap) {
+                    previewWrap.hidden = true;
+                }
+                return;
+            }
+
+            var editTrigger = event.target.closest('[data-edit-execution-config]');
+            if (editTrigger) {
+                event.preventDefault();
+                openExecutionConfigModal(String(editTrigger.getAttribute('data-edit-execution-config') || ''));
+                return;
+            }
+
+            var tabTrigger = event.target.closest('[data-execution-config-tab]');
+            if (tabTrigger) {
+                executionConfigModalState.activeLegIndex = intOrDefault(tabTrigger.getAttribute('data-execution-config-tab'), 0);
+                renderExecutionConfigModal();
+                return;
+            }
+
+            var saveTrigger = event.target.closest('[data-save-execution-config]');
+            if (saveTrigger) {
+                saveExecutionConfigModal();
+                return;
+            }
+
+            var monitoringTrigger = event.target.closest('[data-monitoring-mode]');
+            if (monitoringTrigger) {
+                var mode = monitoringTrigger.getAttribute('data-monitoring-mode');
+                var workingDetail = executionConfigModalState.workingDetail;
+                if (workingDetail && workingDetail.execution_config_base) {
+                    workingDetail.execution_config_base.LikeBacktester = mode === 'candle';
+                }
+                var group = monitoringTrigger.closest('.pec-pill-group');
+                if (group) {
+                    group.querySelectorAll('[data-monitoring-mode]').forEach(function (btn) {
+                        btn.classList.toggle('is-active', btn.getAttribute('data-monitoring-mode') === mode);
+                    });
+                }
+                return;
+            }
+
+            var copyTrigger = event.target.closest('[data-copy-to-legs]');
+            if (copyTrigger) {
+                var fromIndex = intOrDefault(copyTrigger.getAttribute('data-copy-to-legs'), 0);
+                var wd = executionConfigModalState.workingDetail;
+                var legConfigs = getExecutionLegConfigs(wd);
+                var parentLegs = getParentLegConfigs(wd);
+                if (legConfigs[fromIndex]) {
+                    var sourceConfig = cloneJson(legConfigs[fromIndex]);
+                    parentLegs.forEach(function (_, idx) {
+                        if (idx !== fromIndex) {
+                            legConfigs[idx] = cloneJson(sourceConfig);
+                        }
+                    });
+                }
+                showToast('Configuration copied to all legs.');
+                return;
+            }
+        });
+
+        document.addEventListener('change', function (event) {
+            var baseField = event.target && event.target.matches && event.target.matches('[data-execution-base-field]')
+                ? event.target : null;
+            if (baseField) {
+                var fieldName = String(baseField.getAttribute('data-execution-base-field') || '');
+                var fieldValue = baseField.type === 'checkbox' ? baseField.checked : baseField.value;
+                updateExecutionConfigBaseField(fieldName, fieldValue);
+                return;
+            }
+
+            var field = event.target && event.target.matches && event.target.matches('[data-execution-field]')
+                ? event.target : null;
+            if (!field) {
+                return;
+            }
+            updateExecutionConfigField(
+                intOrDefault(field.getAttribute('data-leg-index'), 0),
+                String(field.getAttribute('data-execution-field') || ''),
+                field.value
+            );
+        });
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                var modal = document.getElementById('portfolio-execution-config-modal');
+                if (modal && !modal.hidden) {
+                    setExecutionConfigModalVisibility(false);
+                }
+            }
+        });
+    }
+
+    bindExecutionConfigModalEvents();
+
+    function getSelectedActivationBrokerId() {
+        return brokerSelect ? String(brokerSelect.value || '').trim() : '';
+    }
+
+    function renderBrokerOptions(records) {
+        availableBrokers = Array.isArray(records) ? records.slice() : [];
+        if (!brokerSelect) {
+            return;
+        }
+        brokerSelect.innerHTML = '<option value="">Select Broker</option>' + availableBrokers.map(function (item) {
+            var brokerId = String(item && item._id || '').trim();
+            var brokerName = String(item && item.name || '').trim() || brokerId;
+            return '<option value="' + brokerId.replace(/"/g, '&quot;') + '">' + brokerName + '</option>';
+        }).join('');
+        brokerSelect.value = '';
+    }
+
+    function fetchBrokerConfigurations() {
+        var brokerType = String(activationMode || '').trim() || 'algo-backtest';
+        if (brokerFilter) {
+            brokerFilter.hidden = false;
+        }
+        return fetch(getPortfolioActivationApiUrl('broker-configurations') + '?broker_type=' + encodeURIComponent(brokerType))
+            .then(function (response) {
+                return response.json().catch(function () {
+                    return {};
+                }).then(function (data) {
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to load brokers');
+                    }
+                    return Array.isArray(data && data.records) ? data.records : [];
+                });
+            })
+            .then(function (records) {
+                renderBrokerOptions(records);
+                return records;
+            });
+    }
 
     function padDatePart(value) {
         return String(value).padStart(2, '0');
@@ -111,19 +877,34 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
         return new Date();
     }
 
-    function buildStrategyDateTime(displayTime, fallbackDate) {
+    function buildStrategyDateTime(displayTime, fallbackDate, isEntry) {
         if (!displayTime || displayTime === '-') {
             return '';
         }
-        var match = String(displayTime).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-        if (!match) {
-            return '';
+        var hours, minutes;
+        var dtStr = String(displayTime).trim();
+        var dtMatch = dtStr.match(/^\d{4}-\d{2}-\d{2}\s+(\d{2}):(\d{2}):\d{2}$/);
+        if (dtMatch) {
+            hours = parseInt(dtMatch[1], 10);
+            minutes = parseInt(dtMatch[2], 10);
+        } else {
+            var ampmMatch = dtStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+            if (!ampmMatch) {
+                return '';
+            }
+            hours = parseInt(ampmMatch[1], 10) % 12;
+            minutes = parseInt(ampmMatch[2], 10);
+            if (ampmMatch[3].toUpperCase() === 'PM') {
+                hours += 12;
+            }
         }
-        var hours = parseInt(match[1], 10) % 12;
-        var minutes = parseInt(match[2], 10);
-        var meridiem = match[3].toUpperCase();
-        if (meridiem === 'PM') {
-            hours += 12;
+        if (isEntry) {
+            if (minutes === 0) {
+                hours = hours - 1;
+                minutes = 59;
+            } else {
+                minutes = minutes - 1;
+            }
         }
         var date = fallbackDate instanceof Date ? new Date(fallbackDate.getTime()) : new Date();
         date.setHours(hours, minutes, 59, 0);
@@ -257,7 +1038,7 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
         }
         toast = document.createElement('div');
         toast.id = 'portfolio-toast';
-        toast.className = 'portfolio-toast rounded border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700 shadow-lg';
+        toast.className = 'portfolio-toast portfolio-toast-success rounded px-4 py-3 text-sm font-medium shadow-lg';
         document.body.appendChild(toast);
         return toast;
     }
@@ -267,17 +1048,19 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
         toast.textContent = message;
         toast.className = 'portfolio-toast rounded px-4 py-3 text-sm font-medium shadow-lg';
         if (type === 'error') {
-            toast.classList.add('border', 'border-red-200', 'bg-red-50', 'text-red-700');
+            toast.classList.add('portfolio-toast-error');
         } else {
-            toast.classList.add('border', 'border-green-200', 'bg-green-50', 'text-green-700');
+            toast.classList.add('portfolio-toast-success');
         }
         window.clearTimeout(toastTimer);
+        toast.classList.remove('is-visible');
+        void toast.offsetWidth;
         requestAnimationFrame(function () {
             toast.classList.add('is-visible');
         });
         toastTimer = window.setTimeout(function () {
             toast.classList.remove('is-visible');
-        }, 2200);
+        }, 2600);
     }
 
     function getRowBaseQty(row) {
@@ -638,7 +1421,12 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
 
         appendSection('Entry', strategy.entry_time || '-');
         appendSection('Exit', strategy.exit_time || '-');
-        row.appendChild(meta);
+        var actionEl = row.querySelector('[data-strategy-action]');
+        if (actionEl && actionEl.parentNode === row) {
+            row.insertBefore(meta, actionEl);
+        } else {
+            row.appendChild(meta);
+        }
     }
 
     function fetchPortfolioStrategyDetails(strategies) {
@@ -669,7 +1457,7 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
             var detailMap = {};
             results.forEach(function (detail, index) {
                 if (detail) {
-                    detailMap[strategyIds[index]] = detail;
+                    detailMap[strategyIds[index]] = ensureExecutionConfigDetail(detail, items[index] || {});
                 }
             });
             window._portfolioStrategyDetails = detailMap;
@@ -854,6 +1642,7 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
         var checkboxLabel = checkbox ? row.querySelector('label[for="' + checkbox.id + '"]') : null;
         var rowName = row.querySelector('[data-testid="special-text-tooltip"]');
         var detailSpans = row.querySelectorAll('.text-xs.font-normal.text-primaryBlack-700');
+        var templateEditButton = row.querySelector('button');
 
         setRowBaseQty(row, strategy.qty_multiplier || 1);
         row.setAttribute('data-strategy-slippage', String(Number(strategy.slippage || 0) || 0));
@@ -885,10 +1674,14 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
             detailSpans[0].textContent = displayDetails.underlying;
             detailSpans[1].textContent = displayDetails.product;
         }
+        if (templateEditButton) {
+            templateEditButton.remove();
+        }
 
         updateWeekdayState(row, strategy.weekdays);
         applyExecutionModeToRow(row);
         renderStrategyMeta(row, strategy);
+        renderExecutionConfigAction(row);
         return row;
     }
 
@@ -1017,6 +1810,7 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
     }
 
     function buildPrepareActivationPayload(trades) {
+        var selectedBrokerId = getSelectedActivationBrokerId();
         var tradeMap = {};
         var renderedStrategies = window._portfolioRenderedStrategies || {};
         var strategyDetailsMap = window._portfolioStrategyDetails || {};
@@ -1030,6 +1824,10 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
             var strategyId = String(row.getAttribute('data-strategy-id') || '');
             var strategy = strategyId ? renderedStrategies[strategyId] : null;
             var detail = strategyId ? strategyDetailsMap[strategyId] : null;
+            if (detail) {
+                detail = ensureExecutionConfigDetail(cloneJson(detail), strategy || {});
+                strategyDetailsMap[strategyId] = detail;
+            }
             var trade = tradeMap[strategyId] || {};
             return {
                 strategy_id: strategyId,
@@ -1039,10 +1837,11 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
                 weekdays: parseRowJsonAttribute(row, 'data-strategy-weekdays', ['M', 'T', 'W', 'Th', 'F']),
                 is_weekdays: currentFilterMode === 'Weekdays',
                 slippage: Number(row.getAttribute('data-strategy-slippage') || 0) || 0,
-                broker: trade.broker || (detail && detail.broker) || (strategy && strategy.broker) || null,
-                broker_type: trade.broker_type || (detail && detail.broker_type) || (strategy && strategy.broker_type) || (activationMode === 'algo-backtest' ? 'Broker.Backtest' : 'Broker.FlatTrade'),
+                broker: selectedBrokerId || trade.broker || (detail && detail.broker) || (strategy && strategy.broker) || null,
+                broker_type: trade.broker_type || (detail && detail.broker_type) || (strategy && strategy.broker_type) || (activationMode === 'algo-backtest' ? 'algo-backtest' : 'Broker.FlatTrade'),
+                user_id: trade.user_id || (detail && detail.user_id) || (strategy && strategy.user_id) || DEFAULT_ACTIVATION_USER_ID,
                 ticker: trade.ticker || ((detail && detail.underlying) || (strategy && strategy.underlying) || 'NIFTY'),
-                strategy_detail: detail || strategy || {}
+                strategy_detail: cloneJson(detail || strategy || {})
             };
         });
     }
@@ -1103,6 +1902,7 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
         var portfolioGroupName = loadedPortfolioName || 'Portfolio Activation';
         var renderedStrategies = window._portfolioRenderedStrategies || {};
         var strategyDetailsMap = window._portfolioStrategyDetails || {};
+        var selectedBrokerId = getSelectedActivationBrokerId();
 
         return getSelectedStrategyRows().map(function (row) {
             var strategyId = String(row.getAttribute('data-strategy-id') || '');
@@ -1111,9 +1911,9 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
             var displayDetails = getStrategyDisplayDetails(strategy || detail || {});
             var executionId = generateExecutionObjectId(strategyId || displayDetails.name);
             var ticker = displayDetails.underlying || 'NIFTY';
-            var defaultBrokerType = activationMode === 'algo-backtest' ? 'Broker.Backtest' : 'Broker.FlatTrade';
+            var defaultBrokerType = activationMode === 'algo-backtest' ? 'algo-backtest' : 'Broker.FlatTrade';
             var brokerType = (detail && detail.broker_type) || (strategy && strategy.broker_type) || defaultBrokerType;
-            var broker = (detail && detail.broker) || (strategy && strategy.broker) || null;
+            var broker = selectedBrokerId || (detail && detail.broker) || (strategy && strategy.broker) || null;
             var defaultStatus = 'StrategyStatus.Live_Running';
 
             return {
@@ -1122,13 +1922,13 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
                 activation_mode: activationMode,
                 broker: broker,
                 broker_type: brokerType,
-                check_after_ts: buildStrategyDateTime(displayDetails.entryTime, activationTime) || formatDateTime(activationTime, false),
+                check_after_ts: buildStrategyDateTime(displayDetails.entryTime, activationTime, true) || formatDateTime(activationTime, false),
                 config: {
                     Ticker: ticker
                 },
                 creation_ts: formatDateTime(activationTime, true),
-                entry_time: buildStrategyDateTime(displayDetails.entryTime, activationTime) || formatDateTime(activationTime, false),
-                exit_time: buildStrategyDateTime(displayDetails.exitTime, activationTime),
+                entry_time: buildStrategyDateTime(displayDetails.entryTime, activationTime, true) || formatDateTime(activationTime, false),
+                exit_time: buildStrategyDateTime(displayDetails.exitTime, activationTime, true),
                 external_start: null,
                 free_execution: false,
                 is_ra_algo: false,
@@ -1154,6 +1954,10 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
     function handleActivateSelectedClick(event) {
         if (event) {
             event.preventDefault();
+        }
+        if (!getSelectedActivationBrokerId()) {
+            showToast('Please select broker.', 'error');
+            return;
         }
         var payload = buildInitialLiveExecutionPayload();
         if (!payload.length) {
@@ -1212,7 +2016,10 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
                         legs_count: Array.isArray(item.legs) ? item.legs.length : 0
                     };
                 }));
-                return fetch(getPortfolioActivationApiUrl('portfolioStartGroup', encodeURIComponent(groupId)))
+                return fetch(
+                    getPortfolioActivationApiUrl('portfolioStartGroup', encodeURIComponent(groupId))
+                    + '?activation_mode=' + encodeURIComponent(activationMode)
+                )
                     .then(function (startResponse) {
                         return startResponse.json().catch(function () {
                             return {};
@@ -1242,6 +2049,11 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
         setSummary(0);
         rowsContainer.innerHTML = '<div class="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-600">' + message + '</div>';
     }
+
+    fetchBrokerConfigurations().catch(function (error) {
+        showToast(error.message || 'Failed to load brokers', 'error');
+        return [];
+    });
 
     fetch(getPortfolioActivationApiUrl('portfolioById', encodeURIComponent(portfolioId)))
         .then(function (response) {

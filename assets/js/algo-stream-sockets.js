@@ -43,15 +43,31 @@
     }
 
     function buildSocketBaseUrl() {
-        var protocol = window.location.protocol || '';
-        if (protocol === 'file:') {
+        var pageProtocol = (window.location && window.location.protocol) || '';
+        var socketProtocol = pageProtocol === 'https:' ? 'wss://' : 'ws://';
+        var configuredApiBase = '';
+        if (window.APP_CONFIG && typeof window.APP_CONFIG.algoApiBaseUrl === 'string') {
+            configuredApiBase = window.APP_CONFIG.algoApiBaseUrl;
+        } else if (typeof window.APP_ALGO_API_BASE_URL === 'string') {
+            configuredApiBase = window.APP_ALGO_API_BASE_URL;
+        }
+
+        if (configuredApiBase) {
+            var normalizedApiBase = String(configuredApiBase).replace(/\/+$/, '');
+            if (/^https?:\/\//i.test(normalizedApiBase)) {
+                var apiHost = normalizedApiBase.replace(/^https?:\/\//i, '');
+                return socketProtocol + apiHost + '/ws';
+            }
+        }
+
+        if (pageProtocol === 'file:') {
             return 'ws://localhost:8000/algo/ws';
         }
 
         var origin = window.location.origin || 'http://localhost:8000';
-        var socketOrigin = origin.replace(/^http/i, 'ws');
+        var socketOrigin = origin.replace(/^https?:\/\//i, socketProtocol);
         if (!/^wss?:\/\//i.test(socketOrigin)) {
-            socketOrigin = 'ws://localhost:8000';
+            socketOrigin = socketProtocol + 'localhost:8000';
         }
         return socketOrigin.replace(/\/$/, '') + '/algo/ws';
     }
@@ -68,7 +84,16 @@
         var config = options || {};
         var reconnectDelayMs = typeof config.reconnectDelayMs === 'number' ? config.reconnectDelayMs : 3000;
         var channel = String(config.channel || '').replace(/^\/+/, '');
-        var socketUrl = config.url || (buildSocketBaseUrl() + '/' + channel);
+        var userId = String(config.userId || config.user_id || '').trim();
+        var activationMode = String(config.activationMode || config.activation_mode || '').trim();
+        var baseUrl = buildSocketBaseUrl() + '/' + channel;
+        if (userId) {
+            baseUrl += (baseUrl.indexOf('?') === -1 ? '?' : '&') + 'user_id=' + encodeURIComponent(userId);
+        }
+        if (activationMode) {
+            baseUrl += (baseUrl.indexOf('?') === -1 ? '?' : '&') + 'activation_mode=' + encodeURIComponent(activationMode);
+        }
+        var socketUrl = config.url || baseUrl;
         var subscribePayload = config.subscribePayload || null;
         var socket = null;
         var reconnectTimer = null;

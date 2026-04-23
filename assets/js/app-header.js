@@ -43,7 +43,7 @@
         portfolio: 'portfolio.html',
         portfolioActivation: 'portfolio-activation.html',
         algoBacktestDashboard: 'algo-backtest/dashboard.html',
-        forwardTestDashboard: 'forward-test/dashboard.html',
+        forwardTestDashboard: 'fast-forward/dashboard.html',
         liveDashboard: 'fast-forward-clone.html'
     }, window.APP_PAGE_ROUTES || {});
 
@@ -67,7 +67,7 @@
         '                <a href="{{base}}/strategy.html" class="header_nav_link __active"><span>Strategy</span></a>' +
         '                <a href="{{base}}/portfolios.html" class="header_nav_link"><span>Portfolio</span></a>' +
         '                <a href="{{base}}/algo-backtest/dashboard.html" class="header_nav_link"><span>AgloTrade</span></a>' +
-        '                <a href="{{base}}/forward-test/dashboard.html" class="header_nav_link"><span>Forward Test</span></a>' +
+        '                <a href="{{base}}/fast-forward/dashboard.html" class="header_nav_link"><span>Forward Test</span></a>' +
         '                <a href="{{base}}/algo-backtest/dashboard.html" class="header_nav_link"><span>Algo Backtest</span></a>' +
         '                <a href="https://www.stockmock.in/#!/simulator" class="header_nav_link"><span>Simulator</span></a>' +
         '                <a href="https://www.stockmock.in/#!/builder" class="header_nav_link"><span>Builder</span></a>' +

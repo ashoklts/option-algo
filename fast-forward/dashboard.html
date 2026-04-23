@@ -2094,10 +2094,10 @@
                                 class="flex w-full flex-wrap items-center justify-between gap-5 border-b border-primaryBlack-350 bg-primaryBlack-0 px-4 py-2 dark:border-primaryBlack-500 ">
                                 <div class="ff-listening-toolbar">
                                     <div class="ff-calendar-wrap">
-                                        <input type="hidden" value="2025-11-03" id="ff-listening-date">
+                                        <input type="hidden" value="" id="ff-listening-date">
                                         <button type="button" class="ff-listening-input ff-calendar-trigger"
                                             aria-label="Listening date" id="ff-listening-date-trigger">
-                                            <span id="ff-listening-date-label">03/11/2025</span>
+                                            <span id="ff-listening-date-label"></span>
                                             <svg class="ff-calendar-icon" xmlns="http://www.w3.org/2000/svg"
                                                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2440,6 +2440,11 @@
                                                             <div class="ff-broker-settings-label">Trailing Options</div>
                                                             <div id="ff-broker-trailing-options-display"
                                                                 class="ff-broker-settings-value is-muted">-</div>
+                                                        </div>
+                                                        <div class="ff-broker-settings-metric">
+                                                            <div class="ff-broker-settings-label">Overall MTM</div>
+                                                            <div id="ff-broker-overall-mtm-display"
+                                                                class="ff-broker-settings-value">₹ 0.00</div>
                                                         </div>
                                                         <button type="button" class="ff-broker-settings-edit"
                                                             onclick="window.ffOpenBrokerSettingsModal && window.ffOpenBrokerSettingsModal();"
@@ -2925,6 +2930,25 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        <script>
+                                            window.ALGO_ACTIVATION_MODE = 'fast-forward';
+                                            (function () {
+                                                var now = new Date();
+                                                var yyyy = now.getFullYear();
+                                                var mm = String(now.getMonth() + 1).padStart(2, '0');
+                                                var dd = String(now.getDate()).padStart(2, '0');
+                                                var isoDate = yyyy + '-' + mm + '-' + dd;
+                                                var displayDate = dd + '/' + mm + '/' + yyyy;
+                                                var dateInput = document.getElementById('ff-listening-date');
+                                                var dateLabel = document.getElementById('ff-listening-date-label');
+                                                if (dateInput && !String(dateInput.value || '').trim()) {
+                                                    dateInput.value = isoDate;
+                                                }
+                                                if (dateLabel && !String(dateLabel.textContent || '').trim()) {
+                                                    dateLabel.textContent = displayDate;
+                                                }
+                                            }());
+                                        </script>
                                         <script src="../assets/js/algo-stream-sockets.js"></script>
                                         <script src="../assets/js/algo-backtest-dashboard.js"></script>
                                         <div style="display:none;">
@@ -4828,6 +4852,50 @@
             }
         }
 
+        function formatBrokerLiveMtm(value) {
+            var rounded = Math.round((parseFloat(value) || 0) * 100) / 100;
+            return '₹ ' + rounded.toLocaleString('en-IN', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
+
+        function syncSelectedBrokerSummaryDisplay(summary) {
+            var mtmDisplay = document.getElementById('ff-broker-overall-mtm-display');
+            if (!mtmDisplay) {
+                return;
+            }
+            var mtmValue = parseFloat(summary && summary.mtm);
+            if (!isFinite(mtmValue)) {
+                mtmValue = 0;
+            }
+            mtmDisplay.textContent = formatBrokerLiveMtm(mtmValue);
+            mtmDisplay.style.color = mtmValue >= 0 ? '#16a34a' : '#ef4444';
+        }
+
+        function syncSelectedBrokerSummaryFromCard() {
+            var selectedBrokerContext = getSelectedBrokerSettingsContext();
+            var brokerId = selectedBrokerContext.broker;
+            if (!brokerId) {
+                syncSelectedBrokerSummaryDisplay(null);
+                return;
+            }
+            var mtmEl = document.querySelector('[data-broker-mtm="' + brokerId + '"]');
+            if (!mtmEl) {
+                syncSelectedBrokerSummaryDisplay(null);
+                return;
+            }
+            var mtmText = String(mtmEl.textContent || '').replace(/[^\d.-]/g, '');
+            syncSelectedBrokerSummaryDisplay({
+                brokerId: brokerId,
+                mtm: parseFloat(mtmText) || 0
+            });
+        }
+
+        window.ffUpdateSelectedBrokerSummary = function (summary) {
+            syncSelectedBrokerSummaryDisplay(summary);
+        };
+
         function getInputForField(fieldName) {
             if (fieldName === 'stop-loss') {
                 return document.getElementById('ff-broker-stop-loss-input');
@@ -5009,11 +5077,12 @@
             var userId = selectedBrokerContext.user_id || getContextValue(['user_id', 'userId']) || defaultBrokerSettingsUserId;
             var brokerId = selectedBrokerContext.broker || getContextValue(['broker', 'broker_id', 'brokerId']) || defaultBrokerSettingsBrokerId;
             var brokerName = selectedBrokerContext.broker_name || '';
-            var activationMode = 'algo-backtest';
+            var activationMode = 'fast-forward';
             var openModal = shouldOpenModal !== false;
 
             applyDefaultBrokerSettingsState();
             updateBrokerSettingsTitle(brokerName);
+            syncSelectedBrokerSummaryFromCard();
             syncBrokerSummaryDisplay({
                 StopLoss: 4900,
                 Target: 2000,
@@ -5041,15 +5110,23 @@
                     return response.json();
                 })
                 .then(function (payload) {
+                    var resolvedBrokerName = String(payload && payload.broker_name || brokerName || '').trim();
+                    if (resolvedBrokerName) {
+                        updateBrokerSettingsTitle(resolvedBrokerName);
+                    }
                     if (payload && payload.found && payload.settings) {
                         applyBrokerSettingsResponse(payload.settings);
                     } else {
                         syncBrokerSummaryDisplay({
-                            StopLoss: 4900,
-                            Target: 2000,
+                            StopLoss: null,
+                            Target: null,
                             OverallTrailSL: null,
                             LockAndTrail: null
                         });
+                        var cardTitle = document.getElementById('ff-broker-settings-card-title');
+                        if (cardTitle) {
+                            cardTitle.textContent = (resolvedBrokerName || 'Broker') + ' - not configured yet';
+                        }
                     }
                     if (openModal) {
                         setBrokerModalVisibility(true);
@@ -5079,7 +5156,7 @@
                 Target: getNullableNumericValue('ff-broker-target-profit-input', 'ff-broker-target-profit-content'),
                 OverallTrailSL: null,
                 LockAndTrail: null,
-                activation_mode: 'algo-backtest'
+                activation_mode: (window.ALGO_ACTIVATION_MODE || 'fast-forward')
             };
 
             var userId = selectedBrokerContext.user_id || getContextValue(['user_id', 'userId']) || defaultBrokerSettingsUserId;

@@ -4731,6 +4731,255 @@
 </div>
 <script>
     (function () {
+        var startButton = document.getElementById('ff-start-listening-btn');
+        var pauseButton = document.getElementById('ff-pause-listening-btn');
+        var stopButton = document.getElementById('ff-stop-listening-btn');
+        var timeInput = document.getElementById('ff-seconds-time-input');
+        var dateInput = document.getElementById('ff-listening-date');
+        var behindTimeInput = document.getElementById('ff-listening-behind-time');
+        var statusWrap = document.getElementById('ff-socket-status');
+        var statusLabel = document.getElementById('ff-socket-status-label');
+
+        if (!startButton || !pauseButton || !stopButton || !timeInput || !dateInput || !behindTimeInput || !statusWrap || !statusLabel) {
+            return;
+        }
+
+        var pauseResumeStorageKey = 'ff_mock_listening_paused';
+        var statusPollTimer = null;
+        var localState = {
+            paused: window.sessionStorage.getItem(pauseResumeStorageKey) === 'true',
+            busy: false
+        };
+
+        function buildMockApiUrl(path) {
+            var normalizedPath = String(path || '').replace(/^\/+/, '');
+            if (window.location && /^https?:/i.test(window.location.protocol || '')) {
+                return window.location.origin.replace(/\/+$/, '') + '/' + normalizedPath;
+            }
+            return 'http://localhost:8000/' + normalizedPath;
+        }
+
+        function setPausedFlag(value) {
+            localState.paused = !!value;
+            try {
+                window.sessionStorage.setItem(pauseResumeStorageKey, value ? 'true' : 'false');
+            } catch (error) {
+            }
+        }
+
+        function setBusyState(isBusy) {
+            localState.busy = !!isBusy;
+            startButton.disabled = localState.busy;
+            pauseButton.disabled = localState.busy;
+            stopButton.disabled = localState.busy;
+        }
+
+        function setSocketStatus(state, text) {
+            statusWrap.setAttribute('data-state', state);
+            statusLabel.textContent = text;
+        }
+
+        function setListeningButtons(mode) {
+            var normalizedMode = String(mode || 'stopped').toLowerCase();
+            if (normalizedMode === 'running' || normalizedMode === 'connecting') {
+                startButton.style.display = 'none';
+                pauseButton.style.display = '';
+                stopButton.style.display = '';
+                pauseButton.textContent = 'Pause Listening';
+                return;
+            }
+
+            startButton.style.display = '';
+            pauseButton.style.display = 'none';
+            stopButton.style.display = 'none';
+            startButton.textContent = localState.paused ? 'Resume Listening' : 'Start Listening';
+        }
+
+        function pad2(value) {
+            return String(value).padStart(2, '0');
+        }
+
+        function getSelectedDateTime() {
+            var selectedDate = String(dateInput.value || '').trim();
+            var selectedTime = String(timeInput.value || '').trim();
+            if (!selectedDate || !selectedTime) {
+                return null;
+            }
+
+            var normalizedTime = selectedTime.length === 5 ? selectedTime + ':00' : selectedTime;
+            var combined = selectedDate + 'T' + normalizedTime;
+            var parsed = new Date(combined);
+            if (Number.isNaN(parsed.getTime())) {
+                return null;
+            }
+            return parsed;
+        }
+
+        function toMockIsoString(dateValue) {
+            return [
+                dateValue.getFullYear(),
+                pad2(dateValue.getMonth() + 1),
+                pad2(dateValue.getDate())
+            ].join('-') + 'T' + [
+                pad2(dateValue.getHours()),
+                pad2(dateValue.getMinutes()),
+                pad2(dateValue.getSeconds())
+            ].join(':');
+        }
+
+        function getFreshMockStartTime() {
+            var selectedDateTime = getSelectedDateTime();
+            if (!selectedDateTime) {
+                return '';
+            }
+            var behindMinutes = parseInt(String(behindTimeInput.value || '0'), 10) || 0;
+            selectedDateTime.setMinutes(selectedDateTime.getMinutes() - behindMinutes);
+            return toMockIsoString(selectedDateTime);
+        }
+
+        function updateStatusFromPayload(payload) {
+            var status = String((payload && payload.status) || 'stopped').toLowerCase();
+            var mockTime = String((payload && payload.mock_time) || '').trim();
+
+            if (status === 'running') {
+                setSocketStatus('connected', mockTime ? 'Mock running at ' + mockTime.replace('T', ' ') : 'Mock running');
+                setListeningButtons('running');
+                return;
+            }
+
+            if (status === 'connecting') {
+                setSocketStatus('connecting', 'Mock connecting...');
+                setListeningButtons('connecting');
+                return;
+            }
+
+            if (localState.paused) {
+                setSocketStatus('disconnected', mockTime ? 'Paused at ' + mockTime.replace('T', ' ') : 'Paused');
+                setListeningButtons('paused');
+                return;
+            }
+
+            setSocketStatus('disconnected', mockTime ? 'Stopped at ' + mockTime.replace('T', ' ') : 'Mock stopped');
+            setListeningButtons('stopped');
+        }
+
+        function syncStatus() {
+            return fetch(buildMockApiUrl('mock/status'))
+                .then(function (response) {
+                    if (!response.ok) {
+                        throw new Error('Mock status fetch failed');
+                    }
+                    return response.json();
+                })
+                .then(function (payload) {
+                    updateStatusFromPayload(payload || {});
+                    return payload || {};
+                })
+                .catch(function (error) {
+                    console.error('[MOCK STATUS ERROR]', error);
+                    setSocketStatus('error', 'Mock API unavailable');
+                    setListeningButtons('stopped');
+                    return null;
+                });
+        }
+
+        function startFreshListening() {
+            var mockStartTime = getFreshMockStartTime();
+            if (!mockStartTime) {
+                window.alert('Please choose a valid listening date and time.');
+                return Promise.resolve();
+            }
+            return fetch(buildMockApiUrl('mock/start?time=' + encodeURIComponent(mockStartTime)))
+                .then(function (response) {
+                    if (!response.ok) {
+                        throw new Error('Mock start failed');
+                    }
+                    setPausedFlag(false);
+                    setSocketStatus('connecting', 'Mock starting from ' + mockStartTime.replace('T', ' '));
+                    return syncStatus();
+                });
+        }
+
+        function resumePausedListening() {
+            return fetch(buildMockApiUrl('mock/start'))
+                .then(function (response) {
+                    if (!response.ok) {
+                        throw new Error('Mock resume failed');
+                    }
+                    setPausedFlag(false);
+                    setSocketStatus('connecting', 'Resuming mock stream...');
+                    return syncStatus();
+                });
+        }
+
+        function stopMockListening(asPause) {
+            return fetch(buildMockApiUrl('mock/stop'))
+                .then(function (response) {
+                    if (!response.ok) {
+                        throw new Error('Mock stop failed');
+                    }
+                    setPausedFlag(!!asPause);
+                    return syncStatus();
+                });
+        }
+
+        startButton.addEventListener('click', function () {
+            if (localState.busy) {
+                return;
+            }
+            setBusyState(true);
+            var startPromise = localState.paused ? resumePausedListening() : startFreshListening();
+            startPromise
+                .catch(function (error) {
+                    console.error('[MOCK START ERROR]', error);
+                    setSocketStatus('error', 'Unable to start mock listening');
+                })
+                .finally(function () {
+                    setBusyState(false);
+                });
+        });
+
+        pauseButton.addEventListener('click', function () {
+            if (localState.busy) {
+                return;
+            }
+            setBusyState(true);
+            stopMockListening(true)
+                .catch(function (error) {
+                    console.error('[MOCK PAUSE ERROR]', error);
+                    setSocketStatus('error', 'Unable to pause mock listening');
+                })
+                .finally(function () {
+                    setBusyState(false);
+                });
+        });
+
+        stopButton.addEventListener('click', function () {
+            if (localState.busy) {
+                return;
+            }
+            setBusyState(true);
+            stopMockListening(false)
+                .catch(function (error) {
+                    console.error('[MOCK STOP ERROR]', error);
+                    setSocketStatus('error', 'Unable to stop mock listening');
+                })
+                .finally(function () {
+                    setBusyState(false);
+                });
+        });
+
+        syncStatus();
+        statusPollTimer = window.setInterval(syncStatus, 2000);
+        window.addEventListener('beforeunload', function () {
+            if (statusPollTimer) {
+                window.clearInterval(statusPollTimer);
+            }
+        });
+    }());
+</script>
+<script>
+    (function () {
         var modal = document.getElementById('ff-broker-settings-modal');
         if (!modal) {
             return;

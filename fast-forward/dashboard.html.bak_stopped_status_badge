@@ -53,6 +53,234 @@
             margin: 28px 16px 0;
         }
 
+        .ff-listening-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+            margin: 0 0 14px;
+            padding: 12px 14px;
+            border: 1px solid #dbe4ee;
+            border-radius: 10px;
+            background: #f8fbff;
+        }
+
+        .ff-listening-input,
+        .ff-listening-select {
+            height: 38px;
+            min-width: 160px;
+            padding: 0 12px;
+            border: 1px solid #c9d7e6;
+            border-radius: 8px;
+            background: #fff;
+            color: #1f3347;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .ff-calendar-wrap {
+            position: relative;
+        }
+
+        .ff-calendar-trigger {
+            display: inline-flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            min-width: 170px;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .ff-calendar-icon {
+            width: 16px;
+            height: 16px;
+            color: #1f3347;
+            flex: 0 0 auto;
+        }
+
+        .ff-calendar-popup {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            z-index: 30;
+            width: 310px;
+            padding: 12px;
+            border: 1px solid #dbe4ee;
+            border-radius: 10px;
+            background: #fff;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+        }
+
+        .ff-calendar-popup[hidden] {
+            display: none !important;
+        }
+
+        .ff-calendar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .ff-calendar-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            color: #1f3347;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .ff-calendar-title-btn {
+            border: 0;
+            background: transparent;
+            padding: 0;
+            color: #1f3347;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .ff-calendar-title-btn.is-active {
+            color: #1580ed;
+        }
+
+        .ff-calendar-nav {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .ff-calendar-nav-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: #1f3347;
+            cursor: pointer;
+            font-size: 20px;
+            line-height: 1;
+        }
+
+        .ff-calendar-nav-btn:hover {
+            background: #eef6ff;
+        }
+
+        .ff-calendar-weekdays,
+        .ff-calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 6px;
+        }
+
+        .ff-calendar-weekdays {
+            margin-bottom: 8px;
+            color: #52667c;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .ff-calendar-grid {
+            min-height: 228px;
+        }
+
+        .ff-calendar-grid.is-month-view,
+        .ff-calendar-grid.is-year-view {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .ff-calendar-cell {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 42px;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: transparent;
+            color: #1f3347;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .ff-calendar-cell.is-muted {
+            color: #bcc6d0;
+        }
+
+        .ff-calendar-cell.is-selected {
+            border-color: #1580ed;
+            background: #d9ebff;
+            color: #1580ed;
+            font-weight: 700;
+        }
+
+        .ff-calendar-cell:hover {
+            background: #f4f8fc;
+        }
+
+        .ff-calendar-footer {
+            margin-top: 12px;
+        }
+
+        .ff-calendar-confirm {
+            width: 100%;
+            height: 40px;
+            border: 0;
+            border-radius: 8px;
+            background: #1580ed;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .ff-listening-select-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .ff-listening-label {
+            color: #40566d;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .ff-listening-btn {
+            height: 38px;
+            padding: 0 16px;
+            border: 1px solid #174f72;
+            border-radius: 8px;
+            background: #174f72;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 767px) {
+            .ff-listening-toolbar {
+                align-items: stretch;
+            }
+
+            .ff-listening-input,
+            .ff-listening-select,
+            .ff-listening-btn {
+                width: 100%;
+            }
+
+            .ff-calendar-popup {
+                width: min(310px, calc(100vw - 32px));
+            }
+        }
+
         .ff-deployed-header {
             display: flex;
             align-items: center;
@@ -78,6 +306,16 @@
             width: 100%;
         }
 
+        .ff-deployed-empty {
+            padding: 18px 14px;
+            border: 1px dashed #dbe4ee;
+            border-radius: 8px;
+            background: #fff;
+            color: #5b7086;
+            font-size: 13px;
+            text-align: center;
+        }
+
         .ff-deployed-columns {
             display: grid;
             grid-template-columns: minmax(240px, 1.45fr) minmax(150px, 0.9fr) minmax(120px, 0.8fr) minmax(170px, 1fr) minmax(280px, 1.2fr);
@@ -101,6 +339,112 @@
             border: 1px solid #dbe4ee;
             border-radius: 8px;
             background: #fff;
+        }
+
+        .ff-deployed-group {
+            margin-top: 16px;
+            border: 1px solid #dbe4ee;
+            border-radius: 10px;
+            background: #fff;
+            overflow: hidden;
+        }
+
+        .ff-deployed-group .ff-deployed-row {
+            margin-top: 0;
+            border: 0;
+            border-radius: 0;
+            cursor: pointer;
+        }
+
+        .ff-deployed-children {
+            padding: 12px 12px 12px;
+            background: #fafcfe;
+        }
+
+        .ff-deployed-children .ff-deployed-child-row:first-child {
+            margin-top: 0;
+        }
+
+        .ff-deployed-group[data-expanded="false"] .ff-deployed-children {
+            display: none;
+        }
+
+        .ff-deployed-group-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .ff-deployed-group-caret {
+            width: 18px;
+            height: 18px;
+            color: #31485f;
+            flex: 0 0 auto;
+            transition: transform 0.2s ease;
+        }
+
+        .ff-deployed-group[data-expanded="true"] .ff-deployed-group-caret {
+            transform: rotate(180deg);
+        }
+
+        .ff-deployed-child-row {
+            display: grid;
+            grid-template-columns: minmax(240px, 1.45fr) minmax(150px, 0.9fr) minmax(120px, 0.8fr) minmax(170px, 1fr) minmax(280px, 1.2fr);
+            gap: 24px;
+            align-items: center;
+            margin-top: 12px;
+            padding: 14px 12px;
+            border: 1px solid #e6edf5;
+            border-radius: 8px;
+            background: #fff;
+        }
+
+        .ff-deployed-child-name {
+            color: #22384e;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .ff-deployed-name-wrap {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .ff-deployed-checkbox {
+            width: 18px;
+            height: 18px;
+            margin-top: 2px;
+            accent-color: #1580ed;
+            cursor: pointer;
+            flex: 0 0 auto;
+        }
+
+        .ff-deployed-strategy-icon {
+            color: #f59e0b;
+            font-size: 12px;
+            line-height: 1;
+            margin-top: 2px;
+        }
+
+        .ff-deployed-child-sub {
+            margin-top: 4px;
+            color: #586d81;
+            font-size: 12px;
+        }
+
+        .ff-deployed-entry-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3px 8px;
+            border: 1px solid #8fc4ff;
+            border-radius: 6px;
+            background: #f4f9ff;
+            color: #1580ed;
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
         }
 
         .ff-deployed-name {
@@ -181,6 +525,17 @@
             display: flex;
             justify-content: flex-end;
             gap: 8px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.18s ease;
+        }
+
+        .ff-deployed-row:hover .ff-deployed-actions,
+        .ff-deployed-row:focus-within .ff-deployed-actions,
+        .ff-deployed-child-row:hover .ff-deployed-actions,
+        .ff-deployed-child-row:focus-within .ff-deployed-actions {
+            opacity: 1;
+            pointer-events: auto;
         }
 
         .ff-deployed-btn {
@@ -207,6 +562,18 @@
             border: 1px solid #174f72;
             background: #174f72;
             color: #fff;
+        }
+
+        .ff-deployed-btn-danger {
+            border: 1px solid #174f72;
+            background: #174f72;
+            color: #fff;
+        }
+
+        .ff-deployed-btn-warning {
+            border: 1px solid #d97706;
+            background: #fff7ed;
+            color: #b45309;
         }
 
         .ff-strategy-table {
@@ -589,6 +956,96 @@
             cursor: pointer;
         }
 
+        .ff-confirm-modal[hidden] {
+            display: none;
+        }
+
+        .ff-confirm-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 1000000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .ff-confirm-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.52);
+        }
+
+        .ff-confirm-dialog {
+            position: relative;
+            width: min(100%, 568px);
+            border-radius: 8px;
+            background: #fff;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+            overflow: hidden;
+        }
+
+        .ff-confirm-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 18px;
+            border-bottom: 1px solid #e5ebf2;
+        }
+
+        .ff-confirm-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1f3347;
+        }
+
+        .ff-confirm-close {
+            border: 0;
+            background: transparent;
+            color: #596d81;
+            font-size: 28px;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .ff-confirm-body {
+            padding: 22px 18px 18px;
+            color: #334a5f;
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        .ff-confirm-footer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 0 18px 18px;
+        }
+
+        .ff-confirm-btn {
+            min-width: 204px;
+            height: 40px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .ff-confirm-btn-cancel {
+            border: 1px solid transparent;
+            background: #fff;
+            color: #7b8896;
+        }
+
+        .ff-confirm-btn-danger {
+            border: 1px solid #c62828;
+            background: #c62828;
+            color: #fff;
+        }
+
         @media (min-width: 901px) {
             .ff-actions {
                 visibility: hidden;
@@ -765,7 +1222,83 @@
                         <div class="relative flex w-full flex-col pl-[90px] !pl-40">
                             <div
                                 class="flex w-full flex-wrap items-center justify-between gap-5 border-b border-primaryBlack-350 bg-primaryBlack-0 px-4 py-2 dark:border-primaryBlack-500 ">
-                                <div></div>
+                                <div class="ff-listening-toolbar">
+                                    <div class="ff-calendar-wrap">
+                                        <input type="hidden" value="2026-04-08" id="ff-listening-date">
+                                        <button type="button" class="ff-listening-input ff-calendar-trigger"
+                                            aria-label="Listening date" id="ff-listening-date-trigger">
+                                            <span id="ff-listening-date-label">08/04/2026</span>
+                                            <svg class="ff-calendar-icon" xmlns="http://www.w3.org/2000/svg"
+                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+                                                <line x1="16" y1="2" x2="16" y2="6"></line>
+                                                <line x1="8" y1="2" x2="8" y2="6"></line>
+                                                <line x1="3" y1="10" x2="21" y2="10"></line>
+                                            </svg>
+                                        </button>
+                                        <div class="ff-calendar-popup" id="ff-calendar-popup" hidden>
+                                            <div class="ff-calendar-header">
+                                                <div class="ff-calendar-title">
+                                                    <button type="button" class="ff-calendar-title-btn is-active"
+                                                        id="ff-calendar-month-toggle">APR</button>
+                                                    <button type="button" class="ff-calendar-title-btn"
+                                                        id="ff-calendar-year-toggle">2026</button>
+                                                </div>
+                                                <div class="ff-calendar-nav">
+                                                    <button type="button" class="ff-calendar-nav-btn"
+                                                        id="ff-calendar-prev-btn" aria-label="Previous">&#8249;</button>
+                                                    <button type="button" class="ff-calendar-nav-btn"
+                                                        id="ff-calendar-next-btn" aria-label="Next">&#8250;</button>
+                                                </div>
+                                            </div>
+                                            <div class="ff-calendar-weekdays" id="ff-calendar-weekdays">
+                                                <span>Sun</span>
+                                                <span>Mon</span>
+                                                <span>Tue</span>
+                                                <span>Wed</span>
+                                                <span>Thu</span>
+                                                <span>Fri</span>
+                                                <span>Sat</span>
+                                            </div>
+                                            <div class="ff-calendar-grid" id="ff-calendar-grid"></div>
+                                            <div class="ff-calendar-footer">
+                                                <button type="button" class="ff-calendar-confirm"
+                                                    id="ff-calendar-confirm-btn">Confirm</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="ff-listening-select-wrap">
+                                        <span class="ff-listening-label">Behind Time</span>
+                                        <select class="ff-listening-select" aria-label="Behind time"
+                                            id="ff-listening-behind-time">
+                                            <option value="5">5</option>
+                                            <option value="10">10</option>
+                                            <option value="15">15</option>
+                                            <option value="20">20</option>
+                                            <option value="25">25</option>
+                                            <option value="30">30</option>
+                                            <option value="45">45</option>
+                                            <option value="60">1 Hour</option>
+                                            <option value="90">1.5 Hour</option>
+                                            <option value="120">2 Hour</option>
+                                            <option value="150">2.5 Hour</option>
+                                            <option value="180">3 Hour</option>
+                                            <option value="210">3.5 Hour</option>
+                                            <option value="240">4 Hour</option>
+                                            <option value="270">4.5 Hour</option>
+                                            <option value="300">5 Hour</option>
+                                            <option value="330">5.5 Hour</option>
+                                            <option value="360">6 Hour</option>
+                                        </select>
+                                    </div>
+                                    <button type="button" class="ff-listening-btn" id="ff-start-listening-btn">Start
+                                        Listening</button>
+                                    <button type="button" class="ff-listening-btn" id="ff-pause-listening-btn"
+                                        style="display:none;">Pause Listening</button>
+                                    <button type="button" class="ff-listening-btn" id="ff-stop-listening-btn"
+                                        style="display:none;">Stop Listening</button>
+                                </div>
                                 <div class=" flex flex-wrap items-center justify-between gap-2 pb-2"><button
                                         class="font-medium leading-2 relative flex items-center justify-center gap-2 rounded px-3 py-3 text-center text-xs duration-75 md:px-4 md:py-3  md:leading-4 relative !w-max !border !px-2 !py-1.5 hover:bg-primaryBlack-50">
                                         <div class="absolute right-[-4px] top-[-4px]"><svg
@@ -1110,69 +1643,17 @@
                                                 </path>
                                             </svg>
                                         </div>
-                                        <div class="ff-deployed-table">
+                                        <div class="ff-deployed-table" id="ff-deployed-table">
                                             <div class="ff-deployed-columns">
                                                 <span>Name</span>
+                                                <span>Broker</span>
                                                 <span>Status</span>
                                                 <span>MTM</span>
-                                                <span>Broker</span>
                                                 <span>Actions</span>
                                             </div>
-                                            <div class="ff-deployed-row">
-                                                <div>
-                                                    <div class="ff-deployed-name">chan Sensex stra (1)</div>
-                                                    <div class="ff-deployed-sub">Open Pos: 0</div>
-                                                </div>
-                                                <div><span class="ff-deployed-status running">RUNNING 2/2</span></div>
-                                                <div class="ff-deployed-mtm">₹ 0</div>
-                                                <div class="ff-deployed-broker">
-                                                    <span class="ff-deployed-broker-badge">FT</span>
-                                                    <span>Forward Test</span>
-                                                </div>
-                                                <div class="ff-deployed-actions">
-                                                    <button type="button"
-                                                        class="ff-deployed-btn ff-deployed-btn-outline">Cancel
-                                                        Deployment</button>
-                                                    <button type="button"
-                                                        class="ff-deployed-btn ff-deployed-btn-solid">Open</button>
-                                                </div>
-                                            </div>
-                                            <div class="ff-deployed-row">
-                                                <div>
-                                                    <div class="ff-deployed-name">Chan stra (1)</div>
-                                                    <div class="ff-deployed-sub">Open Pos: 0</div>
-                                                </div>
-                                                <div><span class="ff-deployed-status paused">PAUSED 1/1</span></div>
-                                                <div class="ff-deployed-mtm">₹ 0</div>
-                                                <div class="ff-deployed-broker">
-                                                    <span class="ff-deployed-broker-badge">FT</span>
-                                                    <span>Forward Test</span>
-                                                </div>
-                                                <div class="ff-deployed-actions">
-                                                    <button type="button"
-                                                        class="ff-deployed-btn ff-deployed-btn-outline">Cancel
-                                                        Deployment</button>
-                                                    <button type="button"
-                                                        class="ff-deployed-btn ff-deployed-btn-solid">Open</button>
-                                                </div>
-                                            </div>
-                                            <div class="ff-deployed-row">
-                                                <div>
-                                                    <div class="ff-deployed-name">Chan stra (1)</div>
-                                                    <div class="ff-deployed-sub">Open Pos: 0</div>
-                                                </div>
-                                                <div><span class="ff-deployed-status stopped">STOPPED 1/1</span></div>
-                                                <div class="ff-deployed-mtm">₹ 0</div>
-                                                <div class="ff-deployed-broker">
-                                                    <span class="ff-deployed-broker-badge">FT</span>
-                                                    <span>Forward Test</span>
-                                                </div>
-                                                <div class="ff-deployed-actions">
-                                                    <button type="button"
-                                                        class="ff-deployed-btn ff-deployed-btn-outline">Archive</button>
-                                                    <button type="button"
-                                                        class="ff-deployed-btn ff-deployed-btn-solid">Open</button>
-                                                </div>
+                                            <div id="ff-deployed-rows">
+                                                <div class="ff-deployed-empty">Select a date and click Start Listening
+                                                    to load deployed portfolios.</div>
                                             </div>
                                         </div>
                                     </div>
@@ -1441,26 +1922,170 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        <div id="ff-cancel-deployment-modal" class="ff-confirm-modal" hidden>
+                                            <div class="ff-confirm-backdrop" data-close-cancel-deployment></div>
+                                            <div class="ff-confirm-dialog" role="dialog" aria-modal="true"
+                                                aria-labelledby="ff-cancel-deployment-title">
+                                                <div class="ff-confirm-header">
+                                                    <div id="ff-cancel-deployment-title" class="ff-confirm-title">Cancel deployment</div>
+                                                    <button type="button" class="ff-confirm-close"
+                                                        data-close-cancel-deployment aria-label="Close popup">&times;</button>
+                                                </div>
+                                                <div class="ff-confirm-body">
+                                                    Are you sure you want to cancel this deployment? You will not be able to revert this change.
+                                                </div>
+                                                <div class="ff-confirm-footer">
+                                                    <button type="button" class="ff-confirm-btn ff-confirm-btn-cancel"
+                                                        data-close-cancel-deployment>Cancel</button>
+                                                    <button type="button" class="ff-confirm-btn ff-confirm-btn-danger"
+                                                        id="ff-confirm-cancel-deployment-btn">Cancel Deployment</button>
+                                                </div>
+                                            </div>
+                                        </div>
                                         <script>
                                             (function () {
+                                                var localApiRouteMap = {
+                                                    strategyList: 'strategy/list',
+                                                    portfolioList: 'portfolio/list',
+                                                    tradesList: 'trades/list',
+                                                    executions: 'executions'
+                                                };
+                                                var localPageRouteMap = {
+                                                    portfolio: 'portfolio.html',
+                                                    portfolioActivation: 'portfolio-activation.html'
+                                                };
+
+                                                function buildAlgoApiUrl(path) {
+                                                    if (window.APP_CONFIG && typeof window.APP_CONFIG.buildAlgoApiUrl === 'function') {
+                                                        return window.APP_CONFIG.buildAlgoApiUrl(path);
+                                                    }
+                                                    if (typeof window.buildAlgoApiUrl === 'function') {
+                                                        return window.buildAlgoApiUrl(path);
+                                                    }
+                                                    return 'http://localhost:8000/algo/' + String(path || '').replace(/^\/+/, '');
+                                                }
+
+                                                function buildNamedApiUrl(routeName, suffix) {
+                                                    if (window.APP_CONFIG && typeof window.APP_CONFIG.buildNamedApiUrl === 'function') {
+                                                        return window.APP_CONFIG.buildNamedApiUrl(routeName, suffix);
+                                                    }
+                                                    if (typeof window.buildNamedApiUrl === 'function') {
+                                                        return window.buildNamedApiUrl(routeName, suffix);
+                                                    }
+                                                    var routeMap = (window.APP_CONFIG && window.APP_CONFIG.apiRoutes) || window.APP_API_ROUTES || localApiRouteMap;
+                                                    var routePath = routeMap[routeName] || routeName || '';
+                                                    var normalizedRoute = String(routePath).replace(/\/+$/, '');
+                                                    var normalizedSuffix = String(suffix || '').replace(/^\/+/, '');
+                                                    return buildAlgoApiUrl(normalizedSuffix ? normalizedRoute + '/' + normalizedSuffix : normalizedRoute);
+                                                }
+
+                                                function buildNamedPageUrl(routeName, suffix) {
+                                                    if (window.APP_CONFIG && typeof window.APP_CONFIG.buildNamedPageUrl === 'function') {
+                                                        var basePageUrl = window.APP_CONFIG.buildNamedPageUrl(routeName);
+                                                        return basePageUrl + (suffix || '');
+                                                    }
+                                                    if (typeof window.buildNamedPageUrl === 'function') {
+                                                        return window.buildNamedPageUrl(routeName) + (suffix || '');
+                                                    }
+                                                    var routeMap = (window.APP_CONFIG && window.APP_CONFIG.pageRoutes) || window.APP_PAGE_ROUTES || localPageRouteMap;
+                                                    var routePath = routeMap[routeName] || routeName || '';
+                                                    if (typeof window.buildAppUrl === 'function') {
+                                                        return window.buildAppUrl(routePath) + (suffix || '');
+                                                    }
+                                                    return './' + String(routePath || '').replace(/^\/+/, '') + (suffix || '');
+                                                }
+
                                                 var table = document.querySelector('.ff-strategy-table');
                                                 var rowsHost = document.getElementById('ff-strategy-rows');
                                                 var countLabel = document.getElementById('ff-strategy-count');
                                                 var paginationHost = document.getElementById('ff-strategy-pagination');
                                                 var searchInput = document.getElementById('ff-list-search');
                                                 var marketCountdownEl = document.getElementById('ff-market-countdown');
+                                                var listeningDateInput = document.getElementById('ff-listening-date');
+                                                var listeningDateTrigger = document.getElementById('ff-listening-date-trigger');
+                                                var listeningDateLabel = document.getElementById('ff-listening-date-label');
+                                                var calendarPopup = document.getElementById('ff-calendar-popup');
+                                                var calendarGrid = document.getElementById('ff-calendar-grid');
+                                                var calendarWeekdays = document.getElementById('ff-calendar-weekdays');
+                                                var calendarMonthToggle = document.getElementById('ff-calendar-month-toggle');
+                                                var calendarYearToggle = document.getElementById('ff-calendar-year-toggle');
+                                                var calendarPrevBtn = document.getElementById('ff-calendar-prev-btn');
+                                                var calendarNextBtn = document.getElementById('ff-calendar-next-btn');
+                                                var calendarConfirmBtn = document.getElementById('ff-calendar-confirm-btn');
+                                                var listeningBehindTimeSelect = document.getElementById('ff-listening-behind-time');
+                                                var startListeningBtn = document.getElementById('ff-start-listening-btn');
+                                                var pauseListeningBtn = document.getElementById('ff-pause-listening-btn');
+                                                var stopListeningBtn = document.getElementById('ff-stop-listening-btn');
+                                                var deployedRowsHost = document.getElementById('ff-deployed-rows');
                                                 var tabButtons = Array.prototype.slice.call(document.querySelectorAll('[data-ff-tab]'));
                                                 var setupModal = document.getElementById('ff-setup-modal');
                                                 var setupStrategyName = document.getElementById('ff-setup-strategy-name');
+                                                var cancelDeploymentModal = document.getElementById('ff-cancel-deployment-modal');
+                                                var confirmCancelDeploymentBtn = document.getElementById('ff-confirm-cancel-deployment-btn');
                                                 var weekdayPanel = document.getElementById('ff-weekday-panel');
                                                 var dtePanel = document.getElementById('ff-dte-panel');
                                                 var dteSelectAll = document.getElementById('ff-dte-select-all');
                                                 var marketCountdownEndTime = '09:15';
+                                                var backtestMarketOpenTime = '09:16';
+                                                var marketCountdownTimer = null;
+                                                var backtestCountdownState = null;
+                                                var listeningPollTimer = null;
+                                                var listeningPollIntervalMs = 20000;
+                                                var listeningFetchInFlight = false;
+                                                var listeningState = 'idle';
+                                                var calendarMonthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+                                                var calendarMonthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                                                var calendarState = {
+                                                    view: 'date',
+                                                    displayDate: null,
+                                                    selectedDate: null,
+                                                    draftDate: null,
+                                                    yearPageStart: 0
+                                                };
+                                                var listeningModeKey = 'algo-backtest';
                                                 var perPage = 20;
                                                 var currentPage = 1;
 
                                                 function updateMarketCountdown() {
                                                     if (!marketCountdownEl) {
+                                                        return;
+                                                    }
+
+                                                    if (backtestCountdownState) {
+                                                        if (backtestCountdownState.paused) {
+                                                            var pausedMinutesLeft = Math.max(0, backtestCountdownState.remainingMinutes);
+                                                            var pausedHours = Math.floor(pausedMinutesLeft / 60);
+                                                            var pausedMinutes = pausedMinutesLeft % 60;
+                                                            marketCountdownEl.textContent = pausedHours + 'h '
+                                                                + String(pausedMinutes).padStart(2, '0') + 'm till market opens';
+                                                            refreshDeployedStrategyTimers();
+                                                            return;
+                                                        }
+
+                                                        var simulatedMinutesLeft = Math.max(0, backtestCountdownState.remainingMinutes);
+                                                        var simulatedHours = Math.floor(simulatedMinutesLeft / 60);
+                                                        var simulatedMinutes = simulatedMinutesLeft % 60;
+
+                                                        if (simulatedMinutesLeft <= 0) {
+                                                            marketCountdownEl.textContent = 'Market is open';
+                                                            backtestCountdownState = null;
+                                                            resetListeningPollTimer();
+                                                            listeningState = 'idle';
+                                                            if (marketCountdownTimer) {
+                                                                window.clearInterval(marketCountdownTimer);
+                                                                marketCountdownTimer = null;
+                                                            }
+                                                            persistListeningSession();
+                                                            renderListeningControls();
+                                                            refreshDeployedStrategyTimers();
+                                                            return;
+                                                        }
+
+                                                        marketCountdownEl.textContent = simulatedHours + 'h '
+                                                            + String(simulatedMinutes).padStart(2, '0') + 'm till market opens';
+                                                        backtestCountdownState.remainingMinutes -= 1;
+                                                        persistListeningSession();
+                                                        refreshDeployedStrategyTimers();
                                                         return;
                                                     }
 
@@ -1480,24 +2105,232 @@
                                                     var totalSeconds = Math.floor(diffMs / 1000);
                                                     var hours = Math.floor(totalSeconds / 3600);
                                                     var minutes = Math.floor((totalSeconds % 3600) / 60);
-                                                    var seconds = totalSeconds % 60;
 
                                                     marketCountdownEl.textContent = hours + 'h '
-                                                        + String(minutes).padStart(2, '0') + 'm '
-                                                        + String(seconds).padStart(2, '0') + 's till market opens';
+                                                        + String(minutes).padStart(2, '0') + 'm till market opens';
+                                                    refreshDeployedStrategyTimers();
                                                 }
 
-                                                updateMarketCountdown();
-                                                window.setInterval(updateMarketCountdown, 1000);
+                                                function resetMarketCountdownTimer() {
+                                                    if (marketCountdownTimer) {
+                                                        window.clearInterval(marketCountdownTimer);
+                                                        marketCountdownTimer = null;
+                                                    }
+                                                }
+
+                                                function getListeningManager() {
+                                                    if (window.APP_CONFIG && window.APP_CONFIG.listeningManager) {
+                                                        return window.APP_CONFIG.listeningManager;
+                                                    }
+                                                    if (window.APP_LISTENING_MANAGER) {
+                                                        return window.APP_LISTENING_MANAGER;
+                                                    }
+                                                    return {
+                                                        load: function (mode) {
+                                                            try {
+                                                                var prefix = window.APP_LISTENING_STORAGE_PREFIX || 'option_algo_listening';
+                                                                var rawValue = window.localStorage.getItem(prefix + ':' + String(mode || 'default'));
+                                                                return rawValue ? JSON.parse(rawValue) : null;
+                                                            } catch (error) {
+                                                                return null;
+                                                            }
+                                                        },
+                                                        save: function (mode, payload) {
+                                                            try {
+                                                                var prefix = window.APP_LISTENING_STORAGE_PREFIX || 'option_algo_listening';
+                                                                window.localStorage.setItem(
+                                                                    prefix + ':' + String(mode || 'default'),
+                                                                    JSON.stringify(Object.assign({}, payload || {}, { updated_at: Date.now() }))
+                                                                );
+                                                                return true;
+                                                            } catch (error) {
+                                                                return false;
+                                                            }
+                                                        },
+                                                        clear: function (mode) {
+                                                            try {
+                                                                var prefix = window.APP_LISTENING_STORAGE_PREFIX || 'option_algo_listening';
+                                                                window.localStorage.removeItem(prefix + ':' + String(mode || 'default'));
+                                                                return true;
+                                                            } catch (error) {
+                                                                return false;
+                                                            }
+                                                        }
+                                                    };
+                                                }
+
+                                                function syncCalendarStateFromIsoDate(isoDate) {
+                                                    var parsedDate = parseIsoDate(isoDate) || new Date();
+                                                    calendarState.selectedDate = new Date(parsedDate.getTime());
+                                                    calendarState.draftDate = new Date(parsedDate.getTime());
+                                                    calendarState.displayDate = new Date(parsedDate.getTime());
+                                                    calendarState.yearPageStart = calendarState.displayDate.getFullYear() - 7;
+                                                    listeningDateInput.value = formatIsoDate(parsedDate);
+                                                    syncListeningDateLabel();
+                                                    renderCalendar();
+                                                }
+
+                                                function persistListeningSession() {
+                                                    var manager = getListeningManager();
+                                                    if (!manager) {
+                                                        return;
+                                                    }
+                                                    if (listeningState !== 'running' && listeningState !== 'paused') {
+                                                        manager.clear(listeningModeKey);
+                                                        return;
+                                                    }
+                                                    manager.save(listeningModeKey, {
+                                                        mode: listeningModeKey,
+                                                        listening_state: listeningState,
+                                                        selected_date: String(listeningDateInput.value || '').trim(),
+                                                        behind_time: String(listeningBehindTimeSelect ? listeningBehindTimeSelect.value || '5' : '5'),
+                                                        remaining_minutes: backtestCountdownState ? Math.max(0, parseInt(backtestCountdownState.remainingMinutes || 0, 10) || 0) : 0,
+                                                        paused: !!(backtestCountdownState && backtestCountdownState.paused)
+                                                    });
+                                                }
+
+                                                function renderListeningControls() {
+                                                    if (!startListeningBtn || !pauseListeningBtn || !stopListeningBtn) {
+                                                        return;
+                                                    }
+                                                    if (listeningState === 'running') {
+                                                        startListeningBtn.style.display = 'none';
+                                                        pauseListeningBtn.style.display = '';
+                                                        stopListeningBtn.style.display = '';
+                                                    } else if (listeningState === 'paused') {
+                                                        startListeningBtn.style.display = '';
+                                                        startListeningBtn.textContent = 'Re-Start Listening';
+                                                        startListeningBtn.disabled = false;
+                                                        pauseListeningBtn.style.display = 'none';
+                                                        stopListeningBtn.style.display = '';
+                                                    } else {
+                                                        startListeningBtn.style.display = '';
+                                                        startListeningBtn.textContent = 'Start Listening';
+                                                        startListeningBtn.disabled = false;
+                                                        pauseListeningBtn.style.display = 'none';
+                                                        stopListeningBtn.style.display = 'none';
+                                                    }
+                                                }
+
+                                                function resetListeningPollTimer() {
+                                                    if (listeningPollTimer) {
+                                                        window.clearInterval(listeningPollTimer);
+                                                        listeningPollTimer = null;
+                                                    }
+                                                }
+
+                                                function startListeningPollLoop(selectedDate, behindTime) {
+                                                    resetListeningPollTimer();
+                                                    if (listeningState !== 'running' || !selectedDate) {
+                                                        return;
+                                                    }
+                                                    listeningPollTimer = window.setInterval(function () {
+                                                        if (listeningState !== 'running') {
+                                                            resetListeningPollTimer();
+                                                            return;
+                                                        }
+                                                        fetchDeployedPortfolios(selectedDate, behindTime, false).catch(function () {
+                                                        });
+                                                    }, listeningPollIntervalMs);
+                                                }
+
+                                                function buildExecutionListUrl(selectedDate) {
+                                                    var query = [
+                                                        'environment=algo-backtest',
+                                                        'is_signal=false',
+                                                        'trade_status=1'
+                                                    ];
+                                                    var normalizedDate = String(selectedDate || '').trim();
+                                                    if (normalizedDate) {
+                                                        query.push('date=' + encodeURIComponent(normalizedDate));
+                                                    }
+                                                    return buildNamedApiUrl('executions') + '?' + query.join('&');
+                                                }
+
+                                                function startRealTimeMarketCountdown() {
+                                                    resetMarketCountdownTimer();
+                                                    resetListeningPollTimer();
+                                                    backtestCountdownState = null;
+                                                    listeningState = 'idle';
+                                                    updateMarketCountdown();
+                                                    marketCountdownTimer = window.setInterval(updateMarketCountdown, 1000);
+                                                    persistListeningSession();
+                                                    renderListeningControls();
+                                                }
+
+                                                function startBacktestCountdown(behindTime) {
+                                                    var normalizedBehindTime = Math.max(0, parseInt(behindTime || '0', 10) || 0);
+                                                    var timeParts = String(backtestMarketOpenTime || '09:16').split(':');
+                                                    var marketOpenHour = parseInt(timeParts[0] || '9', 10);
+                                                    var marketOpenMinute = parseInt(timeParts[1] || '16', 10);
+                                                    var totalOpenMinutes = (marketOpenHour * 60) + marketOpenMinute;
+                                                    var simulatedCurrentMinutes = Math.max(0, totalOpenMinutes - normalizedBehindTime);
+
+                                                    backtestCountdownState = {
+                                                        remainingMinutes: Math.max(0, totalOpenMinutes - simulatedCurrentMinutes),
+                                                        paused: false
+                                                    };
+
+                                                    resetMarketCountdownTimer();
+                                                    resetListeningPollTimer();
+                                                    listeningState = 'running';
+                                                    updateMarketCountdown();
+                                                    if (backtestCountdownState) {
+                                                        marketCountdownTimer = window.setInterval(updateMarketCountdown, 1000);
+                                                    }
+                                                    persistListeningSession();
+                                                    renderListeningControls();
+                                                }
+
+                                                function pauseBacktestListening() {
+                                                    if (!backtestCountdownState) {
+                                                        return;
+                                                    }
+                                                    backtestCountdownState.paused = true;
+                                                    listeningState = 'paused';
+                                                    resetMarketCountdownTimer();
+                                                    resetListeningPollTimer();
+                                                    updateMarketCountdown();
+                                                    persistListeningSession();
+                                                    renderListeningControls();
+                                                }
+
+                                                function resumeBacktestListening() {
+                                                    if (!backtestCountdownState) {
+                                                        return;
+                                                    }
+                                                    backtestCountdownState.paused = false;
+                                                    listeningState = 'running';
+                                                    resetMarketCountdownTimer();
+                                                    resetListeningPollTimer();
+                                                    updateMarketCountdown();
+                                                    if (backtestCountdownState) {
+                                                        marketCountdownTimer = window.setInterval(updateMarketCountdown, 1000);
+                                                    }
+                                                    persistListeningSession();
+                                                    renderListeningControls();
+                                                }
+
+                                                function stopBacktestListening() {
+                                                    resetMarketCountdownTimer();
+                                                    resetListeningPollTimer();
+                                                    backtestCountdownState = null;
+                                                    listeningState = 'idle';
+                                                    startRealTimeMarketCountdown();
+                                                    persistListeningSession();
+                                                    renderListeningControls();
+                                                }
+
                                                 var activeTab = 'strategies';
                                                 var allItems = [];
-                                                if (!table || !rowsHost || !countLabel || !paginationHost || !searchInput || !tabButtons.length || !setupModal || !setupStrategyName || !weekdayPanel || !dtePanel || !dteSelectAll) {
+                                                if (!table || !rowsHost || !countLabel || !paginationHost || !searchInput || !tabButtons.length || !setupModal || !setupStrategyName || !cancelDeploymentModal || !confirmCancelDeploymentBtn || !weekdayPanel || !dtePanel || !dteSelectAll || !listeningDateInput || !listeningDateTrigger || !listeningDateLabel || !calendarPopup || !calendarGrid || !calendarWeekdays || !calendarMonthToggle || !calendarYearToggle || !calendarPrevBtn || !calendarNextBtn || !calendarConfirmBtn || !startListeningBtn || !pauseListeningBtn || !stopListeningBtn || !deployedRowsHost) {
                                                     return;
                                                 }
 
                                                 var dteOptions = Array.prototype.slice.call(setupModal.querySelectorAll('.ff-dte-option'));
 
                                                 document.body.appendChild(setupModal);
+                                                document.body.appendChild(cancelDeploymentModal);
 
                                                 function escapeHtml(value) {
                                                     return String(value == null ? '' : value)
@@ -1506,6 +2339,193 @@
                                                         .replace(/>/g, '&gt;')
                                                         .replace(/"/g, '&quot;')
                                                         .replace(/'/g, '&#39;');
+                                                }
+
+                                                function parseIsoDate(value) {
+                                                    var parts = String(value || '').split('-');
+                                                    if (parts.length !== 3) {
+                                                        return null;
+                                                    }
+                                                    var year = parseInt(parts[0], 10);
+                                                    var month = parseInt(parts[1], 10) - 1;
+                                                    var day = parseInt(parts[2], 10);
+                                                    if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+                                                        return null;
+                                                    }
+                                                    return new Date(year, month, day);
+                                                }
+
+                                                function formatIsoDate(date) {
+                                                    if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+                                                        return '';
+                                                    }
+                                                    return date.getFullYear() + '-'
+                                                        + String(date.getMonth() + 1).padStart(2, '0') + '-'
+                                                        + String(date.getDate()).padStart(2, '0');
+                                                }
+
+                                                function formatDisplayDate(date) {
+                                                    if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+                                                        return '';
+                                                    }
+                                                    return String(date.getDate()).padStart(2, '0') + '/'
+                                                        + String(date.getMonth() + 1).padStart(2, '0') + '/'
+                                                        + date.getFullYear();
+                                                }
+
+                                                function isSameDate(left, right) {
+                                                    return !!left && !!right
+                                                        && left.getFullYear() === right.getFullYear()
+                                                        && left.getMonth() === right.getMonth()
+                                                        && left.getDate() === right.getDate();
+                                                }
+
+                                                function setCalendarWeekdaysVisible(visible) {
+                                                    calendarWeekdays.hidden = !visible;
+                                                }
+
+                                                function syncListeningDateLabel() {
+                                                    listeningDateLabel.textContent = formatDisplayDate(calendarState.selectedDate || calendarState.draftDate || new Date());
+                                                }
+
+                                                function closeCalendarPopup() {
+                                                    calendarPopup.hidden = true;
+                                                }
+
+                                                function openCalendarPopup() {
+                                                    calendarState.view = 'date';
+                                                    calendarState.draftDate = new Date((calendarState.selectedDate || new Date()).getTime());
+                                                    calendarState.displayDate = new Date(calendarState.draftDate.getTime());
+                                                    calendarState.yearPageStart = calendarState.displayDate.getFullYear() - 7;
+                                                    renderCalendar();
+                                                    calendarPopup.hidden = false;
+                                                }
+
+                                                function renderDateView() {
+                                                    var baseDate = calendarState.displayDate || new Date();
+                                                    var year = baseDate.getFullYear();
+                                                    var month = baseDate.getMonth();
+                                                    var firstDay = new Date(year, month, 1);
+                                                    var firstWeekday = firstDay.getDay();
+                                                    var totalDays = new Date(year, month + 1, 0).getDate();
+                                                    var cells = [];
+                                                    var todaySelected = calendarState.draftDate || calendarState.selectedDate || new Date();
+
+                                                    for (var i = 0; i < firstWeekday; i += 1) {
+                                                        cells.push('<span class="ff-calendar-cell is-muted"></span>');
+                                                    }
+
+                                                    for (var day = 1; day <= totalDays; day += 1) {
+                                                        var candidateDate = new Date(year, month, day);
+                                                        var isSelected = isSameDate(candidateDate, todaySelected);
+                                                        cells.push('<button type="button" class="ff-calendar-cell' + (isSelected ? ' is-selected' : '') + '" data-calendar-day="' + day + '">' + day + '</button>');
+                                                    }
+
+                                                    calendarGrid.className = 'ff-calendar-grid';
+                                                    calendarGrid.innerHTML = cells.join('');
+                                                    calendarMonthToggle.textContent = calendarMonthNames[month];
+                                                    calendarYearToggle.textContent = String(year);
+                                                    calendarMonthToggle.classList.add('is-active');
+                                                    calendarYearToggle.classList.remove('is-active');
+                                                    setCalendarWeekdaysVisible(true);
+                                                }
+
+                                                function renderMonthView() {
+                                                    var baseDate = calendarState.displayDate || new Date();
+                                                    var selectedMonth = baseDate.getMonth();
+                                                    calendarGrid.className = 'ff-calendar-grid is-month-view';
+                                                    calendarGrid.innerHTML = calendarMonthNamesShort.map(function (monthName, index) {
+                                                        var selectedClass = index === selectedMonth ? ' is-selected' : '';
+                                                        return '<button type="button" class="ff-calendar-cell' + selectedClass + '" data-calendar-month="' + index + '">' + monthName + '</button>';
+                                                    }).join('');
+                                                    calendarMonthToggle.textContent = calendarMonthNames[selectedMonth];
+                                                    calendarYearToggle.textContent = String(baseDate.getFullYear());
+                                                    calendarMonthToggle.classList.add('is-active');
+                                                    calendarYearToggle.classList.remove('is-active');
+                                                    setCalendarWeekdaysVisible(false);
+                                                }
+
+                                                function renderYearView() {
+                                                    var startYear = calendarState.yearPageStart || ((calendarState.displayDate || new Date()).getFullYear() - 7);
+                                                    var selectedYear = (calendarState.displayDate || new Date()).getFullYear();
+                                                    var items = [];
+                                                    for (var year = startYear; year < startYear + 8; year += 1) {
+                                                        items.push('<button type="button" class="ff-calendar-cell' + (year === selectedYear ? ' is-selected' : '') + '" data-calendar-year="' + year + '">' + year + '</button>');
+                                                    }
+                                                    calendarGrid.className = 'ff-calendar-grid is-year-view';
+                                                    calendarGrid.innerHTML = items.join('');
+                                                    calendarMonthToggle.textContent = calendarMonthNames[(calendarState.displayDate || new Date()).getMonth()];
+                                                    calendarYearToggle.textContent = String(selectedYear);
+                                                    calendarMonthToggle.classList.remove('is-active');
+                                                    calendarYearToggle.classList.add('is-active');
+                                                    setCalendarWeekdaysVisible(false);
+                                                }
+
+                                                function renderCalendar() {
+                                                    if (calendarState.view === 'month') {
+                                                        renderMonthView();
+                                                        return;
+                                                    }
+                                                    if (calendarState.view === 'year') {
+                                                        renderYearView();
+                                                        return;
+                                                    }
+                                                    renderDateView();
+                                                }
+
+                                                function commitCalendarDateSelection() {
+                                                    var pickedDate = calendarState.draftDate || calendarState.selectedDate || new Date();
+                                                    calendarState.selectedDate = new Date(pickedDate.getTime());
+                                                    calendarState.displayDate = new Date(pickedDate.getTime());
+                                                    listeningDateInput.value = formatIsoDate(calendarState.selectedDate);
+                                                    syncListeningDateLabel();
+                                                    closeCalendarPopup();
+                                                }
+
+                                                function restoreListeningSession() {
+                                                    var manager = getListeningManager();
+                                                    var savedState = manager ? manager.load(listeningModeKey) : null;
+                                                    if (!savedState || !savedState.selected_date) {
+                                                        return false;
+                                                    }
+
+                                                    syncCalendarStateFromIsoDate(savedState.selected_date);
+                                                    if (listeningBehindTimeSelect && savedState.behind_time) {
+                                                        listeningBehindTimeSelect.value = String(savedState.behind_time);
+                                                    }
+
+                                                    var remainingMinutes = Math.max(0, parseInt(savedState.remaining_minutes || 0, 10) || 0);
+                                                    var updatedAt = parseInt(savedState.updated_at || 0, 10) || 0;
+                                                    if (savedState.listening_state === 'running' && updatedAt) {
+                                                        var elapsedSeconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000));
+                                                        remainingMinutes = Math.max(0, remainingMinutes - elapsedSeconds);
+                                                    }
+
+                                                    if (remainingMinutes <= 0) {
+                                                        if (manager) {
+                                                            manager.clear(listeningModeKey);
+                                                        }
+                                                        return false;
+                                                    }
+
+                                                    backtestCountdownState = {
+                                                        remainingMinutes: remainingMinutes,
+                                                        paused: savedState.listening_state === 'paused'
+                                                    };
+                                                    listeningState = savedState.listening_state === 'paused' ? 'paused' : 'running';
+                                                    resetMarketCountdownTimer();
+                                                    updateMarketCountdown();
+                                                    if (listeningState === 'running' && backtestCountdownState) {
+                                                        marketCountdownTimer = window.setInterval(updateMarketCountdown, 1000);
+                                                    }
+                                                    renderListeningControls();
+                                                    fetchDeployedPortfolios(savedState.selected_date, savedState.behind_time, false)
+                                                        .finally(function () {
+                                                            if (listeningState === 'running') {
+                                                                startListeningPollLoop(savedState.selected_date, savedState.behind_time);
+                                                            }
+                                                        });
+                                                    return true;
                                                 }
 
                                                 function inferUnderlying(name) {
@@ -1526,6 +2546,17 @@
                                                         return 'BANKEX';
                                                     }
                                                     return 'NIFTY';
+                                                }
+
+                                                var initialCalendarDate = parseIsoDate(listeningDateInput.value) || new Date();
+                                                calendarState.selectedDate = new Date(initialCalendarDate.getTime());
+                                                calendarState.draftDate = new Date(initialCalendarDate.getTime());
+                                                calendarState.displayDate = new Date(initialCalendarDate.getTime());
+                                                calendarState.yearPageStart = calendarState.displayDate.getFullYear() - 7;
+                                                syncListeningDateLabel();
+                                                renderCalendar();
+                                                if (!restoreListeningSession()) {
+                                                    startRealTimeMarketCountdown();
                                                 }
 
                                                 function setActiveTabUi() {
@@ -1617,6 +2648,338 @@
                                                     paginationHost.innerHTML = '';
                                                 }
 
+                                                function normalizeExecutionStatus(record) {
+                                                    if (record && record.active_on_server) {
+                                                        return {
+                                                            text: 'RUNNING',
+                                                            className: 'running'
+                                                        };
+                                                    }
+                                                    return {
+                                                        text: 'STOPPED',
+                                                        className: 'stopped'
+                                                    };
+                                                }
+
+                                                function getBrokerLabel(record) {
+                                                    var mode = String(record && record.activation_mode || 'algo-backtest');
+                                                    if (mode === 'forward-test') {
+                                                        return { badge: 'FT', label: 'Forward Test' };
+                                                    }
+                                                    if (mode === 'live') {
+                                                        return { badge: 'LV', label: 'Live' };
+                                                    }
+                                                    return { badge: 'AB', label: 'Backtest' };
+                                                }
+
+                                                function parseRecordDateTime(value) {
+                                                    if (!value) {
+                                                        return null;
+                                                    }
+                                                    var normalized = String(value).trim().replace('T', ' ');
+                                                    var match = normalized.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?/);
+                                                    if (!match) {
+                                                        return null;
+                                                    }
+                                                    var parsed = new Date(
+                                                        parseInt(match[1], 10),
+                                                        parseInt(match[2], 10) - 1,
+                                                        parseInt(match[3], 10),
+                                                        parseInt(match[4], 10),
+                                                        parseInt(match[5], 10),
+                                                        parseInt(match[6] || '0', 10),
+                                                        0
+                                                    );
+                                                    return Number.isNaN(parsed.getTime()) ? null : parsed;
+                                                }
+
+                                                function getCurrentListeningDateTime() {
+                                                    if (!backtestCountdownState || !listeningDateInput || listeningState === 'idle') {
+                                                        return null;
+                                                    }
+                                                    var selectedDate = String(listeningDateInput.value || '').trim();
+                                                    var baseDate = parseIsoDate(selectedDate);
+                                                    if (!baseDate) {
+                                                        return null;
+                                                    }
+                                                    var timeParts = String(backtestMarketOpenTime || '09:16').split(':');
+                                                    var marketOpenDate = new Date(
+                                                        baseDate.getFullYear(),
+                                                        baseDate.getMonth(),
+                                                        baseDate.getDate(),
+                                                        parseInt(timeParts[0] || '9', 10),
+                                                        parseInt(timeParts[1] || '16', 10),
+                                                        0,
+                                                        0
+                                                    );
+                                                    var remainingMinutes = Math.max(0, parseInt(backtestCountdownState.remainingMinutes || 0, 10) || 0);
+                                                    return new Date(marketOpenDate.getTime() - (remainingMinutes * 60000));
+                                                }
+
+                                                function formatEntryCountdown(diffMs) {
+                                                    var totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
+                                                    var hours = Math.floor(totalSeconds / 3600);
+                                                    var minutes = Math.floor((totalSeconds % 3600) / 60);
+                                                    var seconds = totalSeconds % 60;
+                                                    return String(hours).padStart(2, '0') + ':'
+                                                        + String(minutes).padStart(2, '0') + ':'
+                                                        + String(seconds).padStart(2, '0');
+                                                }
+
+                                                function hasRecordTradeStarted(record, currentListeningDateTime) {
+                                                    var legCount = Array.isArray(record && record.legs) ? record.legs.length : 0;
+                                                    if (legCount > 0) {
+                                                        return true;
+                                                    }
+                                                    var entryTime = parseRecordDateTime(record && record.entry_time ? record.entry_time : '');
+                                                    if (!entryTime || !currentListeningDateTime) {
+                                                        return false;
+                                                    }
+                                                    return currentListeningDateTime.getTime() >= entryTime.getTime();
+                                                }
+
+                                                function buildDeploymentActionButton(label, started) {
+                                                    var stateClass = started ? 'ff-deployed-btn-warning' : 'ff-deployed-btn-danger';
+                                                    return '<button type="button" class="ff-deployed-btn ' + stateClass + '" data-deployment-action="' + escapeHtml(started ? 'square-off' : 'cancel-deployment') + '">' + escapeHtml(label) + '</button>';
+                                                }
+
+                                                function refreshDeployedStrategyTimers() {
+                                                    var currentListeningDateTime = getCurrentListeningDateTime();
+                                                    deployedRowsHost.querySelectorAll('[data-entry-target]').forEach(function (node) {
+                                                        var entryTime = parseRecordDateTime(node.getAttribute('data-entry-target') || '');
+                                                        var legCount = parseInt(node.getAttribute('data-leg-count') || '0', 10) || 0;
+                                                        if (!entryTime || !currentListeningDateTime || legCount > 0 || currentListeningDateTime.getTime() >= entryTime.getTime()) {
+                                                            node.innerHTML = '₹ 0';
+                                                            return;
+                                                        }
+                                                        var diffMs = entryTime.getTime() - currentListeningDateTime.getTime();
+                                                        node.innerHTML = '<span class="ff-deployed-entry-pill">entry in ' + formatEntryCountdown(diffMs) + '</span>';
+                                                    });
+                                                }
+
+                                                function groupDeployedRecords(records) {
+                                                    var groupedMap = {};
+                                                    (records || []).forEach(function (record) {
+                                                        var portfolioMeta = record && record.portfolio && typeof record.portfolio === 'object' ? record.portfolio : {};
+                                                        var groupId = String(portfolioMeta.group_id || portfolioMeta.portfolio || record._id || '');
+                                                        if (!groupedMap[groupId]) {
+                                                            groupedMap[groupId] = {
+                                                                group_id: groupId,
+                                                                group_name: portfolioMeta.group_name || record.name || 'Portfolio',
+                                                                portfolio_id: portfolioMeta.portfolio || '',
+                                                                items: []
+                                                            };
+                                                        }
+                                                        groupedMap[groupId].items.push(record);
+                                                    });
+                                                    return Object.keys(groupedMap).map(function (key) {
+                                                        return groupedMap[key];
+                                                    });
+                                                }
+
+                                                function renderDeployedRows(records, selectedDate, behindTime) {
+                                                    if (!deployedRowsHost) {
+                                                        return;
+                                                    }
+                                                    if (!Array.isArray(records) || !records.length) {
+                                                        deployedRowsHost.innerHTML = '<div class="ff-deployed-empty">No deployed portfolios found for ' + escapeHtml(selectedDate) + '.</div>';
+                                                        return;
+                                                    }
+
+                                                    var groupedRecords = groupDeployedRecords(records);
+                                                    var currentListeningDateTime = getCurrentListeningDateTime();
+                                                    deployedRowsHost.innerHTML = groupedRecords.map(function (group) {
+                                                        var items = Array.isArray(group.items) ? group.items : [];
+                                                        var activeCount = items.filter(function (item) { return !!item.active_on_server; }).length;
+                                                        var primaryRecord = items[0] || {};
+                                                        var primaryStatus = normalizeExecutionStatus({ active_on_server: activeCount > 0 });
+                                                        var primaryBroker = getBrokerLabel(primaryRecord);
+                                                        var groupTradeStarted = items.some(function (item) {
+                                                            return hasRecordTradeStarted(item, currentListeningDateTime);
+                                                        });
+                                                        var primaryOpenPositions = items.reduce(function (sum, item) {
+                                                            return sum + (Array.isArray(item && item.legs) ? item.legs.length : 0);
+                                                        }, 0);
+                                                        var openUrl = group.portfolio_id
+                                                            ? buildNamedPageUrl('portfolioActivation', '?strategy_id=' + encodeURIComponent(group.portfolio_id) + '&status=algo-backtest')
+                                                            : '#';
+
+                                                        var childRowsHtml = items.map(function (record) {
+                                                            var statusMeta = normalizeExecutionStatus(record);
+                                                            var brokerMeta = getBrokerLabel(record);
+                                                            var legCount = Array.isArray(record && record.legs) ? record.legs.length : 0;
+                                                            var entryTarget = escapeHtml(record.entry_time || '');
+                                                            var childIsActive = !!record.active_on_server;
+                                                            var childTradeStarted = hasRecordTradeStarted(record, currentListeningDateTime);
+                                                            return '' +
+                                                                '<div class="ff-deployed-child-row">' +
+                                                                '    <div>' +
+                                                                '        <div class="ff-deployed-name-wrap">' +
+                                                                '            <input type="checkbox" class="ff-deployed-checkbox" data-group-child-checkbox="' + escapeHtml(group.group_id) + '" data-strategy-id="' + escapeHtml(record._id || '') + '"' + (childIsActive ? '' : ' disabled') + '>' +
+                                                                '            <div>' +
+                                                                '                <div class="ff-deployed-name-wrap">' +
+                                                                '                    <span class="ff-deployed-strategy-icon">&#10038;</span>' +
+                                                                '                    <div class="ff-deployed-child-name">' + escapeHtml(record.name || 'Untitled Strategy') + '</div>' +
+                                                                '                </div>' +
+                                                                '                <div class="ff-deployed-child-sub">' + escapeHtml(record.ticker || 'NIFTY') + ' • Open Pos: ' + legCount + '</div>' +
+                                                                '            </div>' +
+                                                                '        </div>' +
+                                                                '    </div>' +
+                                                                '    <div class="ff-deployed-broker">' +
+                                                                '        <span class="ff-deployed-broker-badge">' + brokerMeta.badge + '</span>' +
+                                                                '        <span>' + brokerMeta.label + '</span>' +
+                                                                '    </div>' +
+                                                                '    <div><span class="ff-deployed-status ' + statusMeta.className + '">' + statusMeta.text + '</span></div>' +
+                                                                '    <div class="ff-deployed-mtm" data-entry-target="' + entryTarget + '" data-leg-count="' + legCount + '">₹ 0</div>' +
+                                                                '    <div class="ff-deployed-actions">' +
+                                                                '        ' + buildDeploymentActionButton(childTradeStarted ? 'Square Off' : 'Cancel Deployment', childTradeStarted) +
+                                                                '    </div>' +
+                                                                '</div>';
+                                                        }).join('');
+
+                                                        return '' +
+                                                            '<div class="ff-deployed-group" data-group-id="' + escapeHtml(group.group_id) + '" data-expanded="false">' +
+                                                            '    <div class="ff-deployed-row" data-group-toggle="' + escapeHtml(group.group_id) + '">' +
+                                                            '        <div>' +
+                                                            '            <div class="ff-deployed-name-wrap">' +
+                                                            '                <input type="checkbox" class="ff-deployed-checkbox" data-group-parent-checkbox="' + escapeHtml(group.group_id) + '"' + (activeCount > 0 ? '' : ' disabled') + '>' +
+                                                            '                <div>' +
+                                                            '                    <div class="ff-deployed-group-toggle">' +
+                                                            '                        <svg class="ff-deployed-group-caret" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>' +
+                                                            '                        <div class="ff-deployed-name">' + escapeHtml(group.group_name || 'Portfolio') + '</div>' +
+                                                            '                    </div>' +
+                                                            '                    <div class="ff-deployed-sub">Open Pos: ' + primaryOpenPositions + '</div>' +
+                                                            '                </div>' +
+                                                            '            </div>' +
+                                                            '        </div>' +
+                                                            '        <div class="ff-deployed-broker">' +
+                                                            '            <span class="ff-deployed-broker-badge">' + primaryBroker.badge + '</span>' +
+                                                            '            <span>' + primaryBroker.label + '</span>' +
+                                                            '        </div>' +
+                                                            '        <div><span class="ff-deployed-status ' + primaryStatus.className + '">' + primaryStatus.text + ' ' + activeCount + '/' + items.length + '</span></div>' +
+                                                            '        <div class="ff-deployed-mtm">₹ 0</div>' +
+                                                            '        <div class="ff-deployed-actions">' +
+                                                            '            ' + buildDeploymentActionButton(groupTradeStarted ? 'Square Off' : 'Cancel Deployment', groupTradeStarted) +
+                                                            '            <a class="ff-deployed-btn ff-deployed-btn-solid" href="' + openUrl + '">View</a>' +
+                                                            '        </div>' +
+                                                            '    </div>' +
+                                                            '    <div class="ff-deployed-children">' + childRowsHtml + '</div>' +
+                                                            '</div>';
+                                                    }).join('');
+                                                    refreshDeployedStrategyTimers();
+                                                }
+
+                                                function formatBacktestActivationDateTime() {
+                                                    var selectedDate = String(listeningDateInput.value || '').trim();
+                                                    if (!selectedDate) {
+                                                        return '';
+                                                    }
+                                                    var baseDate = parseIsoDate(selectedDate);
+                                                    if (!baseDate) {
+                                                        return '';
+                                                    }
+                                                    var timeParts = String(backtestMarketOpenTime || '09:16').split(':');
+                                                    var marketOpenHour = parseInt(timeParts[0] || '9', 10);
+                                                    var marketOpenMinute = parseInt(timeParts[1] || '16', 10);
+                                                    var displayedRemainingMinutes = 0;
+
+                                                    if (backtestCountdownState) {
+                                                        displayedRemainingMinutes = Math.max(0, parseInt(backtestCountdownState.remainingMinutes || 0, 10) || 0);
+                                                        if (!backtestCountdownState.paused && listeningState === 'running') {
+                                                            displayedRemainingMinutes += 1;
+                                                        }
+                                                    } else {
+                                                        displayedRemainingMinutes = Math.max(0, parseInt(listeningBehindTimeSelect ? listeningBehindTimeSelect.value || '0' : '0', 10) || 0);
+                                                    }
+
+                                                    var totalMinutes = (marketOpenHour * 60) + marketOpenMinute - displayedRemainingMinutes;
+                                                    var activationDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0, 0, 0, 0);
+                                                    activationDate.setMinutes(totalMinutes);
+
+                                                    return activationDate.getFullYear() + '-'
+                                                        + String(activationDate.getMonth() + 1).padStart(2, '0') + '-'
+                                                        + String(activationDate.getDate()).padStart(2, '0') + ' '
+                                                        + String(activationDate.getHours()).padStart(2, '0') + ':'
+                                                        + String(activationDate.getMinutes()).padStart(2, '0') + ':'
+                                                        + String(activationDate.getSeconds()).padStart(2, '0');
+                                                }
+
+                                                function fetchDeployedPortfolios(selectedDate, behindTime, showLoader) {
+                                                    var normalizedDate = String(selectedDate || '').trim();
+                                                    if (!normalizedDate) {
+                                                        renderDeployedRows([], 'the selected date', behindTime);
+                                                        return Promise.resolve([]);
+                                                    }
+                                                    if (showLoader !== false) {
+                                                        deployedRowsHost.innerHTML = '<div class="ff-deployed-empty">Loading deployed portfolios for ' + escapeHtml(normalizedDate) + '...</div>';
+                                                    }
+                                                    if (listeningFetchInFlight) {
+                                                        return Promise.resolve([]);
+                                                    }
+                                                    listeningFetchInFlight = true;
+                                                    return fetch(buildExecutionListUrl(normalizedDate))
+                                                        .then(function (response) {
+                                                            if (!response.ok) {
+                                                                throw new Error('Failed to load deployed portfolios');
+                                                            }
+                                                            return response.json();
+                                                        })
+                                                        .then(function (data) {
+                                                            var records = Array.isArray(data && data.records) ? data.records : [];
+                                                            renderDeployedRows(records, normalizedDate, behindTime);
+                                                            return records;
+                                                        })
+                                                        .catch(function (error) {
+                                                            deployedRowsHost.innerHTML = '<div class="ff-deployed-empty">Unable to load deployed portfolios for ' + escapeHtml(normalizedDate) + '.</div>';
+                                                            throw error;
+                                                        })
+                                                        .finally(function () {
+                                                            listeningFetchInFlight = false;
+                                                        });
+                                                }
+
+                                                function setListeningButtonState(label, disabled) {
+                                                    if (!startListeningBtn) {
+                                                        return;
+                                                    }
+                                                    startListeningBtn.textContent = label;
+                                                    startListeningBtn.disabled = !!disabled;
+                                                }
+
+                                                function loadDeployedPortfoliosForDate() {
+                                                    var selectedDate = String(listeningDateInput.value || '').trim();
+                                                    var behindTime = listeningBehindTimeSelect ? String(listeningBehindTimeSelect.value || '5') : '5';
+                                                    if (!selectedDate) {
+                                                        renderDeployedRows([], 'the selected date', behindTime);
+                                                        return;
+                                                    }
+
+                                                    if (listeningState === 'paused' && backtestCountdownState) {
+                                                        resumeBacktestListening();
+                                                        setListeningButtonState('Listening...', true);
+                                                        fetchDeployedPortfolios(selectedDate, behindTime, false)
+                                                            .finally(function () {
+                                                                if (listeningState === 'running') {
+                                                                    startListeningPollLoop(selectedDate, behindTime);
+                                                                    startListeningBtn.textContent = 'Start Listening';
+                                                                }
+                                                                renderListeningControls();
+                                                            });
+                                                        return;
+                                                    }
+
+                                                    startBacktestCountdown(behindTime);
+                                                    setListeningButtonState('Listening...', true);
+                                                    fetchDeployedPortfolios(selectedDate, behindTime, true)
+                                                        .finally(function () {
+                                                            if (listeningState === 'running') {
+                                                                startListeningPollLoop(selectedDate, behindTime);
+                                                                startListeningBtn.textContent = 'Start Listening';
+                                                            }
+                                                            renderListeningControls();
+                                                        });
+                                                }
+
                                                 function openSetupModal(strategyName) {
                                                     setupStrategyName.textContent = strategyName || 'Strategy';
                                                     weekdayPanel.hidden = false;
@@ -1635,6 +2998,18 @@
                                                     document.documentElement.style.overflow = '';
                                                 }
 
+                                                function openCancelDeploymentModal() {
+                                                    cancelDeploymentModal.hidden = false;
+                                                    document.body.style.overflow = 'hidden';
+                                                    document.documentElement.style.overflow = 'hidden';
+                                                }
+
+                                                function closeCancelDeploymentModal() {
+                                                    cancelDeploymentModal.hidden = true;
+                                                    document.body.style.overflow = '';
+                                                    document.documentElement.style.overflow = '';
+                                                }
+
                                                 paginationHost.addEventListener('click', function (event) {
                                                     var button = event.target.closest('[data-page]');
                                                     if (!button || button.disabled) {
@@ -1649,7 +3024,7 @@
                                                     if (editIcon) {
                                                         var portfolioId = editIcon.getAttribute('data-item-id');
                                                         if (portfolioId) {
-                                                            window.open('file:///home/ashok-innoppl/Documents/option-algo/portfolio.html?strategy_id=' + portfolioId, '_blank');
+                                                            window.open(buildNamedPageUrl('portfolio', '?strategy_id=' + encodeURIComponent(portfolioId)), '_blank');
                                                         }
                                                         return;
                                                     }
@@ -1657,7 +3032,12 @@
                                                     if (activateButton) {
                                                         var activationPortfolioId = activateButton.getAttribute('data-item-id');
                                                         if (activationPortfolioId) {
-                                                            window.location.href = 'file:///home/ashok-innoppl/Documents/option-algo/portfolio-activation.html?strategy_id=' + activationPortfolioId;
+                                                            var query = '?strategy_id=' + encodeURIComponent(activationPortfolioId) + '&status=algo-backtest';
+                                                            var currentDateTime = formatBacktestActivationDateTime();
+                                                            if (currentDateTime) {
+                                                                query += '&current_datetime=' + encodeURIComponent(currentDateTime);
+                                                            }
+                                                            window.location.href = buildNamedPageUrl('portfolioActivation', query);
                                                         }
                                                         return;
                                                     }
@@ -1688,6 +3068,10 @@
                                                 document.addEventListener('keydown', function (event) {
                                                     if (event.key === 'Escape' && !setupModal.hidden) {
                                                         closeSetupModal();
+                                                        return;
+                                                    }
+                                                    if (event.key === 'Escape' && !cancelDeploymentModal.hidden) {
+                                                        closeCancelDeploymentModal();
                                                     }
                                                 });
 
@@ -1705,10 +3089,191 @@
                                                     });
                                                 });
 
+                                                listeningDateTrigger.addEventListener('click', function (event) {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    if (calendarPopup.hidden) {
+                                                        openCalendarPopup();
+                                                    } else {
+                                                        closeCalendarPopup();
+                                                    }
+                                                });
+
+                                                calendarPopup.addEventListener('click', function (event) {
+                                                    event.stopPropagation();
+                                                });
+
+                                                calendarMonthToggle.addEventListener('click', function () {
+                                                    calendarState.view = 'month';
+                                                    renderCalendar();
+                                                });
+
+                                                calendarYearToggle.addEventListener('click', function () {
+                                                    calendarState.view = 'year';
+                                                    calendarState.yearPageStart = (calendarState.displayDate || new Date()).getFullYear() - 7;
+                                                    renderCalendar();
+                                                });
+
+                                                calendarPrevBtn.addEventListener('click', function () {
+                                                    if (calendarState.view === 'year') {
+                                                        calendarState.yearPageStart -= 8;
+                                                    } else if (calendarState.view === 'month') {
+                                                        calendarState.displayDate.setFullYear(calendarState.displayDate.getFullYear() - 1);
+                                                    } else {
+                                                        calendarState.displayDate.setMonth(calendarState.displayDate.getMonth() - 1);
+                                                    }
+                                                    renderCalendar();
+                                                });
+
+                                                calendarNextBtn.addEventListener('click', function () {
+                                                    if (calendarState.view === 'year') {
+                                                        calendarState.yearPageStart += 8;
+                                                    } else if (calendarState.view === 'month') {
+                                                        calendarState.displayDate.setFullYear(calendarState.displayDate.getFullYear() + 1);
+                                                    } else {
+                                                        calendarState.displayDate.setMonth(calendarState.displayDate.getMonth() + 1);
+                                                    }
+                                                    renderCalendar();
+                                                });
+
+                                                calendarGrid.addEventListener('click', function (event) {
+                                                    var dayButton = event.target.closest('[data-calendar-day]');
+                                                    if (dayButton) {
+                                                        var selectedDay = parseInt(dayButton.getAttribute('data-calendar-day') || '1', 10);
+                                                        calendarState.draftDate = new Date(
+                                                            calendarState.displayDate.getFullYear(),
+                                                            calendarState.displayDate.getMonth(),
+                                                            selectedDay
+                                                        );
+                                                        renderCalendar();
+                                                        return;
+                                                    }
+
+                                                    var monthButton = event.target.closest('[data-calendar-month]');
+                                                    if (monthButton) {
+                                                        var selectedMonth = parseInt(monthButton.getAttribute('data-calendar-month') || '0', 10);
+                                                        calendarState.displayDate.setMonth(selectedMonth);
+                                                        calendarState.view = 'date';
+                                                        if (calendarState.draftDate) {
+                                                            calendarState.draftDate.setFullYear(calendarState.displayDate.getFullYear(), selectedMonth, Math.min(calendarState.draftDate.getDate(), new Date(calendarState.displayDate.getFullYear(), selectedMonth + 1, 0).getDate()));
+                                                        }
+                                                        renderCalendar();
+                                                        return;
+                                                    }
+
+                                                    var yearButton = event.target.closest('[data-calendar-year]');
+                                                    if (yearButton) {
+                                                        var selectedYear = parseInt(yearButton.getAttribute('data-calendar-year') || String(new Date().getFullYear()), 10);
+                                                        calendarState.displayDate.setFullYear(selectedYear);
+                                                        if (calendarState.draftDate) {
+                                                            calendarState.draftDate.setFullYear(selectedYear);
+                                                        }
+                                                        calendarState.view = 'month';
+                                                        renderCalendar();
+                                                    }
+                                                });
+
+                                                calendarConfirmBtn.addEventListener('click', function () {
+                                                    commitCalendarDateSelection();
+                                                });
+
+                                                document.addEventListener('click', function (event) {
+                                                    if (calendarPopup.hidden) {
+                                                        return;
+                                                    }
+                                                    if (event.target.closest('.ff-calendar-wrap')) {
+                                                        return;
+                                                    }
+                                                    closeCalendarPopup();
+                                                });
+
+                                                startListeningBtn.addEventListener('click', function () {
+                                                    loadDeployedPortfoliosForDate();
+                                                });
+
+                                                deployedRowsHost.addEventListener('click', function (event) {
+                                                    var deploymentActionButton = event.target.closest('[data-deployment-action]');
+                                                    if (deploymentActionButton) {
+                                                        var deploymentAction = deploymentActionButton.getAttribute('data-deployment-action');
+                                                        if (deploymentAction === 'cancel-deployment') {
+                                                            event.preventDefault();
+                                                            event.stopPropagation();
+                                                            openCancelDeploymentModal();
+                                                            return;
+                                                        }
+                                                    }
+                                                    if (event.target.closest('.ff-deployed-btn')) {
+                                                        return;
+                                                    }
+                                                    if (event.target.closest('.ff-deployed-checkbox')) {
+                                                        return;
+                                                    }
+                                                    var toggleRow = event.target.closest('[data-group-toggle]');
+                                                    if (!toggleRow) {
+                                                        return;
+                                                    }
+                                                    var groupId = toggleRow.getAttribute('data-group-toggle');
+                                                    var groupNode = groupId ? deployedRowsHost.querySelector('[data-group-id="' + groupId + '"]') : null;
+                                                    if (!groupNode) {
+                                                        return;
+                                                    }
+                                                    var isExpanded = groupNode.getAttribute('data-expanded') === 'true';
+                                                    groupNode.setAttribute('data-expanded', isExpanded ? 'false' : 'true');
+                                                });
+
+                                                cancelDeploymentModal.addEventListener('click', function (event) {
+                                                    if (event.target.closest('[data-close-cancel-deployment]')) {
+                                                        closeCancelDeploymentModal();
+                                                    }
+                                                });
+
+                                                confirmCancelDeploymentBtn.addEventListener('click', function () {
+                                                    closeCancelDeploymentModal();
+                                                });
+
+                                                deployedRowsHost.addEventListener('change', function (event) {
+                                                    var parentCheckbox = event.target.closest('[data-group-parent-checkbox]');
+                                                    if (parentCheckbox) {
+                                                        var parentGroupId = parentCheckbox.getAttribute('data-group-parent-checkbox');
+                                                        deployedRowsHost.querySelectorAll('[data-group-child-checkbox="' + parentGroupId + '"]').forEach(function (checkbox) {
+                                                            if (!checkbox.disabled) {
+                                                                checkbox.checked = !!parentCheckbox.checked;
+                                                            }
+                                                        });
+                                                        return;
+                                                    }
+
+                                                    var childCheckbox = event.target.closest('[data-group-child-checkbox]');
+                                                    if (!childCheckbox) {
+                                                        return;
+                                                    }
+                                                    var childGroupId = childCheckbox.getAttribute('data-group-child-checkbox');
+                                                    var childCheckboxes = Array.prototype.slice.call(
+                                                        deployedRowsHost.querySelectorAll('[data-group-child-checkbox="' + childGroupId + '"]')
+                                                    ).filter(function (checkbox) {
+                                                        return !checkbox.disabled;
+                                                    });
+                                                    var checkedCount = childCheckboxes.filter(function (checkbox) {
+                                                        return checkbox.checked;
+                                                    }).length;
+                                                    var groupParentCheckbox = deployedRowsHost.querySelector('[data-group-parent-checkbox="' + childGroupId + '"]');
+                                                    if (groupParentCheckbox) {
+                                                        groupParentCheckbox.checked = childCheckboxes.length > 0 && checkedCount === childCheckboxes.length;
+                                                    }
+                                                });
+
+                                                pauseListeningBtn.addEventListener('click', function () {
+                                                    pauseBacktestListening();
+                                                });
+
+                                                stopListeningBtn.addEventListener('click', function () {
+                                                    stopBacktestListening();
+                                                });
+
                                                 function fetchActiveTabData() {
                                                     var url = activeTab === 'portfolios'
-                                                        ? 'http://127.0.0.1:8000/algo/portfolio/list'
-                                                        : 'http://127.0.0.1:8000/algo/strategy/list';
+                                                        ? buildNamedApiUrl('portfolioList')
+                                                        : buildNamedApiUrl('strategyList');
                                                     fetch(url)
                                                         .then(function (response) {
                                                             if (!response.ok) {
@@ -3375,12 +4940,12 @@
                                                         <path stroke-linecap="round" stroke-linejoin="round"
                                                             d="M11.25 4.5l7.5 7.5-7.5 7.5m-6-15l7.5 7.5-7.5 7.5"></path>
                                                     </svg></button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
                     </div>
                     <div class="fixed bottom-0 z-10 flex w-full"></div>
                 </div>

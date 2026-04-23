@@ -1,2 +1,5 @@
 2026-04-23 08:47:42  ERROR     kiteconnect.ticker                   Connection closed: None - None
 2026-04-23 08:54:48  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-23 09:37:42  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-23 09:37:42  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-23 09:37:42  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)

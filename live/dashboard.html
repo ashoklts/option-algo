@@ -2925,6 +2925,9 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        <script>
+                                            window.ALGO_ACTIVATION_MODE = 'live';
+                                        </script>
                                         <script src="../assets/js/algo-stream-sockets.js"></script>
                                         <script src="../assets/js/algo-backtest-dashboard.js"></script>
                                         <div style="display:none;">
@@ -5079,7 +5082,7 @@
                 Target: getNullableNumericValue('ff-broker-target-profit-input', 'ff-broker-target-profit-content'),
                 OverallTrailSL: null,
                 LockAndTrail: null,
-                activation_mode: 'algo-backtest'
+                activation_mode: (window.ALGO_ACTIVATION_MODE || 'live')
             };
 
             var userId = selectedBrokerContext.user_id || getContextValue(['user_id', 'userId']) || defaultBrokerSettingsUserId;

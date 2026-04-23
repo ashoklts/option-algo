@@ -20,6 +20,32 @@
         return 'http://localhost:8000/algo/' + String(path || '').replace(/^\/+/, '');
     }
 
+    function resolveCurrentUserId() {
+        // 1. APP_CONFIG
+        if (window.APP_CONFIG && String(window.APP_CONFIG.user_id || window.APP_CONFIG.userId || '').trim()) {
+            return String(window.APP_CONFIG.user_id || window.APP_CONFIG.userId).trim();
+        }
+        // 2. Global window variable
+        if (String(window.APP_USER_ID || window.user_id || '').trim()) {
+            return String(window.APP_USER_ID || window.user_id).trim();
+        }
+        // 3. URL query param
+        try {
+            var params = new URLSearchParams(window.location.search || '');
+            var fromUrl = String(params.get('user_id') || params.get('userId') || '').trim();
+            if (fromUrl) return fromUrl;
+        } catch (e) { /* ignore */ }
+        // 4. localStorage
+        try {
+            var keys = ['user_id', 'userId', 'algo_user_id'];
+            for (var i = 0; i < keys.length; i++) {
+                var val = String(window.localStorage.getItem(keys[i]) || '').trim();
+                if (val) return val;
+            }
+        } catch (e) { /* ignore */ }
+        return '';
+    }
+
     function buildNamedApiUrl(routeName, suffix) {
         if (window.APP_CONFIG && typeof window.APP_CONFIG.buildNamedApiUrl === 'function') {
             return window.APP_CONFIG.buildNamedApiUrl(routeName, suffix);
@@ -85,11 +111,18 @@
     var manualRunBtn = document.getElementById('ff-manual-run-btn');
     var autoloadToggleBtn = document.getElementById('ff-autoload-toggle-btn');
     var autoloadStatusEl = document.getElementById('ff-autoload-status');
+    var headerBrokerListHost = document.getElementById('ff-header-broker-list');
     var seekButtons = Array.prototype.slice.call(document.querySelectorAll('[data-seek-minutes], [data-seek-target]'));
     var deployedRowsHost = document.getElementById('ff-deployed-rows');
     var tabButtons = Array.prototype.slice.call(document.querySelectorAll('[data-ff-tab]'));
     var setupModal = document.getElementById('ff-setup-modal');
     var setupStrategyName = document.getElementById('ff-setup-strategy-name');
+    var brokerSettingsModal = document.getElementById('ff-broker-settings-modal');
+    var brokerSettingsEditBtn = document.querySelector('[data-open-broker-settings]');
+    var brokerStopLossInput = document.getElementById('ff-broker-stop-loss-input');
+    var brokerTargetProfitInput = document.getElementById('ff-broker-target-profit-input');
+    var brokerStopLossDisplay = document.getElementById('ff-broker-stop-loss-display');
+    var brokerTargetProfitDisplay = document.getElementById('ff-broker-target-profit-display');
     var cancelDeploymentModal = document.getElementById('ff-cancel-deployment-modal');
     var confirmCancelDeploymentBtn = document.getElementById('ff-confirm-cancel-deployment-btn');
     var squareOffModal = document.getElementById('ff-square-off-modal');
@@ -114,7 +147,26 @@
         draftDate: null,
         yearPageStart: 0
     };
-    var listeningModeKey = 'algo-backtest';
+    function resolveListeningModeKey() {
+        var explicitMode = String(
+            window.ALGO_ACTIVATION_MODE
+            || (window.APP_CONFIG && window.APP_CONFIG.activation_mode)
+            || ''
+        ).trim();
+        if (explicitMode) {
+            return explicitMode;
+        }
+        var pathName = String(window.location && window.location.pathname || '').toLowerCase();
+        if (pathName.indexOf('/live/') !== -1 || /\/live$/.test(pathName)) {
+            return 'live';
+        }
+        if (pathName.indexOf('/forward-test/') !== -1 || /\/forward-test$/.test(pathName)) {
+            return 'fast-forward';
+        }
+        return 'algo-backtest';
+    }
+
+    var listeningModeKey = resolveListeningModeKey();
     var executeOrdersSocketClient = null;
     var updateSocketClient = null;
     var socketManuallyPaused = false;
@@ -129,8 +181,23 @@
     var currentPage = 1;
     var currentDeployedRecords = [];
     var latestLtpSnapshot = [];
+    var latestLtpSnapshotMap = {};
+    var defaultBrowserTitle = String(document.title || '').trim() || 'Options Simulator';
+    var ltpRenderFrameId = 0;
+    var ltpRenderTimerId = 0;
+    var ltpRenderHeartbeatId = 0;
+    var lastLtpRenderAt = 0;
+    var LTP_RENDER_INTERVAL_MS = 500;
     // Map of record._id → record (with legs) for LTP-based PnL calculation
     var executionRecordsMap = {};
+    // Map of broker_id → broker settings (SL / Target / LockAndTrail state) from backend
+    var brokerSettingsCache = {};
+    var strategyPnlCache = {};
+    var recordPriceLinkIndex = {};
+    var aggregateCountsCache = null;
+    var aggregateCountsListenSecondKey = '';
+    var pendingChangedLtpKeys = {};
+    var forceFullLtpRender = true;
 
     function buildExecuteOrdersSubscriptionPayload(selectedDate) {
         var payload = {
@@ -144,19 +211,10 @@
         return payload;
     }
 
-    function requestExecuteOrderTrades() {
-        if (!executeOrdersSocketClient) {
-            return;
-        }
-        var selectedDate = String(listeningDateInput && listeningDateInput.value || '').trim();
-        var payload = buildExecuteOrdersSubscriptionPayload(selectedDate);
-        payload.type = 'get_trades';
-        executeOrdersSocketClient.send(payload);
-    }
-
     // Cross-tab relay:
     // 1. execute-orders socket messages from any tab are relayed here via AlgoStreamSockets broadcast
-    // 2. group_activated from portfolio-activation.html triggers dashboard to send its own get_trades
+    // 2. group_activated from portfolio-activation.html keeps this tab in sync without
+    //    actively sending trade refresh requests from this dashboard script
     (function initCrossTabRelay() {
         // Relay: socket messages from other tabs (e.g. execute_order responses)
         if (window.AlgoStreamSockets && typeof window.AlgoStreamSockets.onBroadcast === 'function') {
@@ -167,7 +225,7 @@
         }
 
         // group_activated: portfolio-activation page finished activating a group
-        // → dashboard sends its own get_trades to independently subscribe
+        // → dashboard updates its local date/socket state only
         if (typeof BroadcastChannel !== 'undefined') {
             try {
                 var bc = new BroadcastChannel('algo_execute_orders');
@@ -194,6 +252,7 @@
                         if (window.AlgoStreamSockets) {
                             executeOrdersSocketClient = window.AlgoStreamSockets.createChannel({
                                 channel: 'execute-orders',
+                                userId: resolveCurrentUserId(),
                                 onStatusChange: function (state, meta) {
                                     updateSocketStatus(state, meta || {});
                                 },
@@ -203,15 +262,6 @@
                             });
                             executeOrdersSocketClient.connect();
                         }
-                    }
-                    if (executeOrdersSocketClient) {
-                        executeOrdersSocketClient.send({
-                            trade_date: tradeDate,
-                            activation_mode: activationMode,
-                            status: activationMode,
-                            group_id: groupId,
-                            type: 'get_trades'
-                        });
                     }
                 };
             } catch (e) { /* BroadcastChannel not supported */ }
@@ -225,6 +275,493 @@
                 executionRecordsMap[String(record._id)] = record;
             }
         });
+        rebuildRecordPriceLinkIndex();
+        strategyPnlCache = {};
+        aggregateCountsCache = null;
+        aggregateCountsListenSecondKey = '';
+        forceFullLtpRender = true;
+    }
+
+    function isLikelyObjectId(value) {
+        return /^[a-f0-9]{24}$/i.test(String(value || '').trim());
+    }
+
+    function mergeExecutionRecordPreservingBrokerMeta(nextRecord, existingRecord) {
+        var mergedRecord = Object.assign({}, existingRecord || {}, nextRecord || {});
+        var nextBrokerDetails = nextRecord && typeof nextRecord.broker_details === 'object' ? nextRecord.broker_details : null;
+        var existingBrokerDetails = existingRecord && typeof existingRecord.broker_details === 'object' ? existingRecord.broker_details : null;
+        if (!nextBrokerDetails && existingBrokerDetails) {
+            mergedRecord.broker_details = existingBrokerDetails;
+        }
+
+        var nextBrokerLabel = String(nextRecord && nextRecord.broker_label || '').trim();
+        var existingBrokerLabel = String(existingRecord && existingRecord.broker_label || '').trim();
+        if ((!nextBrokerLabel || isLikelyObjectId(nextBrokerLabel)) && existingBrokerLabel && !isLikelyObjectId(existingBrokerLabel)) {
+            mergedRecord.broker_label = existingBrokerLabel;
+        }
+
+        // Execute-order refreshes can briefly send empty legs for active strategies.
+        // Preserve the previous legs so MTM does not flash to 0 between socket updates.
+        var nextLegs = Array.isArray(nextRecord && nextRecord.legs) ? nextRecord.legs : null;
+        var existingLegs = Array.isArray(existingRecord && existingRecord.legs) ? existingRecord.legs : [];
+        var isClosedRecord = mergedRecord.active_on_server === false || mergedRecord.status === 'StrategyStatus.SquaredOff';
+        if ((!nextLegs || !nextLegs.length) && existingLegs.length && !isClosedRecord) {
+            mergedRecord.legs = existingLegs;
+        }
+
+        var nextPendingFeatureLegs = Array.isArray(nextRecord && nextRecord.pending_feature_legs)
+            ? nextRecord.pending_feature_legs
+            : null;
+        var existingPendingFeatureLegs = Array.isArray(existingRecord && existingRecord.pending_feature_legs)
+            ? existingRecord.pending_feature_legs
+            : [];
+        if ((!nextPendingFeatureLegs || !nextPendingFeatureLegs.length) && existingPendingFeatureLegs.length && !isClosedRecord) {
+            mergedRecord.pending_feature_legs = existingPendingFeatureLegs;
+        }
+
+        if ((nextRecord == null || typeof nextRecord.open_legs_count !== 'number')
+            && existingRecord != null
+            && typeof existingRecord.open_legs_count === 'number'
+            && !isClosedRecord) {
+            mergedRecord.open_legs_count = existingRecord.open_legs_count;
+        }
+        return mergedRecord;
+    }
+
+    function getLtpSnapshotKey(item) {
+        if (!item || typeof item !== 'object') {
+            return '';
+        }
+        var tokenKey = String(item.token || '').trim();
+        if (tokenKey) {
+            return 'token:' + tokenKey;
+        }
+        var underlyingKey = String(item.underlying || '').trim().toUpperCase();
+        if (underlyingKey && String(item.option_type || '').trim().toUpperCase() === 'SPOT') {
+            return 'spot:' + underlyingKey;
+        }
+        var strikeKey = String(item.strike || '').trim();
+        var expiryKey = String(item.expiry || item.expiry_date || '').trim().slice(0, 10);
+        var optionKey = String(item.option_type || item.option || '').trim().toUpperCase();
+        if (strikeKey && expiryKey && optionKey) {
+            return 'contract:' + strikeKey + '_' + expiryKey + '_' + optionKey;
+        }
+        return '';
+    }
+
+    function mergeLatestLtpSnapshot(items) {
+        var incoming = Array.isArray(items) ? items : [];
+        incoming.forEach(function (item) {
+            var key = getLtpSnapshotKey(item);
+            if (!key) {
+                return;
+            }
+            latestLtpSnapshotMap[key] = Object.assign({}, latestLtpSnapshotMap[key] || {}, item);
+        });
+        latestLtpSnapshot = Object.keys(latestLtpSnapshotMap).map(function (key) {
+            return latestLtpSnapshotMap[key];
+        });
+    }
+
+    function rememberChangedLtpKeys(items) {
+        var incoming = Array.isArray(items) ? items : [];
+        incoming.forEach(function (item) {
+            var key = getLtpSnapshotKey(item);
+            if (key) {
+                pendingChangedLtpKeys[key] = true;
+            }
+        });
+    }
+
+    function resetLatestLtpSnapshot() {
+        latestLtpSnapshotMap = {};
+        latestLtpSnapshot = [];
+        pendingChangedLtpKeys = {};
+        forceFullLtpRender = true;
+    }
+
+    function buildLegContractKey(leg) {
+        if (!leg || typeof leg !== 'object') {
+            return '';
+        }
+        var strike = String(leg.strike || '').trim();
+        var expiry10 = String(leg.expiry_date || leg.expiry || '').trim().slice(0, 10);
+        var optionType = String(leg.option || leg.option_type || '').trim().toUpperCase();
+        if (!strike || !expiry10 || !optionType || optionType === 'SPOT') {
+            return '';
+        }
+        return 'contract:' + strike + '_' + expiry10 + '_' + optionType;
+    }
+
+    function collectLegPriceKeys(leg, keys) {
+        if (!leg || typeof leg !== 'object' || !keys) {
+            return;
+        }
+        var token = String(leg.token || '').trim();
+        if (token) {
+            keys['token:' + token] = true;
+        }
+        var entryTrade = leg.entry_trade;
+        var entryToken = String(entryTrade && entryTrade.instrument_token || '').trim();
+        if (entryToken) {
+            keys['token:' + entryToken] = true;
+        }
+        var contractKey = buildLegContractKey(leg);
+        if (contractKey) {
+            keys[contractKey] = true;
+        }
+    }
+
+    function rebuildRecordPriceLinkIndex() {
+        recordPriceLinkIndex = {};
+        Object.keys(executionRecordsMap).forEach(function (recordId) {
+            var rec = executionRecordsMap[recordId];
+            var keys = {};
+            var legs = Array.isArray(rec && rec.legs) ? rec.legs : [];
+            var pendingFeatureLegs = Array.isArray(rec && rec.pending_feature_legs) ? rec.pending_feature_legs : [];
+            legs.forEach(function (leg) {
+                collectLegPriceKeys(leg, keys);
+            });
+            pendingFeatureLegs.forEach(function (leg) {
+                collectLegPriceKeys(leg, keys);
+            });
+            Object.keys(keys).forEach(function (key) {
+                if (!recordPriceLinkIndex[key]) {
+                    recordPriceLinkIndex[key] = {};
+                }
+                recordPriceLinkIndex[key][recordId] = true;
+            });
+        });
+    }
+
+    function parseExecutionTimestamp(tsStr) {
+        if (!tsStr) {
+            return null;
+        }
+        var normalized = String(tsStr).replace(' ', 'T');
+        var dt = new Date(normalized);
+        return isNaN(dt.getTime()) ? null : dt;
+    }
+
+    function resolveLegLtpFromSnapshot(leg) {
+        if (!leg || typeof leg !== 'object') {
+            return null;
+        }
+        var token = String(leg.token || '').trim();
+        if (token && latestLtpSnapshotMap['token:' + token] && latestLtpSnapshotMap['token:' + token].ltp != null) {
+            return parseFloat(latestLtpSnapshotMap['token:' + token].ltp) || 0;
+        }
+        var entryTrade = leg.entry_trade;
+        var entryToken = String(entryTrade && entryTrade.instrument_token || '').trim();
+        if (
+            entryToken
+            && latestLtpSnapshotMap['token:' + entryToken]
+            && latestLtpSnapshotMap['token:' + entryToken].ltp != null
+        ) {
+            return parseFloat(latestLtpSnapshotMap['token:' + entryToken].ltp) || 0;
+        }
+        var contractKey = buildLegContractKey(leg);
+        if (contractKey && latestLtpSnapshotMap[contractKey] && latestLtpSnapshotMap[contractKey].ltp != null) {
+            return parseFloat(latestLtpSnapshotMap[contractKey].ltp) || 0;
+        }
+        return null;
+    }
+
+    function countOpenLegsForRecord(record, currentListenDt) {
+        var totalOpenLegs = 0;
+        var legs = Array.isArray(record && record.legs) ? record.legs : [];
+        legs.forEach(function (leg) {
+            if (!leg || typeof leg !== 'object') {
+                return;
+            }
+            var exitTrade = leg.exit_trade;
+            if (!exitTrade || typeof exitTrade !== 'object') {
+                totalOpenLegs += 1;
+                return;
+            }
+            var exitDt = parseExecutionTimestamp(exitTrade.traded_timestamp || exitTrade.trigger_timestamp || '');
+            if (!exitDt || isNaN(exitDt.getTime())) {
+                totalOpenLegs += 1;
+                return;
+            }
+            if (currentListenDt && currentListenDt.getTime() < exitDt.getTime()) {
+                totalOpenLegs += 1;
+            }
+        });
+        return totalOpenLegs;
+    }
+
+    function calculateStrategyPnl(recordId, currentListenDt) {
+        var rec = executionRecordsMap[recordId];
+        if (!rec || typeof rec !== 'object') {
+            return 0;
+        }
+        var isSquaredOff = rec.active_on_server === false || rec.status === 'StrategyStatus.SquaredOff';
+        var legs = Array.isArray(rec.legs) ? rec.legs : [];
+        var strategyPnl = 0;
+
+        if (legs.length === 0) {
+            if (isSquaredOff && squaredOffMtmCache[recordId] !== undefined) {
+                strategyPnl = squaredOffMtmCache[recordId];
+            }
+            return strategyPnl;
+        }
+
+        legs.forEach(function (leg) {
+            if (!leg || typeof leg !== 'object') {
+                return;
+            }
+            var entryTrade = leg.entry_trade;
+            if (!entryTrade || typeof entryTrade !== 'object') {
+                return;
+            }
+            var legEntryDt = parseExecutionTimestamp(
+                leg.entry_timestamp
+                || entryTrade.traded_timestamp
+                || entryTrade.trigger_timestamp
+                || ''
+            );
+            if (currentListenDt && legEntryDt && currentListenDt.getTime() < legEntryDt.getTime()) {
+                return;
+            }
+
+            var entryPrice = parseFloat(entryTrade.price || entryTrade.trigger_price) || 0;
+            var lotSize = parseInt(leg.lot_size, 10) || 1;
+            var lotQty = parseInt(leg.quantity, 10) || 0;
+            var qty = lotQty * lotSize;
+            var isSell = String(leg.position || '').toLowerCase().indexOf('sell') !== -1;
+            var pnl = 0;
+            var exitTrade = leg.exit_trade;
+
+            if (exitTrade && typeof exitTrade === 'object') {
+                var exitPrice = parseFloat(exitTrade.price || exitTrade.trigger_price) || 0;
+                if (exitPrice > 0) {
+                    pnl = isSell ? (entryPrice - exitPrice) * qty : (exitPrice - entryPrice) * qty;
+                } else {
+                    var exitDt = parseExecutionTimestamp(exitTrade.traded_timestamp || exitTrade.trigger_timestamp || '');
+                    if (currentListenDt && exitDt && currentListenDt.getTime() >= exitDt.getTime()) {
+                        pnl = 0;
+                    } else {
+                        var exitLtp = resolveLegLtpFromSnapshot(leg);
+                        if (exitLtp === null) {
+                            return;
+                        }
+                        pnl = isSell ? (entryPrice - exitLtp) * qty : (exitLtp - entryPrice) * qty;
+                    }
+                }
+            } else {
+                if (isSquaredOff) {
+                    return;
+                }
+                var openLtp = resolveLegLtpFromSnapshot(leg);
+                if (openLtp === null) {
+                    return;
+                }
+                leg.last_saw_price = openLtp;
+                leg.mark_price = openLtp;
+                leg.ltp = openLtp;
+                pnl = isSell ? (entryPrice - openLtp) * qty : (openLtp - entryPrice) * qty;
+            }
+
+            leg.pnl = pnl;
+            strategyPnl += pnl;
+        });
+
+        var pendingFeatureLegs = Array.isArray(rec.pending_feature_legs) ? rec.pending_feature_legs : [];
+        pendingFeatureLegs.forEach(function (leg) {
+            if (!leg || typeof leg !== 'object') {
+                return;
+            }
+            var pendingLtp = resolveLegLtpFromSnapshot(leg);
+            if (pendingLtp === null) {
+                return;
+            }
+            leg.last_saw_price = pendingLtp;
+            leg.mark_price = pendingLtp;
+            leg.ltp = pendingLtp;
+        });
+
+        if (isSquaredOff) {
+            squaredOffMtmCache[recordId] = strategyPnl;
+        }
+        return strategyPnl;
+    }
+
+    function updateStrategyMtmCell(recordId, strategyPnl) {
+        var mtmEl = document.querySelector('.ff-deployed-mtm[data-record-id="' + recordId + '"]');
+        if (!mtmEl) {
+            return;
+        }
+        var rounded = Math.round(strategyPnl * 100) / 100;
+        mtmEl.textContent = '\u20b9 ' + rounded.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+        mtmEl.style.color = rounded >= 0 ? '#16a34a' : '#ef4444';
+    }
+
+    function rebuildAggregateCountsCache(currentListenDt, forceRefresh) {
+        var secondKey = getTimestampSecondKey(latestListenTimestamp);
+        if (!forceRefresh && aggregateCountsCache && aggregateCountsListenSecondKey === secondKey) {
+            return aggregateCountsCache;
+        }
+        var brokerStaticMap = {};
+        var totalOpenLegs = 0;
+        var totalStrategies = 0;
+        Object.keys(executionRecordsMap).forEach(function (recordId) {
+            var rec = executionRecordsMap[recordId];
+            var brokerLabel = getBrokerDisplayName(rec);
+            var brokerId = String(rec && rec.broker || '').trim();
+            var brokerKey = String(brokerId || brokerLabel || 'unknown').trim().toLowerCase();
+            if (!brokerStaticMap[brokerKey]) {
+                brokerStaticMap[brokerKey] = {
+                    key: brokerKey,
+                    label: brokerLabel,
+                    icon: getBrokerIconPath(rec),
+                    brokerId: brokerId,
+                    userId: String(rec && rec.user_id || '').trim(),
+                    strategyCount: 0,
+                    openLegCount: 0
+                };
+            }
+            var openLegCount = countOpenLegsForRecord(rec, currentListenDt);
+            brokerStaticMap[brokerKey].strategyCount += 1;
+            brokerStaticMap[brokerKey].openLegCount += openLegCount;
+            totalOpenLegs += openLegCount;
+            totalStrategies += 1;
+        });
+        aggregateCountsCache = {
+            brokerStaticMap: brokerStaticMap,
+            totalOpenLegs: totalOpenLegs,
+            totalStrategies: totalStrategies
+        };
+        aggregateCountsListenSecondKey = secondKey;
+        return aggregateCountsCache;
+    }
+
+    function renderAggregateMtmFromCache(currentListenDt, forceCountRefresh) {
+        var groupPnl = {};
+        var brokerSummaryMap = {};
+        var countsCache = rebuildAggregateCountsCache(currentListenDt, forceCountRefresh);
+        Object.keys(countsCache.brokerStaticMap || {}).forEach(function (brokerKey) {
+            var item = countsCache.brokerStaticMap[brokerKey];
+            brokerSummaryMap[brokerKey] = {
+                key: brokerKey,
+                label: item.label,
+                icon: item.icon,
+                brokerId: item.brokerId,
+                userId: item.userId,
+                mtm: 0,
+                strategyCount: item.strategyCount,
+                openLegCount: item.openLegCount
+            };
+        });
+
+        Object.keys(executionRecordsMap).forEach(function (recordId) {
+            var rec = executionRecordsMap[recordId];
+            var strategyPnl = parseFloat(strategyPnlCache[recordId]) || 0;
+            var groupId = String((rec && rec.portfolio && rec.portfolio.group_id) || '').trim();
+            if (groupId) {
+                groupPnl[groupId] = (groupPnl[groupId] || 0) + strategyPnl;
+            }
+            var brokerLabel = getBrokerDisplayName(rec);
+            var brokerId = String(rec && rec.broker || '').trim();
+            var brokerKey = String(brokerId || brokerLabel || 'unknown').trim().toLowerCase();
+            if (brokerSummaryMap[brokerKey]) {
+                brokerSummaryMap[brokerKey].mtm += strategyPnl;
+            }
+        });
+
+        Object.keys(groupPnl).forEach(function (groupId) {
+            var groupEl = document.querySelector('.ff-deployed-mtm[data-group-mtm="' + groupId + '"]');
+            if (groupEl) {
+                var rounded = Math.round(groupPnl[groupId] * 100) / 100;
+                groupEl.textContent = '\u20b9 ' + rounded.toLocaleString('en-IN', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                });
+                groupEl.style.color = rounded >= 0 ? '#16a34a' : '#ef4444';
+            }
+        });
+
+        var totalPnl = 0;
+        Object.keys(groupPnl).forEach(function (groupId) {
+            totalPnl += groupPnl[groupId];
+        });
+        var totalRounded = Math.round(totalPnl * 100) / 100;
+        var totalFormatted = '\u20b9 ' + totalRounded.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+        var totalColor = totalRounded >= 0 ? '#16a34a' : '#ef4444';
+        var countStr = countsCache.totalOpenLegs + '/' + countsCache.totalStrategies;
+        updateBrowserTabTitle(totalRounded);
+
+        ['ff-header-total-mtm', 'ff-toolbar-total-mtm'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) {
+                el.textContent = totalFormatted;
+                el.style.color = totalColor;
+            }
+        });
+        var headerPos = document.getElementById('ff-header-open-pos');
+        if (headerPos) {
+            headerPos.textContent = countStr;
+        }
+        var toolbarRunning = document.getElementById('ff-toolbar-running-count');
+        if (toolbarRunning) {
+            toolbarRunning.textContent = countStr;
+        }
+        var toolbarOpenPos = document.getElementById('ff-toolbar-open-pos-count');
+        if (toolbarOpenPos) {
+            toolbarOpenPos.textContent = String(countsCache.totalOpenLegs);
+        }
+        renderHeaderBrokerSummary(brokerSummaryMap);
+    }
+
+    function applyLtpToAffectedRecords(changedKeys) {
+        var currentTsStr = latestListenTimestamp ? String(latestListenTimestamp).replace(' ', 'T') : '';
+        var currentListenDt = (currentTsStr && !isNaN(new Date(currentTsStr).getTime())) ? new Date(currentTsStr) : null;
+        var affectedRecordIds = {};
+        (changedKeys || []).forEach(function (key) {
+            var linked = recordPriceLinkIndex[key];
+            if (!linked) {
+                return;
+            }
+            Object.keys(linked).forEach(function (recordId) {
+                affectedRecordIds[recordId] = true;
+            });
+        });
+        Object.keys(affectedRecordIds).forEach(function (recordId) {
+            var strategyPnl = calculateStrategyPnl(recordId, currentListenDt);
+            strategyPnlCache[recordId] = strategyPnl;
+            updateStrategyMtmCell(recordId, strategyPnl);
+            updateStrategyDetailPanel(recordId, executionRecordsMap[recordId] || {});
+        });
+        renderAggregateMtmFromCache(currentListenDt, getTimestampSecondKey(latestListenTimestamp) !== aggregateCountsListenSecondKey);
+    }
+
+    function getLiveTabTitleSuffix() {
+        if (listeningModeKey === 'fast-forward') {
+            return 'Forward Test';
+        }
+        if (listeningModeKey === 'live') {
+            return 'Live';
+        }
+        return 'Algo Backtest';
+    }
+
+    function updateBrowserTabTitle(mtmValue) {
+        var numericMtm = parseFloat(mtmValue);
+        if (!isFinite(numericMtm)) {
+            document.title = defaultBrowserTitle;
+            return;
+        }
+        var rounded = Math.round(numericMtm * 100) / 100;
+        document.title = '\u20b9 ' + rounded.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }) + ' | ' + getLiveTabTitleSuffix();
     }
 
 
@@ -261,6 +798,50 @@
         latestListenTimestamp = String(value || '').trim();
         label.textContent = 'Current time: ' + String(value || '-');
         syncListeningTimeline(latestListenTimestamp, false);
+    }
+
+    function getTimestampSecondKey(value) {
+        var normalized = String(value || '').trim().replace('T', ' ');
+        return normalized ? normalized.slice(0, 19) : '';
+    }
+
+    function flushScheduledLtpRender() {
+        if (ltpRenderTimerId) {
+            window.clearTimeout(ltpRenderTimerId);
+            ltpRenderTimerId = 0;
+        }
+        if (ltpRenderFrameId) {
+            window.cancelAnimationFrame(ltpRenderFrameId);
+            ltpRenderFrameId = 0;
+        }
+        ltpRenderFrameId = window.requestAnimationFrame(function () {
+            ltpRenderFrameId = 0;
+            lastLtpRenderAt = Date.now();
+            var changedKeys = Object.keys(pendingChangedLtpKeys);
+            pendingChangedLtpKeys = {};
+            if (!forceFullLtpRender && changedKeys.length && Object.keys(strategyPnlCache).length) {
+                applyLtpToAffectedRecords(changedKeys);
+                return;
+            }
+            forceFullLtpRender = false;
+            applyLtpToMtm(latestLtpSnapshot);
+        });
+    }
+
+    function scheduleLtpRender() {
+        var now = Date.now();
+        var elapsed = now - lastLtpRenderAt;
+        if (elapsed >= LTP_RENDER_INTERVAL_MS) {
+            flushScheduledLtpRender();
+            return;
+        }
+        if (ltpRenderTimerId) {
+            return;
+        }
+        ltpRenderTimerId = window.setTimeout(function () {
+            ltpRenderTimerId = 0;
+            flushScheduledLtpRender();
+        }, Math.max(0, LTP_RENDER_INTERVAL_MS - elapsed));
     }
 
     function getCurrentBacktestListenTimestamp() {
@@ -699,11 +1280,29 @@
         }
     }
 
+    function stopLtpRenderHeartbeat() {
+        if (ltpRenderHeartbeatId) {
+            window.clearInterval(ltpRenderHeartbeatId);
+            ltpRenderHeartbeatId = 0;
+        }
+    }
+
+    function startLtpRenderHeartbeat() {
+        stopLtpRenderHeartbeat();
+        ltpRenderHeartbeatId = window.setInterval(function () {
+            if (listeningState !== 'running') {
+                return;
+            }
+            flushScheduledLtpRender();
+        }, LTP_RENDER_INTERVAL_MS);
+    }
+
 
 
     function buildExecutionListUrl(selectedDate) {
+        var executionEnvironment = listeningModeKey === 'fast-forward' ? 'forward-test' : listeningModeKey;
         var query = [
-            'environment=algo-backtest',
+            'environment=' + encodeURIComponent(executionEnvironment),
             'is_signal=false',
             'trade_status=1'
         ];
@@ -717,6 +1316,7 @@
     function startRealTimeMarketCountdown() {
         resetMarketCountdownTimer();
         resetListeningPollTimer();
+        stopLtpRenderHeartbeat();
         backtestCountdownState = null;
         listeningState = 'idle';
         updateMarketCountdown();
@@ -741,6 +1341,7 @@
         resetMarketCountdownTimer();
         resetListeningPollTimer();
         listeningState = 'running';
+        startLtpRenderHeartbeat();
         updateMarketCountdown();
         if (backtestCountdownState) {
             marketCountdownTimer = window.setInterval(updateMarketCountdown, 1000);
@@ -752,6 +1353,9 @@
     function closeExecutionSocket(markPaused) {
         if (markPaused) {
             socketManuallyPaused = true;
+        }
+        if (markPaused) {
+            stopLtpRenderHeartbeat();
         }
         initialPositionSnapshotRequested = false;
         if (executeOrdersSocketClient) {
@@ -788,12 +1392,13 @@
         backtestCountdownState.paused = false;
         listeningState = 'running';
         socketManuallyPaused = false;
+        startLtpRenderHeartbeat();
         resetMarketCountdownTimer();
         resetListeningPollTimer();
         if (backtestAutoloadEnabled) {
             activateAutoloadSockets(getCurrentBacktestListenTimestamp(), 'resume_backtest_listening');
         } else {
-            closeExecutionSocket(true);
+            activateManualSockets(getCurrentBacktestListenTimestamp(), 'resume_manual_listening');
         }
         updateMarketCountdown();
         if (backtestCountdownState) {
@@ -808,10 +1413,13 @@
         closeExecutionSocket(false);
         resetMarketCountdownTimer();
         resetListeningPollTimer();
+        stopLtpRenderHeartbeat();
         backtestCountdownState = null;
         listeningState = 'idle';
         socketManuallyPaused = false;
         latestListenTimestamp = '';
+        resetLatestLtpSnapshot();
+        updateBrowserTabTitle(null);
         updateCurrentListenTimeDisplay('-');
         startRealTimeMarketCountdown();
         persistListeningSession();
@@ -973,10 +1581,14 @@
     }
 
     function commitCalendarDateSelection() {
+        var previousDate = String(listeningDateInput.value || '').trim();
         var pickedDate = calendarState.draftDate || calendarState.selectedDate || new Date();
         calendarState.selectedDate = new Date(pickedDate.getTime());
         calendarState.displayDate = new Date(pickedDate.getTime());
         listeningDateInput.value = formatIsoDate(calendarState.selectedDate);
+        if (String(listeningDateInput.value || '').trim() !== previousDate) {
+            resetLatestLtpSnapshot();
+        }
         syncListeningDateLabel();
         closeCalendarPopup();
     }
@@ -1016,6 +1628,11 @@
             paused: savedState.listening_state === 'paused'
         };
         listeningState = savedState.listening_state === 'paused' ? 'paused' : 'running';
+        if (listeningState === 'running') {
+            startLtpRenderHeartbeat();
+        } else {
+            stopLtpRenderHeartbeat();
+        }
         resetMarketCountdownTimer();
         updateMarketCountdown();
         if (listeningState === 'running' && backtestCountdownState) {
@@ -1188,14 +1805,262 @@
     }
 
     function getBrokerLabel(record) {
-        var mode = String(record && record.activation_mode || 'algo-backtest');
-        if (mode === 'forward-test') {
+        var mode = String(record && record.activation_mode || listeningModeKey || 'algo-backtest');
+        if (mode === 'forward-test' || mode === 'fast-forward' || mode === 'fast-forwarding') {
             return { badge: 'FT', label: 'Forward Test' };
         }
         if (mode === 'live') {
             return { badge: 'LV', label: 'Live' };
         }
         return { badge: 'AB', label: 'Backtest' };
+    }
+
+    function buildBrokerDisplayHtml(record) {
+        var brokerMeta = getBrokerLabel(record);
+        var brokerName = getBrokerDisplayName(record);
+        var brokerIcon = getBrokerIconPath(record);
+        var iconHtml = brokerIcon
+            ? '<img class="ff-deployed-broker-icon" src="' + escapeHtml(brokerIcon) + '" alt="' + escapeHtml(brokerName || 'Broker') + '" onerror="this.onerror=null;this.src=\'../assets/brokers/' + escapeHtml(String(brokerIcon || '').split('/').pop() || '') + '\';">'
+            : '<span class="ff-deployed-broker-badge">' + escapeHtml(brokerMeta.badge) + '</span>';
+        return '' +
+            '<div class="ff-deployed-broker">' +
+            iconHtml +
+            '<span class="ff-deployed-broker-label">' + escapeHtml(brokerName || brokerMeta.label) + '</span>' +
+            '</div>';
+    }
+
+    function getBrokerDisplayName(record) {
+        if (!record || typeof record !== 'object') {
+            return 'Unknown Broker';
+        }
+        var brokerDetails = record.broker_details && typeof record.broker_details === 'object'
+            ? record.broker_details
+            : {};
+        function humanizeBrokerValue(value) {
+            var normalized = String(value || '').trim();
+            if (!normalized) {
+                return '';
+            }
+            normalized = normalized.replace(/^Broker\./i, '');
+            normalized = normalized.replace(/[_-]+/g, ' ');
+            normalized = normalized.replace(/([a-z])([A-Z])/g, '$1 $2');
+            normalized = normalized.replace(/\s+/g, ' ').trim();
+            if (!normalized) {
+                return '';
+            }
+            return normalized.split(' ').map(function (part) {
+                if (!part) {
+                    return '';
+                }
+                return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+            }).join(' ');
+        }
+
+        function humanizeBrokerIconName(value) {
+            var normalized = String(value || '').trim();
+            if (!normalized) {
+                return '';
+            }
+            normalized = normalized.replace(/\.[a-z0-9]+$/i, '');
+            if (normalized.toLowerCase() === 'flattrade') {
+                return 'FlatTrade';
+            }
+            return humanizeBrokerValue(normalized);
+        }
+
+        var candidates = [
+            humanizeBrokerValue(brokerDetails.broker_name),
+            humanizeBrokerValue(brokerDetails.display_name),
+            humanizeBrokerValue(brokerDetails.name),
+            humanizeBrokerValue(brokerDetails.title),
+            humanizeBrokerIconName(brokerDetails.broker_icon),
+            (!isLikelyObjectId(record.broker_label) ? record.broker_label : ''),
+            humanizeBrokerValue(brokerDetails.broker),
+            humanizeBrokerValue(brokerDetails.provider),
+            humanizeBrokerValue(brokerDetails.vendor),
+            (!isLikelyObjectId(record.broker) ? humanizeBrokerValue(record.broker) : '')
+        ];
+        for (var i = 0; i < candidates.length; i += 1) {
+            var value = String(candidates[i] || '').trim();
+            if (value) {
+                return value;
+            }
+        }
+        return 'Unknown Broker';
+    }
+
+    function getBrokerIconPath(record) {
+        if (!record || typeof record !== 'object') {
+            return '';
+        }
+        var brokerDetails = record.broker_details && typeof record.broker_details === 'object'
+            ? record.broker_details
+            : {};
+        var brokerIcon = String(brokerDetails.broker_icon || '').trim();
+        if (!brokerIcon) {
+            return '';
+        }
+        return '../assets/images/brokers/' + encodeURIComponent(brokerIcon);
+    }
+
+    function fmtRs(v) {
+        var n = Math.round((parseFloat(v) || 0) * 100) / 100;
+        return '\u20b9\u202f' + n.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    }
+
+    function buildBrokerSettingsStrip(bs) {
+        if (!bs) return '';
+        var chips = [];
+
+        // SL chip
+        if (bs.stop_loss != null) {
+            var effSl = bs.state && bs.state.effective_sl != null ? bs.state.effective_sl : bs.stop_loss;
+            var slLabel = (effSl !== bs.stop_loss)
+                ? 'SL ' + fmtRs(effSl) + ' <span class="ff-bss-orig">(' + fmtRs(bs.stop_loss) + ')</span>'
+                : 'SL ' + fmtRs(bs.stop_loss);
+            chips.push('<span class="ff-bss-chip ff-bss-sl">' + slLabel + '</span>');
+        }
+
+        // TGT chip
+        if (bs.target != null) {
+            chips.push('<span class="ff-bss-chip ff-bss-tgt">TGT ' + fmtRs(bs.target) + '</span>');
+        }
+
+        // Lock & Trail chip
+        var lat = bs.lock_and_trail;
+        if (lat && lat.instrument_move != null && lat.stop_loss_move != null) {
+            var state = bs.state || {};
+            var activated = state.lock_activated;
+            if (activated) {
+                var floor = state.current_lock_floor || lat.stop_loss_move;
+                chips.push(
+                    '<span class="ff-bss-chip ff-bss-lock ff-bss-lock-on">' +
+                    'Lock \u2713 Floor ' + fmtRs(floor) +
+                    '</span>'
+                );
+            } else {
+                chips.push(
+                    '<span class="ff-bss-chip ff-bss-lock">' +
+                    'Lock @ ' + fmtRs(lat.instrument_move) + ' \u2192 ' + fmtRs(lat.stop_loss_move) +
+                    '</span>'
+                );
+            }
+        }
+
+        // Trail SL chip (standalone — when LockAndTrail not used)
+        var trail = bs.trail_sl;
+        if (trail && trail.instrument_move != null && trail.stop_loss_move != null && !lat) {
+            chips.push(
+                '<span class="ff-bss-chip ff-bss-trail">' +
+                'Trail ' + fmtRs(trail.stop_loss_move) + '/\u20b9' + fmtRs(trail.instrument_move) +
+                '</span>'
+            );
+        }
+
+        if (!chips.length) return '';
+        return (
+            '<div class="ff-header-broker-settings-strip">' +
+            chips.join('') +
+            '</div>'
+        );
+    }
+
+    function formatBrokerMtm(value) {
+        var rounded = Math.round((parseFloat(value) || 0) * 100) / 100;
+        return '\u20b9 ' + rounded.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function renderHeaderBrokerSummary(brokerSummaryMap) {
+        if (!headerBrokerListHost) {
+            return;
+        }
+        var entries = Object.keys(brokerSummaryMap || {}).map(function (key) {
+            return brokerSummaryMap[key];
+        }).filter(Boolean);
+        var selectedBrokerId = '';
+        if (window.ffSelectedBrokerSettingsContext && typeof window.ffSelectedBrokerSettingsContext === 'object') {
+            selectedBrokerId = String(window.ffSelectedBrokerSettingsContext.broker || '').trim();
+        }
+
+        if (!entries.length) {
+            headerBrokerListHost.innerHTML = '<div class="ff-header-broker-empty">No brokers loaded.</div>';
+            if (selectedBrokerId && typeof window.ffUpdateSelectedBrokerSummary === 'function') {
+                window.ffUpdateSelectedBrokerSummary(null);
+            }
+            return;
+        }
+
+        entries.sort(function (left, right) {
+            return String(left.label || '').localeCompare(String(right.label || ''));
+        });
+
+        // Remove stale "no brokers" placeholder if present
+        var emptyEl = headerBrokerListHost.querySelector('.ff-header-broker-empty');
+        if (emptyEl) emptyEl.remove();
+
+        entries.forEach(function (entry) {
+            var mtmColor = (parseFloat(entry.mtm) || 0) >= 0 ? '#16a34a' : '#ef4444';
+            var strategyCount = parseInt(entry.strategyCount || 0, 10) || 0;
+            var openLegCount  = parseInt(entry.openLegCount  || 0, 10) || 0;
+            var bid = escapeHtml(entry.brokerId || '');
+
+            var card = headerBrokerListHost.querySelector('.ff-header-broker-card[data-broker-id="' + bid + '"]');
+
+            if (!card) {
+                // First time — create the full card including the icon (loaded only once)
+                var iconHtml = entry.icon
+                    ? '<img class="ff-header-broker-icon" src="' + escapeHtml(entry.icon) + '" alt="' + escapeHtml(entry.label || 'Broker') + '" onerror="this.onerror=null;this.src=\'../assets/brokers/' + escapeHtml(String(entry.icon || '').split('/').pop() || '') + '\';this.style.display=\'block\';">'
+                    : '';
+                var settingsStrip = buildBrokerSettingsStrip(brokerSettingsCache[entry.brokerId] || null);
+                var cardHtml =
+                    '<div class="ff-header-broker-card" data-broker-summary-card="true" data-broker-id="' + bid + '" data-user-id="' + escapeHtml(entry.userId || '') + '" data-broker-name="' + escapeHtml(entry.label || '') + '">' +
+                    '  <div class="ff-header-broker-main">' +
+                    iconHtml +
+                    '    <div class="ff-header-broker-copy">' +
+                    '      <div class="ff-header-broker-name-row">' +
+                    '        <p class="ff-header-broker-name">' + escapeHtml(entry.label || 'Unknown Broker') + '</p>' +
+                    '        <p class="ff-header-broker-mtm" data-broker-mtm="' + bid + '" style="color:' + mtmColor + ';">' + escapeHtml(formatBrokerMtm(entry.mtm)) + '</p>' +
+                    '      </div>' +
+                    '      <p class="ff-header-broker-meta" data-broker-meta="' + bid + '">' + strategyCount + ' strategies \u2022 ' + openLegCount + ' open legs</p>' +
+                    '    </div>' +
+                    '  </div>' +
+                    (settingsStrip ? settingsStrip : '') +
+                    '</div>';
+                headerBrokerListHost.insertAdjacentHTML('beforeend', cardHtml);
+            } else {
+                // Card exists — patch only MTM and meta text; icon stays untouched
+                var mtmEl  = card.querySelector('[data-broker-mtm="' + bid + '"]');
+                var metaEl = card.querySelector('[data-broker-meta="' + bid + '"]');
+                if (mtmEl) {
+                    mtmEl.textContent = formatBrokerMtm(entry.mtm);
+                    mtmEl.style.color = mtmColor;
+                }
+                if (metaEl) {
+                    metaEl.textContent = strategyCount + ' strategies \u2022 ' + openLegCount + ' open legs';
+                }
+            }
+
+            if (
+                selectedBrokerId
+                && entry.brokerId === selectedBrokerId
+                && typeof window.ffUpdateSelectedBrokerSummary === 'function'
+            ) {
+                window.ffUpdateSelectedBrokerSummary({
+                    brokerId: entry.brokerId,
+                    label: entry.label,
+                    mtm: entry.mtm,
+                    strategyCount: strategyCount,
+                    openLegCount: openLegCount
+                });
+            }
+        });
+
+        // Remove cards for brokers that are no longer in the list
+        var allCards = headerBrokerListHost.querySelectorAll('.ff-header-broker-card[data-broker-id]');
+        var activeIds = entries.map(function (e) { return e.brokerId || ''; });
+        allCards.forEach(function (c) {
+            if (activeIds.indexOf(c.getAttribute('data-broker-id')) === -1) c.remove();
+        });
     }
 
     function parseRecordDateTime(value) {
@@ -1375,8 +2240,7 @@
     function getOpenStrategyLegs(record) {
         var legs = Array.isArray(record && record.legs) ? record.legs : [];
         return legs.filter(function (leg) {
-            var entryTrade = leg && typeof leg.entry_trade === 'object' ? leg.entry_trade : null;
-            return leg && Number(leg.status) === 1 && entryTrade;
+            return leg && typeof leg === 'object' && Number(leg.status) === 1;
         });
     }
 
@@ -1390,6 +2254,95 @@
     function getLegFeatureRow(leg, featureKey) {
         var featureMap = leg && typeof leg.feature_status_map === 'object' ? leg.feature_status_map : {};
         return featureMap && typeof featureMap === 'object' ? featureMap[featureKey] : null;
+    }
+
+    function resolveLegDisplayMeta(leg, record) {
+        var legId = String(leg && (leg.id || leg.leg_id) || '').trim();
+        var lazyLegRef = String(leg && leg.lazy_leg_ref || '').trim();
+        var triggeredBy = String(leg && leg.triggered_by || '').trim();
+        var parentLegId = String(leg && leg.parent_leg_id || '').trim();
+        var legType = String(leg && leg.leg_type || '').trim();
+        var hasParentReference = !!(triggeredBy || parentLegId);
+        var isOverallParentReentry = /overall_reentry/i.test(legType) || /^overall_/i.test(triggeredBy);
+        var isOverallParentReentryDescendant = isOverallParentReentry || /-overall_reentry-/i.test(legType) || /-ore-/i.test(triggeredBy);
+        var isTrueLazyLeg = !!(lazyLegRef && hasParentReference && !isOverallParentReentry && lazyLegRef !== parentLegId);
+        var isLazy = isTrueLazyLeg;
+        var isReentry = !!(leg && (leg.is_reentered_leg || triggeredBy));
+        var baseLabel = 'Parent Leg';
+        var overallReason = String(record && record.last_overall_event_reason || '').trim().toLowerCase();
+
+        function buildOverallSourceLabel() {
+            var sourceLabel = 'Overall Re-entry';
+            if (overallReason === 'overall_sl') {
+                sourceLabel = 'Overall SL Re-entry';
+            } else if (overallReason === 'overall_target') {
+                sourceLabel = 'Overall Target Re-entry';
+            }
+            return sourceLabel;
+        }
+
+        if (isOverallParentReentryDescendant) {
+            var overallCount = Math.max(
+                Number(record && record.overall_sl_reentry_done || 0),
+                Number(record && record.overall_tgt_reentry_done || 0),
+                0
+            );
+            var overallReentryType = String(leg && leg.reentry_type || '').trim();
+            var overallSourceLabel = buildOverallSourceLabel();
+            if (/LikeOriginal/i.test(overallReentryType)) {
+                overallSourceLabel = overallSourceLabel.replace(/Re-entry/i, 'Re-momentum');
+            }
+            var descendantReentryMatch = legType.match(/reentry_(\d+)/i);
+            var descendantReentryCount = descendantReentryMatch && descendantReentryMatch[1]
+                ? descendantReentryMatch[1]
+                : (overallCount > 0 ? String(overallCount) : '');
+            baseLabel = 'Parent Leg (' + overallSourceLabel + (descendantReentryCount ? ' ' + descendantReentryCount : '') + ')';
+        } else if (isLazy) {
+            baseLabel = 'Lazy Leg';
+            if (lazyLegRef || legId) {
+                baseLabel += ' (' + (lazyLegRef || legId) + ')';
+            }
+        }
+
+        var reentryCount = '';
+        var reentryMatch = legType.match(/reentry_(\d+)/i);
+        if (reentryMatch && reentryMatch[1]) {
+            reentryCount = reentryMatch[1];
+        } else if (/_re_/i.test(legId)) {
+            reentryCount = '1';
+        }
+
+        // AtCost pending: entry_trade is null, reentry_type is AtCost, not yet entered
+        var isAtCostPending = !!(
+            String(leg && leg.reentry_type || '').trim() === 'AtCost' &&
+            leg && leg.is_lazy &&
+            !(leg.entry_trade && leg.entry_trade.price)
+        );
+
+        // AtCost triggered (already entered): show as "Reentry N (re-cost)"
+        var isAtCostTriggered = !!(
+            String(leg && leg.reentry_type || '').trim() === 'AtCost' &&
+            leg && !leg.is_lazy &&
+            leg.entry_trade && leg.entry_trade.price
+        );
+
+        if (isAtCostPending) {
+            baseLabel += ' • RE-COST Waiting';
+        } else if (isAtCostTriggered && reentryCount) {
+            baseLabel += ' • Reentry ' + reentryCount + ' (re-cost)';
+        } else if (isReentry && reentryCount) {
+            baseLabel += ' • Reentry ' + reentryCount;
+        }
+
+        return {
+            legId: legId,
+            isLazy: isLazy,
+            isReentry: isReentry,
+            isOverallParentReentry: isOverallParentReentry,
+            isAtCostPending: isAtCostPending,
+            isAtCostTriggered: isAtCostTriggered,
+            label: baseLabel
+        };
     }
 
     function buildDetailMetricHtml(label, value) {
@@ -1472,9 +2425,10 @@
             var isPendingFeatureLeg = !!(leg && leg.is_pending_feature_leg);
             var entryTrade = leg && typeof leg.entry_trade === 'object' ? leg.entry_trade : {};
             var optionLabel = String(leg.option || '').toUpperCase();
+            var displayMeta = resolveLegDisplayMeta(leg, record);
             var legTitle = String(leg.strike || '-')
                 + (optionLabel ? ' ' + optionLabel : '')
-                + (detailLegs.length > 1 ? ' • Leg ' + (index + 1) : '');
+                + ' • ' + displayMeta.label;
 
             var slRow = getLegFeatureRow(leg, 'sl');
             var targetRow = getLegFeatureRow(leg, 'target');
@@ -1494,6 +2448,37 @@
             var triggerDescriptions = Array.isArray(leg.active_trigger_descriptions)
                 ? leg.active_trigger_descriptions.filter(Boolean)
                 : [];
+
+            // ── AtCost pending card (waiting for price to return to cost) ─────────
+            if (displayMeta.isAtCostPending) {
+                var recostQueuedAt = String((leg.queued_at || '')).replace('T', ' ') || '-';
+                var recostCostPrice = formatDetailMoney(leg.momentum_base_price, '-');
+                var recostLtp = formatDetailMoney(
+                    leg.last_saw_price != null ? leg.last_saw_price : (leg.ltp != null ? leg.ltp : leg.mark_price),
+                    '-'
+                );
+                var recostRow = getLegFeatureRow(leg, 'reCost');
+                var recostStatus = recostRow && recostRow.status
+                    ? String(recostRow.status).charAt(0).toUpperCase() + String(recostRow.status).slice(1)
+                    : 'Pending';
+
+                return '' +
+                    '<div class="ff-deployed-detail-card">' +
+                    '    <div class="ff-deployed-detail-leg-title">' + escapeHtml(legTitle) + '</div>' +
+                    '    <div class="ff-deployed-detail-grid">' +
+                    buildDetailMetricHtml('Queued At', recostQueuedAt) +
+                    buildDetailMetricHtml('Cost Price', recostCostPrice) +
+                    buildDetailMetricHtml('Current LTP', recostLtp) +
+                    buildDetailMetricHtml('Status', recostStatus) +
+                    '    </div>' +
+                    '    <div class="ff-deployed-feature-status-title">Feature Status</div>' +
+                    (triggerDescriptions.length
+                        ? '<div class="ff-deployed-feature-status-list">' + triggerDescriptions.map(function (description) {
+                            return '<div class="ff-deployed-feature-status-item">' + escapeHtml(description) + '</div>';
+                        }).join('') + '</div>'
+                        : '<div class="ff-deployed-detail-empty">No active feature status available.</div>') +
+                    '</div>';
+            }
 
             if (isPendingFeatureLeg) {
                 var queuedAt = String((leg.queued_at || '')).replace('T', ' ') || '-';
@@ -1558,7 +2543,7 @@
         return strategyFeaturesHtml + legCardsHtml;
     }
 
-    function updateStrategyDetailPanel(recordId, record) {
+    function updateStrategyDetailPanel(recordId, record, forceRefresh) {
         if (!deployedRowsHost) {
             return;
         }
@@ -1566,15 +2551,18 @@
         if (!row) {
             return;
         }
-        var detailsEl = row.querySelector('.ff-deployed-strategy-details');
-        if (detailsEl) {
-            detailsEl.innerHTML = buildStrategyDetailHtml(record);
-        }
         var isExpanded = !!deployedStrategyDetailExpandedState[recordId];
         row.setAttribute('data-details-expanded', isExpanded ? 'true' : 'false');
         var toggleBtn = row.querySelector('[data-strategy-details-toggle]');
         if (toggleBtn) {
             toggleBtn.textContent = isExpanded ? 'Hide Details' : 'Show Details';
+        }
+        if (!isExpanded && !forceRefresh) {
+            return;
+        }
+        var detailsEl = row.querySelector('.ff-deployed-strategy-details');
+        if (detailsEl) {
+            detailsEl.innerHTML = buildStrategyDetailHtml(record);
         }
     }
 
@@ -1586,6 +2574,7 @@
         if (!Array.isArray(records) || !records.length) {
             deployedGroupExpandedState = {};
             deployedRowsHost.innerHTML = '<div class="ff-deployed-empty">No deployed portfolios found for ' + escapeHtml(selectedDate) + '.</div>';
+            renderHeaderBrokerSummary({});
             return;
         }
 
@@ -1605,7 +2594,6 @@
             } else {
                 primaryStatus = normalizeExecutionStatus(primaryRecord);
             }
-            var primaryBroker = getBrokerLabel(primaryRecord);
             var groupTradeStarted = items.some(function (item) {
                 return hasRecordTradeStarted(item, currentListeningDateTime);
             });
@@ -1616,12 +2604,11 @@
                 return sum + count;
             }, 0);
             var openUrl = group.portfolio_id
-                ? buildNamedPageUrl('portfolioActivation', '?strategy_id=' + encodeURIComponent(group.portfolio_id) + '&status=algo-backtest')
+                ? buildNamedPageUrl('portfolioActivation', '?strategy_id=' + encodeURIComponent(group.portfolio_id) + '&status=' + encodeURIComponent(listeningModeKey))
                 : '#';
 
             var childRowsHtml = items.map(function (record) {
                 var statusMeta = normalizeExecutionStatus(record);
-                var brokerMeta = getBrokerLabel(record);
                 var legCount = typeof record.open_legs_count === 'number'
                     ? record.open_legs_count
                     : (Array.isArray(record && record.legs) ? record.legs.length : 0);
@@ -1631,7 +2618,7 @@
                 // Hide entry countdown for cancelled (active_on_server=false) strategies
                 var entryTarget = childIsActive ? escapeHtml(record.entry_time || '') : '';
                 var childOpenUrl = group.portfolio_id
-                    ? buildNamedPageUrl('portfolioActivation', '?strategy_id=' + encodeURIComponent(group.portfolio_id) + '&status=algo-backtest')
+                    ? buildNamedPageUrl('portfolioActivation', '?strategy_id=' + encodeURIComponent(group.portfolio_id) + '&status=' + encodeURIComponent(listeningModeKey))
                     : '#';
                 return '' +
                     '<div class="ff-deployed-child-row" data-record-id="' + escapeHtml(recordId) + '" data-details-expanded="' + (isDetailExpanded ? 'true' : 'false') + '">' +
@@ -1647,10 +2634,7 @@
                     '            </div>' +
                     '        </div>' +
                     '    </div>' +
-                    '    <div class="ff-deployed-broker">' +
-                    '        <span class="ff-deployed-broker-badge">' + brokerMeta.badge + '</span>' +
-                    '        <span>' + brokerMeta.label + '</span>' +
-                    '    </div>' +
+                    '    ' + buildBrokerDisplayHtml(record) +
                     '    <div><span class="ff-deployed-status ' + statusMeta.className + '">' + statusMeta.text + '</span></div>' +
                     '    <div class="ff-deployed-mtm" data-record-id="' + escapeHtml(record._id || '') + '" data-entry-target="' + entryTarget + '" data-leg-count="' + legCount + '">₹ 0</div>' +
                     '    <div class="ff-deployed-actions">' +
@@ -1677,10 +2661,7 @@
                 '                </div>' +
                 '            </div>' +
                 '        </div>' +
-                '        <div class="ff-deployed-broker">' +
-                '            <span class="ff-deployed-broker-badge">' + primaryBroker.badge + '</span>' +
-                '            <span>' + primaryBroker.label + '</span>' +
-                '        </div>' +
+                '        ' + buildBrokerDisplayHtml(primaryRecord) +
                 '        <div><span class="ff-deployed-status ' + primaryStatus.className + '">' + primaryStatus.text + ' ' + activeCount + '/' + items.length + '</span></div>' +
                 '        <div class="ff-deployed-mtm" data-group-mtm="' + escapeHtml(group.group_id) + '">₹ 0</div>' +
                 '        <div class="ff-deployed-actions">' +
@@ -1733,6 +2714,7 @@
     function fetchDeployedPortfolios(selectedDate, showLoader) {
         var normalizedDate = String(selectedDate || '').trim();
         if (!normalizedDate) {
+            resetLatestLtpSnapshot();
             renderDeployedRows([], 'the selected date');
             return Promise.resolve([]);
         }
@@ -1755,10 +2737,12 @@
                 currentDeployedRecords = records.slice();
                 syncExecutionRecordsMap(currentDeployedRecords);
                 renderDeployedRows(records, normalizedDate);
+                applyLtpToMtm(latestLtpSnapshot);
                 return records;
             })
             .catch(function (error) {
                 deployedRowsHost.innerHTML = '<div class="ff-deployed-empty">Unable to load deployed portfolios for ' + escapeHtml(normalizedDate) + '.</div>';
+                renderHeaderBrokerSummary({});
                 throw error;
             })
             .finally(function () {
@@ -1812,6 +2796,7 @@
         var requestSent = updateSocketClient.send({
             action: 'get-position',
             trade_date: selectedDate,
+            user_id: resolveCurrentUserId(),
             activation_mode: listeningModeKey,
             status: listeningModeKey,
             autoload: !!backtestAutoloadEnabled,
@@ -1833,12 +2818,48 @@
         return queued;
     }
 
+    function sendExecuteOrdersSubscription(reason) {
+        if (!executeOrdersSocketClient) {
+            return false;
+        }
+        var selectedDate = String(listeningDateInput && listeningDateInput.value || '').trim();
+        if (!selectedDate) {
+            return false;
+        }
+        var payload = buildExecuteOrdersSubscriptionPayload(selectedDate);
+        payload.autoload = !!backtestAutoloadEnabled;
+        if (reason) {
+            payload.reason = reason;
+        }
+        return executeOrdersSocketClient.send(payload);
+    }
+
+    function sendUpdateSubscription(reason, listenTimestampOverride) {
+        if (!updateSocketClient) {
+            return false;
+        }
+        var selectedDate = String(listeningDateInput && listeningDateInput.value || '').trim();
+        if (!selectedDate) {
+            return false;
+        }
+        return updateSocketClient.send({
+            trade_date: selectedDate,
+            user_id: resolveCurrentUserId(),
+            activation_mode: listeningModeKey,
+            status: listeningModeKey,
+            autoload: !!backtestAutoloadEnabled,
+            listen_timestamp: String(listenTimestampOverride || getCurrentBacktestListenTimestamp() || '').trim(),
+            reason: reason || 'socket_subscription'
+        });
+    }
+
     function handleExecuteOrdersSocketMessage(payload) {
         if (!payload || typeof payload !== 'object') {
             updateSocketStatus('connected', { message: 'Message received' });
             return;
         }
         if (payload.type === 'connection_established') {
+            sendExecuteOrdersSubscription('connection_established');
             updateSocketStatus('connected', { message: 'Handshake ready' });
             return;
         }
@@ -1859,6 +2880,32 @@
             });
             return;
         }
+        if (payload.type === 'ltp_update') {
+            handleUpdateSocketMessage(payload);
+            return;
+        }
+        if (payload.type === 'broker-settings') {
+            var bsList = (payload.data && Array.isArray(payload.data.brokers)) ? payload.data.brokers : [];
+            bsList.forEach(function (bs) {
+                var bid = String(bs && bs.broker_id || '').trim();
+                if (!bid) return;
+                brokerSettingsCache[bid] = bs;
+                // Patch existing broker card if already rendered
+                var card = headerBrokerListHost && headerBrokerListHost.querySelector(
+                    '.ff-header-broker-card[data-broker-id="' + bid + '"]'
+                );
+                if (card) {
+                    var strip = card.querySelector('.ff-header-broker-settings-strip');
+                    var newStrip = buildBrokerSettingsStrip(bs);
+                    if (strip) {
+                        strip.outerHTML = newStrip;
+                    } else {
+                        card.insertAdjacentHTML('beforeend', newStrip);
+                    }
+                }
+            });
+            return;
+        }
         if (payload.type === 'execute_order') {
             var strategyRecords = Array.isArray(payload.data)
                 ? payload.data
@@ -1868,10 +2915,6 @@
                 || payload.group_id
                 || ''
             ).trim();
-            var shouldRefreshTrades = strategyRecords.some(function (strategyRecord) {
-                var trigger = String(strategyRecord && strategyRecord.position_refresh_trigger || '').trim();
-                return trigger && trigger !== 'get_trades';
-            });
             var isCancelDeploymentTrigger = strategyRecords.some(function (r) {
                 var t = String(r && r.position_refresh_trigger || '').trim();
                 return t === 'cancel-deployment' || t === 'squared-off';
@@ -1882,25 +2925,27 @@
                 if (!recordId) return;
 
                 // Update in-memory map
-                executionRecordsMap[recordId] = strategyRecord;
+                var existingRecord = executionRecordsMap[recordId];
+                var mergedStrategyRecord = mergeExecutionRecordPreservingBrokerMeta(strategyRecord, existingRecord);
+                executionRecordsMap[recordId] = mergedStrategyRecord;
                 // Keep currentDeployedRecords in sync (replace or append)
                 var replaced = false;
                 currentDeployedRecords = currentDeployedRecords.map(function (r) {
                     if (String(r && (r._id || r.trade_id) || '') === recordId) {
                         replaced = true;
-                        return strategyRecord;
+                        return mergeExecutionRecordPreservingBrokerMeta(strategyRecord, r);
                     }
                     return r;
                 });
                 if (!replaced) {
-                    currentDeployedRecords.push(strategyRecord);
+                    currentDeployedRecords.push(mergedStrategyRecord);
                     needsFullRender = true; // genuinely new record — DOM needs to add its row
                 }
 
-                var newLegs = Array.isArray(strategyRecord.legs) ? strategyRecord.legs : [];
+                var newLegs = Array.isArray(mergedStrategyRecord.legs) ? mergedStrategyRecord.legs : [];
                 var newLegCount = newLegs.length;
-                var openCount = typeof strategyRecord.open_legs_count === 'number'
-                    ? strategyRecord.open_legs_count
+                var openCount = typeof mergedStrategyRecord.open_legs_count === 'number'
+                    ? mergedStrategyRecord.open_legs_count
                     : newLegs.filter(function (l) { return l && l.status === 1; }).length;
 
                 // Patch existing DOM row — no re-render
@@ -1912,12 +2957,12 @@
                 if (childRow) {
                     var subEl = childRow.querySelector('.ff-deployed-child-sub');
                     if (subEl) {
-                        subEl.textContent = String(strategyRecord.ticker || 'NIFTY') + ' \u2022 Open Pos: ' + openCount;
+                        subEl.textContent = String(mergedStrategyRecord.ticker || 'NIFTY') + ' \u2022 Open Pos: ' + openCount;
                     }
-                    updateStrategyDetailPanel(recordId, strategyRecord);
+                    updateStrategyDetailPanel(recordId, mergedStrategyRecord);
                     // Update action button based on current open leg count
                     var existingActionBtn = childRow.querySelector('[data-deployment-action]');
-                    if (existingActionBtn && strategyRecord.active_on_server !== false) {
+                    if (existingActionBtn && mergedStrategyRecord.active_on_server !== false) {
                         var newAction = openCount > 0 ? 'square-off' : 'cancel-deployment';
                         var currentAction = existingActionBtn.getAttribute('data-deployment-action');
                         if (currentAction !== newAction) {
@@ -1927,8 +2972,8 @@
                     }
 
                     // Patch status badge, action button, and entry countdown for cancel-deployment
-                    var isCancelled = strategyRecord.active_on_server === false
-                        || strategyRecord.status === 'StrategyStatus.SquaredOff';
+                    var isCancelled = mergedStrategyRecord.active_on_server === false
+                        || mergedStrategyRecord.status === 'StrategyStatus.SquaredOff';
                     if (isCancelled) {
                         // Status badge → SQD OFF
                         var statusEl = childRow.querySelector('.ff-deployed-status');
@@ -1950,7 +2995,7 @@
                 }
 
                 // Update group open-pos label and group status badge
-                var groupId = String((strategyRecord.portfolio && strategyRecord.portfolio.group_id) || payloadGroupId || '').trim();
+                var groupId = String((mergedStrategyRecord.portfolio && mergedStrategyRecord.portfolio.group_id) || payloadGroupId || '').trim();
                 if (groupId) {
                     var groupOpenPos = 0;
                     var groupTotalCount = 0;
@@ -2008,11 +3053,12 @@
                     String(listeningDateInput && listeningDateInput.value || 'the selected date').trim() || 'the selected date'
                 );
             }
+            rebuildRecordPriceLinkIndex();
+            aggregateCountsCache = null;
+            aggregateCountsListenSecondKey = '';
+            forceFullLtpRender = true;
             // Recalculate MTM — active legs use LTP, closed/squared-off legs use exit price
-            applyLtpToMtm(latestLtpSnapshot);
-            if (shouldRefreshTrades) {
-                requestExecuteOrderTrades();
-            }
+            scheduleLtpRender();
             updateSocketStatus('connected', {
                 message: 'Updated ' + String(strategyRecords.length || 0) + ' strategy' + (strategyRecords.length === 1 ? '' : 'ies')
             });
@@ -2031,199 +3077,18 @@
     var squaredOffMtmCache = {};
 
     function applyLtpToMtm(ltpList) {
-        // Allow empty ltpList — closed legs use fixed exit price, don't need LTP
-        if (!ltpList) ltpList = [];
-
-        // Current listen timestamp (second precision from ltp_update)
+        if (!ltpList) {
+            ltpList = [];
+        }
         var currentTsStr = latestListenTimestamp ? String(latestListenTimestamp).replace(' ', 'T') : '';
         var currentListenDt = (currentTsStr && !isNaN(new Date(currentTsStr).getTime())) ? new Date(currentTsStr) : null;
-
-        function parseTs(tsStr) {
-            if (!tsStr) return null;
-            var s = String(tsStr).replace(' ', 'T');
-            var d = new Date(s);
-            return isNaN(d.getTime()) ? null : d;
-        }
-
-        // Build token → ltp AND (strike|expiry|type) → ltp maps (skip SPOT)
-        var ltpByToken = {};
-        var ltpByContract = {};
-        ltpList.forEach(function (item) {
-            if (!item.token || item.option_type === 'SPOT') return;
-            var price = parseFloat(item.ltp) || 0;
-            ltpByToken[item.token] = price;
-            if (item.strike && item.option_type) {
-                var expiry10 = String(item.expiry || '').slice(0, 10);
-                var contractKey = String(item.strike) + '_' + expiry10 + '_' + String(item.option_type).toUpperCase();
-                ltpByContract[contractKey] = price;
-            }
-        });
-
-        function getLtp(leg) {
-            if (leg.token && ltpByToken[leg.token] !== undefined) return ltpByToken[leg.token];
-            var expiry10 = String(leg.expiry_date || '').slice(0, 10);
-            var opt = String(leg.option || '').toUpperCase();
-            if (leg.strike && expiry10 && opt) {
-                var key = String(leg.strike) + '_' + expiry10 + '_' + opt;
-                if (ltpByContract[key] !== undefined) return ltpByContract[key];
-            }
-            return null;
-        }
-
-        var groupPnl = {};
-
         Object.keys(executionRecordsMap).forEach(function (recordId) {
-            var rec = executionRecordsMap[recordId];
-
-            var isSquaredOff = rec.active_on_server === false || rec.status === 'StrategyStatus.SquaredOff';
-            var legs = Array.isArray(rec.legs) ? rec.legs : [];
-            var strategyPnl = 0;
-
-            // No legs yet — skip so "entry in" countdown stays visible
-            // For squared-off with no legs: restore from cache if available
-            if (legs.length === 0) {
-                if (isSquaredOff && squaredOffMtmCache[recordId] !== undefined) {
-                    var mtmElSq = document.querySelector('.ff-deployed-mtm[data-record-id="' + recordId + '"]');
-                    if (mtmElSq) {
-                        var sqCached = Math.round(squaredOffMtmCache[recordId] * 100) / 100;
-                        mtmElSq.textContent = '\u20b9 ' + sqCached.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                        mtmElSq.style.color = sqCached >= 0 ? '#16a34a' : '#ef4444';
-                    }
-                }
-                var g0 = (rec.portfolio && rec.portfolio.group_id) || '';
-                if (g0) groupPnl[g0] = (groupPnl[g0] || 0) + 0;
-                return;
-            }
-
-            legs.forEach(function (leg) {
-                if (!leg || typeof leg !== 'object') return;
-
-                var entryTrade = leg.entry_trade;
-                if (!entryTrade || typeof entryTrade !== 'object') return;
-
-                // Skip leg if listen time is before this leg's entry time
-                var legEntryTsStr = leg.entry_timestamp
-                    || entryTrade.traded_timestamp
-                    || entryTrade.trigger_timestamp
-                    || '';
-                var legEntryDt = parseTs(legEntryTsStr);
-                if (currentListenDt && legEntryDt && currentListenDt.getTime() < legEntryDt.getTime()) return;
-
-                var entryPrice = parseFloat(entryTrade.price || entryTrade.trigger_price) || 0;
-                var lotSize = parseInt(leg.lot_size) || 1;
-                var lotQty = parseInt(leg.quantity) || 0;
-                var qty = lotQty * lotSize;
-                var isSell = String(leg.position || '').toLowerCase().indexOf('sell') !== -1;
-                var pnl = 0;
-
-                var exitTrade = leg.exit_trade;
-                if (exitTrade && typeof exitTrade === 'object') {
-                    var exitPrice = parseFloat(exitTrade.price || exitTrade.trigger_price) || 0;
-                    if (exitPrice > 0) {
-                        // Leg closed (squared off or backtest exit) — always use fixed exit price
-                        pnl = isSell ? (entryPrice - exitPrice) * qty : (exitPrice - entryPrice) * qty;
-                    } else {
-                        // exit_trade exists but no price yet — fall back to LTP
-                        var exitTsStr = exitTrade.traded_timestamp || exitTrade.trigger_timestamp || '';
-                        var exitDt = parseTs(exitTsStr);
-                        if (currentListenDt && exitDt && currentListenDt.getTime() >= exitDt.getTime()) {
-                            pnl = 0; // closed at 0 price, treat as 0
-                        } else {
-                            var ltp1 = getLtp(leg);
-                            if (ltp1 === null) return;
-                            pnl = isSell ? (entryPrice - ltp1) * qty : (ltp1 - entryPrice) * qty;
-                        }
-                    }
-                } else {
-                    // Open position — skip for squared-off strategies, use LTP for active
-                    if (isSquaredOff) return;
-                    var ltp2 = getLtp(leg);
-                    if (ltp2 === null) return;
-                    leg.last_saw_price = ltp2;
-                    leg.mark_price = ltp2;
-                    leg.ltp = ltp2;
-                    pnl = isSell ? (entryPrice - ltp2) * qty : (ltp2 - entryPrice) * qty;
-                }
-
-                leg.pnl = pnl;
-                strategyPnl += pnl;
-            });
-
-            var pendingFeatureLegs = Array.isArray(rec.pending_feature_legs) ? rec.pending_feature_legs : [];
-            pendingFeatureLegs.forEach(function (leg) {
-                if (!leg || typeof leg !== 'object') return;
-                var pendingLtp = getLtp(leg);
-                if (pendingLtp === null) return;
-                leg.last_saw_price = pendingLtp;
-                leg.mark_price = pendingLtp;
-                leg.ltp = pendingLtp;
-            });
-
-            // Cache squared-off MTM so it survives re-renders with empty legs
-            if (isSquaredOff) squaredOffMtmCache[recordId] = strategyPnl;
-
-            var mtmEl = document.querySelector('.ff-deployed-mtm[data-record-id="' + recordId + '"]');
-            if (mtmEl) {
-                var rounded = Math.round(strategyPnl * 100) / 100;
-                mtmEl.textContent = '\u20b9 ' + rounded.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                mtmEl.style.color = rounded >= 0 ? '#16a34a' : '#ef4444';
-            }
-            updateStrategyDetailPanel(recordId, rec);
-
-            var groupId = (rec.portfolio && rec.portfolio.group_id) || '';
-            if (groupId) groupPnl[groupId] = (groupPnl[groupId] || 0) + strategyPnl;
+            var strategyPnl = calculateStrategyPnl(recordId, currentListenDt);
+            strategyPnlCache[recordId] = strategyPnl;
+            updateStrategyMtmCell(recordId, strategyPnl);
+            updateStrategyDetailPanel(recordId, executionRecordsMap[recordId] || {});
         });
-
-        Object.keys(groupPnl).forEach(function (groupId) {
-            var groupEl = document.querySelector('.ff-deployed-mtm[data-group-mtm="' + groupId + '"]');
-            if (groupEl) {
-                var rounded = Math.round(groupPnl[groupId] * 100) / 100;
-                groupEl.textContent = '\u20b9 ' + rounded.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                groupEl.style.color = rounded >= 0 ? '#16a34a' : '#ef4444';
-            }
-        });
-
-        // Update Total MTM (combined all strategies) and open leg count
-        var totalPnl = 0;
-        Object.keys(groupPnl).forEach(function (gid) { totalPnl += groupPnl[gid]; });
-
-        var totalOpenLegs = 0;
-        var totalStrategies = Object.keys(executionRecordsMap).length;
-        Object.keys(executionRecordsMap).forEach(function (rid) {
-            var rec = executionRecordsMap[rid];
-            var legs = Array.isArray(rec.legs) ? rec.legs : [];
-            legs.forEach(function (leg) {
-                if (!leg || typeof leg !== 'object') return;
-                var exitTrade = leg.exit_trade;
-                if (!exitTrade || typeof exitTrade !== 'object') {
-                    totalOpenLegs += 1;
-                } else {
-                    var exitTsStr = exitTrade.traded_timestamp || exitTrade.trigger_timestamp || '';
-                    var exitDt = exitTsStr ? new Date(String(exitTsStr).replace(' ', 'T')) : null;
-                    if (!exitDt || isNaN(exitDt.getTime())) {
-                        totalOpenLegs += 1;
-                    } else if (currentListenDt && currentListenDt.getTime() < exitDt.getTime()) {
-                        totalOpenLegs += 1;
-                    }
-                }
-            });
-        });
-
-        var totalRounded = Math.round(totalPnl * 100) / 100;
-        var totalFormatted = '\u20b9 ' + totalRounded.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        var totalColor = totalRounded >= 0 ? '#16a34a' : '#ef4444';
-        var countStr = totalOpenLegs + '/' + totalStrategies;
-
-        ['ff-header-total-mtm', 'ff-toolbar-total-mtm'].forEach(function (id) {
-            var el = document.getElementById(id);
-            if (el) { el.textContent = totalFormatted; el.style.color = totalColor; }
-        });
-        var headerPos = document.getElementById('ff-header-open-pos');
-        if (headerPos) headerPos.textContent = countStr;
-        var toolbarRunning = document.getElementById('ff-toolbar-running-count');
-        if (toolbarRunning) toolbarRunning.textContent = countStr;
-        var toolbarOpenPos = document.getElementById('ff-toolbar-open-pos-count');
-        if (toolbarOpenPos) toolbarOpenPos.textContent = String(totalOpenLegs);
+        renderAggregateMtmFromCache(currentListenDt, true);
     }
 
     function handleUpdateSocketMessage(payload) {
@@ -2233,18 +3098,22 @@
         }
         if (payload.type === 'ltp_update') {
             var ltpData = payload.data || {};
-            latestLtpSnapshot = Array.isArray(ltpData.ltp) ? ltpData.ltp.slice() : [];
+            mergeLatestLtpSnapshot(ltpData.ltp);
+            rememberChangedLtpKeys(ltpData.ltp);
+            var previousListenSecond = getTimestampSecondKey(latestListenTimestamp);
             var ltpListenTs = ltpData.listen_timestamp || ltpData.listen_time || '';
             if (ltpListenTs) {
                 updateCurrentListenTimeDisplay(ltpListenTs);
-                refreshDeployedStrategyTimers();
+                if (getTimestampSecondKey(ltpListenTs) !== previousListenSecond) {
+                    refreshDeployedStrategyTimers();
+                }
                 // Keep market-open label time in sync (timer stops after market opens)
                 if (marketCountdownEl && backtestCountdownState && backtestCountdownState.marketOpenReached) {
                     var hhmm = String(ltpListenTs).replace('T', ' ').slice(11, 16);
                     if (hhmm) marketCountdownEl.textContent = 'Market is open \u2022 ' + hhmm;
                 }
             }
-            applyLtpToMtm(latestLtpSnapshot);
+            scheduleLtpRender();
             return;
         }
         if (payload.type === 'listen_time_update') {
@@ -2258,6 +3127,9 @@
             return;
         }
         if (payload.type === 'connection_established' || payload.type === 'subscription_ack') {
+            if (payload.type === 'connection_established') {
+                sendUpdateSubscription('connection_established');
+            }
             if (payload.type === 'subscription_ack' && !initialPositionSnapshotRequested) {
                 requestInitialPositionSnapshot('socket_open_initial_load');
             }
@@ -2413,9 +3285,12 @@
         if (!window.AlgoStreamSockets) {
             return null;
         }
+        var currentUserId = resolveCurrentUserId();
         if (!executeOrdersSocketClient) {
             executeOrdersSocketClient = window.AlgoStreamSockets.createChannel({
                 channel: 'execute-orders',
+                userId: currentUserId,
+                activationMode: listeningModeKey,
                 onStatusChange: function (state, meta) {
                     updateSocketStatus(state, meta || {});
                 },
@@ -2427,6 +3302,8 @@
         if (!updateSocketClient) {
             updateSocketClient = window.AlgoStreamSockets.createChannel({
                 channel: 'update',
+                userId: currentUserId,
+                activationMode: listeningModeKey,
                 onStatusChange: function (state, meta) {
                     updateSocketStatus(state, meta || {});
                 },
@@ -2468,6 +3345,7 @@
         if (updateSocketClient) {
             updateSocketClient.send({
                 trade_date: selectedDate,
+                user_id: resolveCurrentUserId(),
                 activation_mode: listeningModeKey,
                 status: listeningModeKey,
                 autoload: true,
@@ -2476,6 +3354,35 @@
             });
             requestInitialPositionSnapshot(reason || 'autoload_start', normalizedTimestamp);
         }
+        return clients;
+    }
+
+    function activateManualSockets(listenTimestamp, reason) {
+        var selectedDate = String(listeningDateInput && listeningDateInput.value || '').trim();
+        var normalizedTimestamp = String(listenTimestamp || '').trim() || getCurrentBacktestListenTimestamp();
+        var clients = ensureStreamSocketConnections();
+        if (!clients || !selectedDate) {
+            return null;
+        }
+        initialPositionSnapshotRequested = false;
+        if (executeOrdersSocketClient) {
+            var executionPayload = buildExecuteOrdersSubscriptionPayload(selectedDate);
+            executionPayload.autoload = false;
+            executeOrdersSocketClient.send(executionPayload);
+        }
+        if (updateSocketClient) {
+            updateSocketClient.send({
+                trade_date: selectedDate,
+                user_id: resolveCurrentUserId(),
+                activation_mode: listeningModeKey,
+                status: listeningModeKey,
+                autoload: false,
+                listen_timestamp: normalizedTimestamp,
+                reason: reason || 'manual_socket_start'
+            });
+            requestInitialPositionSnapshot(reason || 'manual_socket_start', normalizedTimestamp);
+        }
+        updateCurrentListenTimeDisplay(normalizedTimestamp);
         return clients;
     }
 
@@ -2514,8 +3421,7 @@
         if (backtestAutoloadEnabled) {
             activateAutoloadSockets(startListenTimestamp, 'start_listening_initial_load');
         } else {
-            closeExecutionSocket(true);
-            updateCurrentListenTimeDisplay(startListenTimestamp);
+            activateManualSockets(startListenTimestamp, 'start_listening_initial_load');
         }
         // API called once only — updates come via execute_order socket events after that
         fetchDeployedPortfolios(selectedDate, behindTime, true)
@@ -2541,6 +3447,61 @@
         setupModal.hidden = true;
         document.body.style.overflow = '';
         document.documentElement.style.overflow = '';
+    }
+
+    function openBrokerSettingsModal() {
+        if (!brokerSettingsModal) {
+            return;
+        }
+        brokerSettingsModal.hidden = false;
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+    }
+
+    function closeBrokerSettingsModal() {
+        if (!brokerSettingsModal) {
+            return;
+        }
+        brokerSettingsModal.hidden = true;
+        document.body.style.overflow = '';
+        document.documentElement.style.overflow = '';
+    }
+
+    function formatBrokerCurrency(value) {
+        var numericValue = parseInt(String(value || '').replace(/[^\d]/g, ''), 10);
+        if (isNaN(numericValue)) {
+            numericValue = 0;
+        }
+        return '\u20b9 ' + numericValue.toLocaleString('en-IN');
+    }
+
+    function syncBrokerSettingsDisplay() {
+        if (brokerStopLossDisplay && brokerStopLossInput) {
+            brokerStopLossDisplay.textContent = formatBrokerCurrency(brokerStopLossInput.value);
+        }
+        if (brokerTargetProfitDisplay && brokerTargetProfitInput) {
+            brokerTargetProfitDisplay.textContent = formatBrokerCurrency(brokerTargetProfitInput.value);
+        }
+    }
+
+    function adjustBrokerFieldValue(fieldName, direction) {
+        var input = null;
+        if (fieldName === 'stop-loss') {
+            input = brokerStopLossInput;
+        } else if (fieldName === 'target-profit') {
+            input = brokerTargetProfitInput;
+        }
+
+        if (!input) {
+            return;
+        }
+
+        var currentValue = parseInt(String(input.value || '').replace(/[^\d]/g, ''), 10);
+        if (isNaN(currentValue)) {
+            currentValue = 0;
+        }
+        var nextValue = Math.max(0, currentValue + (direction * 100));
+        input.value = String(nextValue);
     }
 
     var pendingCancelDeployment = { strategy_id: '', group_id: '' };
@@ -2596,7 +3557,7 @@
         if (activateButton) {
             var activationPortfolioId = activateButton.getAttribute('data-item-id');
             if (activationPortfolioId) {
-                var query = '?strategy_id=' + encodeURIComponent(activationPortfolioId) + '&status=algo-backtest';
+                var query = '?strategy_id=' + encodeURIComponent(activationPortfolioId) + '&status=' + encodeURIComponent(listeningModeKey);
                 var currentDateTime = formatBacktestActivationDateTime();
                 if (currentDateTime) {
                     query += '&current_datetime=' + encodeURIComponent(currentDateTime);
@@ -2612,6 +3573,13 @@
         event.preventDefault();
         openSetupModal(setupButton.getAttribute('data-strategy-name'));
     });
+
+    if (brokerSettingsEditBtn) {
+        brokerSettingsEditBtn.addEventListener('click', function (event) {
+            event.preventDefault();
+            openBrokerSettingsModal();
+        });
+    }
 
     setupModal.addEventListener('click', function (event) {
         var modeButton = event.target.closest('[data-execution-mode]');
@@ -2629,9 +3597,37 @@
         }
     });
 
+    if (brokerSettingsModal) {
+        brokerSettingsModal.addEventListener('click', function (event) {
+            var adjustButton = event.target.closest('[data-adjust-broker-value]');
+            if (adjustButton) {
+                event.preventDefault();
+                adjustBrokerFieldValue(
+                    adjustButton.getAttribute('data-adjust-broker-value'),
+                    Number(adjustButton.getAttribute('data-adjust-direction')) || 0
+                );
+                return;
+            }
+
+            if (event.target.closest('[data-save-broker-settings]')) {
+                syncBrokerSettingsDisplay();
+                closeBrokerSettingsModal();
+                return;
+            }
+
+            if (event.target.closest('[data-close-broker-settings]')) {
+                closeBrokerSettingsModal();
+            }
+        });
+    }
+
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && !setupModal.hidden) {
             closeSetupModal();
+            return;
+        }
+        if (brokerSettingsModal && event.key === 'Escape' && !brokerSettingsModal.hidden) {
+            closeBrokerSettingsModal();
             return;
         }
         if (event.key === 'Escape' && !cancelDeploymentModal.hidden) {
@@ -2844,7 +3840,7 @@
                 return;
             }
             deployedStrategyDetailExpandedState[detailRecordId] = !deployedStrategyDetailExpandedState[detailRecordId];
-            updateStrategyDetailPanel(detailRecordId, executionRecordsMap[detailRecordId] || {});
+            updateStrategyDetailPanel(detailRecordId, executionRecordsMap[detailRecordId] || {}, true);
             return;
         }
         var deploymentActionButton = event.target.closest('[data-deployment-action]');
@@ -3014,7 +4010,7 @@
             var d = String(now.getDate()).padStart(2, '0');
             return y + '-' + m + '-' + d;
         }());
-        updateSocketClient.send({ trade_date: date, activation_mode: 'live' });
+        updateSocketClient.send({ trade_date: date, activation_mode: listeningModeKey });
     };
 
     window.stopAlgoLiveMonitor = function () {
