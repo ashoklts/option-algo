@@ -45,7 +45,7 @@ FLATTRADE_API_SECRET = os.getenv("FLATTRADE_API_SECRET", "").strip()
 
 _AUTH_URL    = "https://auth.flattrade.in/"
 _TOKEN_URL   = "https://authapi.flattrade.in/trade/apitoken"
-_BASE_URL    = "https://piconnect.flattrade.in/PiConnectTP"
+_BASE_URL    = "https://piconnect.flattrade.in/PiConnectAPI"
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -124,14 +124,23 @@ class FlatTradeAdapter:
         self.jkey    = jkey
 
     def _post(self, endpoint: str, data: dict) -> object:
-        payload = f"jData={json.dumps(data)}&jKey={self.jkey}"
+        url = f"{_BASE_URL}/{endpoint}"
+        payload = {
+            "jData": json.dumps(data, separators=(",", ":")),
+            "jKey": self.jkey,
+        }
         resp = requests.post(
-            f"{_BASE_URL}/{endpoint}",
+            url,
             data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=10,
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            raise requests.HTTPError(
+                f"{exc}; FlatTrade response: {resp.text[:500]}"
+            ) from exc
         return resp.json()
 
     # ── place_order ──────────────────────────────────────────────────────────
