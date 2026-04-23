@@ -8,7 +8,7 @@ import logging
 from pymongo import MongoClient
 from typing import Optional
 
-MONGO_LIVE_DB_CONNECT = False  # True = Atlas cloud DB | False = Local MongoDB
+MONGO_LIVE_DB_CONNECT = True  # True = Atlas cloud DB | False = Local MongoDB
 
 _LIVE_MONGO_URI  = "mongodb+srv://finedgealgo:finedgealgo@cluster0.e66us4f.mongodb.net/"
 _LOCAL_MONGO_URI = "mongodb://localhost:27017"
