@@ -13,6 +13,8 @@ WebSocket handler for two modes:
    and broadcasts the updated position snapshot via the socket.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

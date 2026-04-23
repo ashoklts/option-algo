@@ -17,6 +17,8 @@ On every tick:
   - Every new minute → _execute_backtest_entries() → entry logic (same as backtest)
 """
 
+from __future__ import annotations
+
 import threading
 import logging
 from datetime import datetime

@@ -16,6 +16,8 @@ Broadcasts two events to all connected clients on the 'executions' channel:
 Zero contact with execution_socket.py internals.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

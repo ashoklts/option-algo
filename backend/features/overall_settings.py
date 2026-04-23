@@ -41,6 +41,8 @@ When both Overall SL and Overall Target fire on the same candle, whichever time 
 wins; if equal, Overall SL takes priority (capital protection first).
 """
 
+from __future__ import annotations
+
 from typing import Optional, Tuple, List
 
 try:

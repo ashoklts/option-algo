@@ -13,6 +13,8 @@ Endpoints:
     GET  /backtest/result/{job_id}  → get final result when status=done
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging

@@ -31,6 +31,8 @@ In live_monitor_socket.py change only:
 Everything else — ltp_map, spot_map, status, subscribe flow — stays identical.
 """
 
+from __future__ import annotations
+
 import time
 import threading
 import logging
