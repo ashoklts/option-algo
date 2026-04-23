@@ -1,70 +1,53 @@
-2026-04-20 18:08:46  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:09:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:09:26  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:09:38  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:09:43  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:16:39  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:16:39  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=update_one  id=test_id_123  reason=test
-2026-04-20 18:16:39  ERROR     db_activity                          [DB ERROR]  col=algo_trades  op=find_one  id=test_id  error=connection refused
-NoneType: None
-2026-04-20 18:41:19  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:45:29  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:45:38  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:45:44  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:46:10  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:47:02  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:47:24  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:47:36  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:47:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:48:13  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:48:24  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:48:30  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:48:39  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:49:07  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:49:34  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 18:49:40  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:30:21  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:30:30  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:30:51  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:50:29  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:50:35  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:50:46  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:50:57  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:51:05  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:51:15  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:51:27  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:51:41  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:51:53  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:52:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:53:22  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:53:34  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 21:53:43  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:05:52  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:06:00  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:11:05  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:11:14  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:11:19  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:17:33  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:17:46  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:21:25  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:21:31  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:21:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:21:51  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:25:54  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:25:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:26:09  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:26:14  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:28:21  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:28:28  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:32:41  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:32:53  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:36:15  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:38:02  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:38:10  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:38:21  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:38:30  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:43:23  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:43:30  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:48:20  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:48:33  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-04-20 22:48:44  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:01:40  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:08:14  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:20:56  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:33:29  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:33:54  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:34:11  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:34:34  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:34:57  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:35:16  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:39:04  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:39:17  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:40:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:40:17  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:40:36  INFO      api                                  [FLATTRADE POSTBACK] order_id=TEST001 status=COMPLETE fill_price=100.25 fill_qty=75
+2026-04-23 08:47:35  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 08:47:35  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 08:47:42  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 08:47:42  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 08:47:42  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-23 08:47:42  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-23 08:51:33  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:51:40  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:51:48  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:12  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:20  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:28  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:47  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:53:09  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:54:45  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 08:54:45  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 08:54:48  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 08:54:48  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 08:54:48  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-23 08:54:48  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-23 09:11:23  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 09:15:49  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:15:49  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:16:00  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 09:16:11  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:16:11  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:18:27  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 09:18:53  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 09:18:53  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 09:19:56  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=1: ₹422.73 → ₹417.73
+2026-04-23 09:20:12  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 09:20:21  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 09:20:28  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:20:28  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:20:29  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 09:20:29  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 09:21:01  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=2: ₹417.73 → ₹412.73

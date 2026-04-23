@@ -110,6 +110,13 @@ class _LiveFastMonitorSupervisor:
         self._running = True
         runtime_mode_registry.enable()
         self._task = asyncio.create_task(self._run())
+        # Start DB change watcher so every insert/update/delete in the three
+        # trading collections automatically emits to the owning user's socket.
+        try:
+            from features.db_change_watcher import db_change_watcher
+            db_change_watcher.start(trade_date=normalized_trade_date)
+        except Exception as _dw_exc:
+            log.warning('[LIVE+FF MONITOR] db_change_watcher start error: %s', _dw_exc)
         print(
             f'[LIVE+FF MONITOR] started '
             f'trade_date={self.trade_date}'
@@ -122,6 +129,11 @@ class _LiveFastMonitorSupervisor:
             self._task.cancel()
         self._task = None
         runtime_mode_registry.disable()
+        try:
+            from features.db_change_watcher import db_change_watcher
+            db_change_watcher.stop()
+        except Exception:
+            pass
         if was_running:
             print('[LIVE+FF MONITOR] stopped')
 
@@ -260,6 +272,61 @@ class _LiveFastMonitorSupervisor:
                         )
                 except Exception as exc:
                     log.warning('[FAST-FORWARD QUOTE CYCLE] error: %s', exc)
+                # ── Broadcast Kite LTP → update channel (fast-forward / live dashboards) ──
+                try:
+                    from features.live_monitor_socket import (
+                        _get_active_ticker_manager,
+                        _SPOT_TOKEN_BY_UNDERLYING,
+                        _build_message as _ltp_build_message,
+                    )
+                    from features.execution_socket import broadcast_to_channel
+
+                    _tm = _get_active_ticker_manager()
+                    _spot_token_set = set(_SPOT_TOKEN_BY_UNDERLYING.values())
+                    _spot_ltp_list = [
+                        {
+                            'token': _SPOT_TOKEN_BY_UNDERLYING.get(und, ''),
+                            'ltp': float(ltp),
+                            'underlying': und,
+                            'option_type': 'SPOT',
+                            'timestamp': now_ts,
+                        }
+                        for und, ltp in _tm.spot_map.items()
+                        if ltp and float(ltp) > 0
+                    ]
+                    _option_ltp_list = [
+                        {
+                            'token': tok,
+                            'ltp': float(ltp),
+                            'timestamp': now_ts,
+                        }
+                        for tok, ltp in _tm.ltp_map.items()
+                        if tok not in _spot_token_set and ltp and float(ltp) > 0
+                    ]
+                    await broadcast_to_channel('update', _ltp_build_message(
+                        'ltp_update',
+                        'Live LTP tick',
+                        {
+                            'trade_date': now_ts[:10],
+                            'listen_time': current_hhmm,
+                            'listen_timestamp': now_ts,
+                            'ltp': _spot_ltp_list + _option_ltp_list,
+                            'spot_map': dict(_tm.spot_map),
+                            'broker_status': _tm.status,
+                            'mode': 'fast-forward',
+                        },
+                    ))
+                    _spot_parts = '  '.join(
+                        f'{s["underlying"]}={s["ltp"]:.2f}' for s in _spot_ltp_list
+                    ) or 'no spot'
+                    print(
+                        f'[FF LTP EMIT]  {now_ts}'
+                        f'  |  spot: {_spot_parts}'
+                        f'  |  option tokens: {len(_option_ltp_list)}'
+                    )
+                except Exception as _ltp_exc:
+                    log.debug('[FF LTP EMIT] error: %s', _ltp_exc)
+
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass

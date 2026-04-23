@@ -1,0 +1,2 @@
+2026-04-20 18:16:39  ERROR     db_activity                          [DB ERROR]  col=algo_trades  op=find_one  id=test_id  error=connection refused
+NoneType: None

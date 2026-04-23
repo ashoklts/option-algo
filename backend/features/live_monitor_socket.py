@@ -295,6 +295,13 @@ class _LiveMonitorLoop:
         self.last_tick_at    = ''
         self._running        = True
         self._task           = asyncio.create_task(self._run())
+        # Start DB change watcher so every write in the three trading collections
+        # automatically marks the owning user's execute-orders socket dirty.
+        try:
+            from features.db_change_watcher import db_change_watcher
+            db_change_watcher.start(trade_date=normalized_trade_date)
+        except Exception as _dw_exc:
+            log.warning('[LIVE MONITOR LOOP] db_change_watcher start error: %s', _dw_exc)
         print(
             f'[LIVE MONITOR LOOP] started | '
             f'trade_date={self.trade_date} mode={self.activation_mode}'
@@ -306,6 +313,11 @@ class _LiveMonitorLoop:
         if self._task and not self._task.done():
             self._task.cancel()
         self._task = None
+        try:
+            from features.db_change_watcher import db_change_watcher
+            db_change_watcher.stop()
+        except Exception:
+            pass
         if was_running:
             print('[LIVE MONITOR LOOP] stopped')
 

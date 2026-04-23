@@ -15,9 +15,12 @@ Endpoints:
 
 import hashlib
 import json
+import logging
 import multiprocessing
 import os
 import re
+
+log = logging.getLogger(__name__)
 import time
 import uuid
 from copy import deepcopy
@@ -401,6 +404,24 @@ def _describe_feature_status_row(row: dict) -> str:
             f"Re-entry {reentry_type} used {reentry_done}/{reentry_count}. "
             f"Next cycle threshold {next_value}."
         )
+    if feature_key == "pending_entry":
+        option = str(row.get("option") or "").strip().upper() or "-"
+        position = str(row.get("position") or "").split(".")[-1].strip() or "Position"
+        strike = str(row.get("strike") or "").strip() or "-"
+        queued_at = _format_feature_status_timestamp(row.get("queued_at"))
+        triggered_at = _format_feature_status_timestamp(row.get("triggered_at"))
+        status = str(row.get("status") or "").strip().lower()
+
+        if status == "triggered":
+            return (
+                f"Pending entry triggered for {strike} {option} {position} leg at {triggered_at or '-'}."
+            )
+
+        return (
+            f"Pending entry active for {strike} {option} {position} leg since {queued_at or '-'}. "
+            f"Waiting for next entry cycle."
+        )
+
     if feature_key != "momentum_pending":
         return ""
 
@@ -548,7 +569,7 @@ def _attach_leg_feature_statuses(db_instance, records: list) -> list:
                     strategy_feature_rows.append(row_copy)
                 continue
             for row in feature_rows:
-                if str(row.get("feature") or "").strip() != "momentum_pending":
+                if str(row.get("feature") or "").strip() not in {"momentum_pending", "pending_entry"}:
                     continue
                 if str(row.get("status") or "").strip().lower() != "active":
                     continue
@@ -2583,6 +2604,9 @@ async def list_broker_configurations(broker_type: str = ""):
                 "broker_icon": 1,
                 "provider": 1,
                 "vendor": 1,
+                "login_time": 1,
+                "user_id": 1,
+                "access_token": 1,
             },
         )
         records = []
@@ -2592,11 +2616,15 @@ async def list_broker_configurations(broker_type: str = ""):
                 continue
             broker_doc = dict(item)
             broker_doc["_id"] = broker_id
+            has_token = bool(str(item.get("access_token") or "").strip())
             records.append({
                 "_id": broker_id,
                 "name": _extract_broker_configuration_label(broker_doc, broker_id),
                 "broker_type": str(item.get("broker_type") or "").strip(),
                 "broker_icon": str(item.get("broker_icon") or "").strip(),
+                "user_id": str(item.get("user_id") or "").strip(),
+                "login_time": str(item.get("login_time") or "").strip(),
+                "is_logged_in": has_token,
             })
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load broker configurations: {exc}") from exc
@@ -2611,6 +2639,57 @@ async def list_broker_configurations(broker_type: str = ""):
         "count": len(records),
         "records": records,
     }
+
+
+@router.get("/broker-orders")
+async def list_broker_orders(
+    trade_id:     str = "",
+    broker_doc_id:str = "",
+    status:       str = "",
+    order_side:   str = "",
+    limit:        int = 200,
+):
+    """
+    Fetch broker orders from the broker_orders collection.
+
+    Query params (all optional):
+      trade_id      – filter by algo_trade _id
+      broker_doc_id – filter by broker configuration _id
+      status        – OPEN | COMPLETE | REJECTED | CANCELLED | FAILED
+      order_side    – entry | exit
+      limit         – max records (default 200)
+    """
+    query: dict = {}
+    if trade_id.strip():
+        query["trade_id"] = trade_id.strip()
+    if broker_doc_id.strip():
+        query["broker_doc_id"] = broker_doc_id.strip()
+    if status.strip():
+        query["status"] = status.strip().upper()
+    if order_side.strip():
+        query["order_side"] = order_side.strip().lower()
+
+    db = MongoData()
+    try:
+        cursor = (
+            db._db["broker_orders"]
+            .find(query)
+            .sort("placed_at", -1)
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        records = []
+        for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            records.append(doc)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load broker orders: {exc}") from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    return {"success": True, "count": len(records), "records": records}
 
 
 @router.post("/broker-stoploss-settings/save")
@@ -2817,6 +2896,22 @@ async def get_broker_stoploss_settings(user_id: str, broker: str, activation_mod
             },
             {"_id": 0},
         )
+        broker_name = ""
+        broker_details: dict = {}
+        try:
+            broker_doc = db._db["broker_configuration"].find_one(
+                {"_id": ObjectId(normalized_broker)},
+                {"_id": 0, "broker_name": 1, "display_name": 1, "name": 1, "title": 1, "broker": 1, "broker_icon": 1},
+            )
+            if broker_doc:
+                broker_details = {k: str(v or "") for k, v in broker_doc.items()}
+                for key in ("broker_name", "display_name", "name", "title", "broker"):
+                    val = str(broker_doc.get(key) or "").strip()
+                    if val:
+                        broker_name = val
+                        break
+        except Exception:
+            pass
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load broker stoploss settings: {exc}") from exc
     finally:
@@ -2829,6 +2924,8 @@ async def get_broker_stoploss_settings(user_id: str, broker: str, activation_mod
         "success": True,
         "found": document is not None,
         "settings": document,
+        "broker_name": broker_name,
+        "broker_details": broker_details,
     }
 
 
@@ -2993,7 +3090,9 @@ async def kite_live_callback(request: Request):
 
     if broker_doc_id:
         try:
-            save_kite_session(db._db, broker_doc_id, session)
+            _local_db = MongoData()
+            save_kite_session(_local_db._db, broker_doc_id, session)
+            _local_db.close()
         except Exception:
             pass
     else:
@@ -3062,7 +3161,9 @@ async def kite_redirect(request: Request):
 
     if broker_doc_id:
         try:
-            save_kite_session(db._db, broker_doc_id, session)
+            _local_db = MongoData()
+            save_kite_session(_local_db._db, broker_doc_id, session)
+            _local_db.close()
         except Exception:
             pass
     else:
@@ -3148,6 +3249,231 @@ async def kite_get_access_token(broker_doc_id: str):
     if not token:
         raise HTTPException(status_code=404, detail="No access token found")
     return {"access_token": token}
+
+
+# ─── FlatTrade postback (order status push) ──────────────────────────────────
+
+@app.post("/broker/flattrade/postback")
+async def flattrade_postback(request: Request):
+    """
+    FlatTrade Order Notification postback endpoint.
+
+    Configure in FlatTrade Developer Portal:
+      Order Notification URL → https://your-server.com/broker/flattrade/postback
+
+    FlatTrade POSTs order updates here when order status changes (fill / reject / cancel).
+    Payload format (NorenApi / FlatTrade):
+      Content-Type: application/x-www-form-urlencoded
+      Body: jData={"t":"om","norenordno":"...","status":"COMPLETE","avgprc":"100.25",
+                   "fillshares":"75","rejreason":"","uid":"...","exch":"NFO","tsym":"..."}
+
+    Status mapping:
+      COMPLETE        → order filled
+      REJECTED        → broker rejected
+      CANCELLED       → user / system cancelled
+      OPEN            → order acknowledged (ignore — no DB change)
+      TRIGGER_PENDING → SL trigger waiting (ignore)
+    """
+    from features.live_order_manager import process_broker_order_update
+
+    # ── Parse payload — FlatTrade sends form-encoded jData=<json> ─────────────
+    data: dict = {}
+    try:
+        body_bytes = await request.body()
+        body_str   = body_bytes.decode("utf-8", errors="replace")
+
+        if body_str.startswith("jData="):
+            import urllib.parse
+            parsed = urllib.parse.parse_qs(body_str)
+            jdata_str = (parsed.get("jData") or ["{}"])[0]
+            data = json.loads(jdata_str)
+        else:
+            # Try plain JSON body
+            data = json.loads(body_str) if body_str.strip() else {}
+    except Exception as exc:
+        log.warning("[FLATTRADE POSTBACK] parse error: %s", exc)
+        return {"stat": "Ok"}   # always 200 so FlatTrade doesn't retry
+
+    order_id   = str(data.get("norenordno") or "").strip()
+    status_raw = str(data.get("status")     or "").upper()
+    fill_price = float(data.get("avgprc")   or data.get("flprc") or 0)
+    fill_qty   = int(data.get("fillshares") or 0)
+    rej_reason = str(data.get("rejreason")  or "").lower()
+
+    log.info(
+        "[FLATTRADE POSTBACK] order_id=%s status=%s fill_price=%s fill_qty=%s",
+        order_id, status_raw, fill_price, fill_qty,
+    )
+
+    if not order_id:
+        return {"stat": "Ok"}
+
+    # Map FlatTrade status → our internal status
+    _status_map = {
+        "COMPLETE":        "COMPLETE",
+        "REJECTED":        "REJECTED",
+        "CANCELLED":       "CANCELLED",
+        "OPEN":            "OPEN",
+        "TRIGGER_PENDING": "OPEN",
+    }
+    status = _status_map.get(status_raw, status_raw)
+
+    # Only act on terminal / fill statuses
+    if status not in ("COMPLETE", "REJECTED", "CANCELLED"):
+        return {"stat": "Ok"}
+
+    local_db = MongoData()
+    try:
+        process_broker_order_update(
+            local_db,
+            order_id  = order_id,
+            status    = status,
+            fill_price= fill_price,
+            fill_qty  = fill_qty,
+            rejection_reason = rej_reason,
+            source    = "postback",
+        )
+    except Exception as exc:
+        log.error("[FLATTRADE POSTBACK] processing error order_id=%s: %s", order_id, exc)
+    finally:
+        try:
+            local_db.close()
+        except Exception:
+            pass
+
+    return {"stat": "Ok"}
+
+
+# ─── FlatTrade broker login ───────────────────────────────────────────────────
+
+_flattrade_pending: dict = {}
+
+
+@app.get("/broker/flattrade/login")
+async def flattrade_login(broker_doc_id: str = ""):
+    """
+    Redirect to FlatTrade login page.
+
+    Usage:
+      http://localhost:8000/broker/flattrade/login
+      http://localhost:8000/broker/flattrade/login?broker_doc_id=<mongo_id>
+    """
+    import secrets
+    from features.flattrade_broker import get_login_url as ft_login_url
+    session_id = secrets.token_hex(16)
+    _flattrade_pending[session_id] = broker_doc_id
+    return RedirectResponse(url=ft_login_url(state=session_id))
+
+
+@app.get("/broker/flattrade/redirect", response_class=HTMLResponse)
+async def flattrade_redirect(request: Request):
+    """
+    FlatTrade redirects here after login with ?code=<request_code>&state=<session_id>.
+    Exchanges the code for a jKey session token and saves it to broker_configuration.
+    """
+    from features.flattrade_broker import generate_session as ft_generate_session
+    from features.flattrade_broker import save_flattrade_session
+
+    request_code  = request.query_params.get("code", "").strip()
+    error_msg     = request.query_params.get("error", "").strip()
+    state         = request.query_params.get("state", "").strip()
+    broker_doc_id = _flattrade_pending.pop(state, "") or request.query_params.get("broker_doc_id", "").strip()
+
+    if error_msg or not request_code:
+        return HTMLResponse(content=_broker_popup_html(
+            broker="FlatTrade",
+            success=False,
+            message=error_msg or "No request code received",
+        ))
+
+    try:
+        session = ft_generate_session(request_code)
+    except Exception as exc:
+        return HTMLResponse(content=_broker_popup_html(
+            broker="FlatTrade",
+            success=False,
+            message=f"Session error: {exc}",
+        ))
+
+    if broker_doc_id:
+        try:
+            _local_db = MongoData()
+            save_flattrade_session(_local_db._db, broker_doc_id, session)
+            _local_db.close()
+        except Exception:
+            pass
+
+    return HTMLResponse(content=_broker_popup_html(
+        broker="FlatTrade",
+        success=True,
+        message="Login successful",
+        access_token=session.get("token", ""),
+        user_id=session.get("clientid", ""),
+        user_name=session.get("clientid", ""),
+        broker_doc_id=broker_doc_id,
+    ))
+
+
+def _broker_popup_html(
+    broker: str,
+    success: bool,
+    message: str,
+    access_token: str = "",
+    user_id: str = "",
+    user_name: str = "",
+    broker_doc_id: str = "",
+) -> str:
+    import json as _json
+    payload = {
+        "type":          f"{broker.upper()}_LOGIN",
+        "success":       success,
+        "message":       message,
+        "access_token":  access_token,
+        "user_id":       user_id,
+        "user_name":     user_name,
+        "broker_doc_id": broker_doc_id,
+    }
+    payload_js   = _json.dumps(payload)
+    status_color = "#22c55e" if success else "#ef4444"
+    status_icon  = "✓" if success else "✗"
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{broker} Login</title>
+  <style>
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; margin: 0;
+      background: #0f172a; color: #f1f5f9;
+    }}
+    .card {{
+      text-align: center; padding: 2rem;
+      background: #1e293b; border-radius: 12px;
+      border: 1px solid #334155;
+    }}
+    .icon {{ font-size: 3rem; color: {status_color}; }}
+    h2 {{ margin: 0.5rem 0; }}
+    p {{ color: #94a3b8; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">{status_icon}</div>
+    <h2>{"Login Successful" if success else "Login Failed"}</h2>
+    <p>{message}</p>
+    <p style="font-size:0.8rem">This window will close automatically...</p>
+  </div>
+  <script>
+    const payload = {payload_js};
+    if (window.opener) {{
+      window.opener.postMessage(payload, "*");
+    }}
+    setTimeout(() => window.close(), 1500);
+  </script>
+</body>
+</html>"""
 
 
 # ─── Live Market Data (KiteTicker) ───────────────────────────────────────────

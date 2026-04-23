@@ -60,10 +60,12 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
+
+SHOW_PRINT_STATEMENT = False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # §1  IMPORTS & TYPES
@@ -707,21 +709,44 @@ def resolve_trade_leg_configs(trade: dict) -> dict[str, dict]:
     This is the canonical way to get the config for any leg by its id,
     used by every SL/TP/Trail/Reentry check to read feature settings.
 
+    IdleLegConfigs can be either:
+      - A dict  {"callLeg1": {...}, "callLeg2": {...}}  (standard live/FF format)
+      - A list  [{"id": "callLeg1", ...}, ...]          (legacy backtest format)
+
     Returns {} if trade has no leg configs.
     """
     merged: dict[str, dict] = {}
+
+    # Handle list-format configs (ListOfLegConfigs is always a list)
     for cfg_list in (
         trade.get('ListOfLegConfigs') or [],
         (trade.get('strategy') or {}).get('ListOfLegConfigs') or [],
-        trade.get('IdleLegConfigs') or [],
-        (trade.get('strategy') or {}).get('IdleLegConfigs') or [],
     ):
-        for cfg in cfg_list:
+        for cfg in (cfg_list or []):
             if not isinstance(cfg, dict):
                 continue
             leg_id = str(cfg.get('id') or '').strip()
             if leg_id:
                 merged[leg_id] = cfg
+
+    # Handle IdleLegConfigs — supports both dict {"callLeg1": {...}} and list [{id: ...}] formats
+    for idle_src in (
+        trade.get('IdleLegConfigs'),
+        (trade.get('strategy') or {}).get('IdleLegConfigs'),
+        (trade.get('config') or {}).get('IdleLegConfigs'),
+    ):
+        if isinstance(idle_src, dict):
+            for k, v in idle_src.items():
+                if isinstance(v, dict) and k:
+                    merged[str(k)] = v
+        elif isinstance(idle_src, list):
+            for cfg in idle_src:
+                if not isinstance(cfg, dict):
+                    continue
+                leg_id = str(cfg.get('id') or '').strip()
+                if leg_id:
+                    merged[leg_id] = cfg
+
     return merged
 
 
@@ -729,13 +754,53 @@ def resolve_leg_cfg(leg_id: str, leg: dict, all_leg_configs: dict[str, dict]) ->
     """
     Get the leg config dict for a specific leg.
 
-    Tries all_leg_configs first (from resolve_trade_leg_configs),
-    then falls back to the leg document itself.
+    Resolution priority (mirrors execution_socket._resolve_leg_cfg):
+      1. Exact id match
+      2. triggered_by field  (parent-leg direct reentries)
+      3. lazy_leg_ref field  (momentum lazy legs)
+      4. _re_ base-id prefix (reentry legs like leg1_re_20260416...)
+      5. Longest dash-prefix match (momentum lazy leg composite ids)
+      6. Fall back to the leg document itself
 
     Returns {} if not found — callers must treat missing config as
     "feature disabled".
     """
-    return all_leg_configs.get(leg_id) or dict(leg)
+    # 1. Exact match
+    cfg = all_leg_configs.get(leg_id)
+    if cfg:
+        return cfg
+
+    # 2. triggered_by
+    triggered_by = str(leg.get('triggered_by') or '').strip()
+    if triggered_by:
+        cfg = all_leg_configs.get(triggered_by)
+        if cfg:
+            return cfg
+
+    # 3. lazy_leg_ref
+    lazy_ref = str(leg.get('lazy_leg_ref') or '').strip()
+    if lazy_ref:
+        cfg = all_leg_configs.get(lazy_ref)
+        if cfg:
+            return cfg
+
+    # 4. _re_ base-id prefix
+    if '_re_' in leg_id:
+        base = leg_id.split('_re_', 1)[0].strip()
+        if base:
+            cfg = all_leg_configs.get(base)
+            if cfg:
+                return cfg
+
+    # 5. Longest dash-prefix match
+    best_key = ''
+    for k in all_leg_configs:
+        if leg_id.startswith(k + '-') and len(k) > len(best_key):
+            best_key = k
+    if best_key:
+        return all_leg_configs[best_key]
+
+    return {}
 
 
 def build_pending_leg(
@@ -972,13 +1037,14 @@ def compute_strategy_mtm(
     total_mtm   = 0.0
     legs_snapshot: list[dict] = []
 
-    print('[MTM INPUT]', {
-        'trade_id': normalized_id,
-        'timestamp': now_ts,
-        'history_docs': len(history_docs),
-        'open_positions': len(open_positions or []),
-        'open_leg_ids': [str((pos or {}).get('leg_id') or '') for pos in (open_positions or [])],
-    })
+    if SHOW_PRINT_STATEMENT:
+        print('[MTM INPUT]', {
+            'trade_id': normalized_id,
+            'timestamp': now_ts,
+            'history_docs': len(history_docs),
+            'open_positions': len(open_positions or []),
+            'open_leg_ids': [str((pos or {}).get('leg_id') or '') for pos in (open_positions or [])],
+        })
 
     for doc in history_docs:
         entry_trade = doc.get('entry_trade') if isinstance(doc.get('entry_trade'), dict) else {}
@@ -1013,21 +1079,22 @@ def compute_strategy_mtm(
 
         pnl = ((entry_price - current_price) if sell else (current_price - entry_price)) * qty
         total_mtm += pnl
-        print('[MTM LEG]', {
-            'trade_id': normalized_id,
-            'leg_id': leg_id,
-            'strike': doc.get('strike'),
-            'option_type': str(doc.get('option') or doc.get('option_type') or ''),
-            'token': str(doc.get('token') or ''),
-            'symbol': str(doc.get('symbol') or ''),
-            'entry_price': entry_price,
-            'current_price': current_price,
-            'qty': qty,
-            'sell': sell,
-            'used_open_position': bool(ltp_by_leg.get(leg_id)),
-            'last_saw_price': safe_float(doc.get('last_saw_price')),
-            'pnl': round(pnl, 2),
-        })
+        if SHOW_PRINT_STATEMENT:
+            print('[MTM LEG]', {
+                'trade_id': normalized_id,
+                'leg_id': leg_id,
+                'strike': doc.get('strike'),
+                'option_type': str(doc.get('option') or doc.get('option_type') or ''),
+                'token': str(doc.get('token') or ''),
+                'symbol': str(doc.get('symbol') or ''),
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'qty': qty,
+                'sell': sell,
+                'used_open_position': bool(ltp_by_leg.get(leg_id)),
+                'last_saw_price': safe_float(doc.get('last_saw_price')),
+                'pnl': round(pnl, 2),
+            })
         legs_snapshot.append({
             'leg_id':      leg_id,
             'pnl':         round(pnl, 2),
@@ -2615,32 +2682,33 @@ def process_tick(
                                         overall_sl_done=ore_done,
                                         overall_tgt_done=ort_done)
 
-            print('[OVERALL CHECK]', {
-                'mode':           ctx.activation_mode,
-                'trade_id':       trade_id,
-                'timestamp':      ctx.now_ts,
-                'current_mtm':    round(current_mtm, 2),
-                'overall_sl':     eff_sl,
-                'overall_target': eff_tgt,
-                'dynamic_sl':     dyn_sl,
-            })
-            print('[OVERALL SL DEBUG]', {
-                'mode': ctx.activation_mode,
-                'trade_id': trade_id,
-                'timestamp': ctx.now_ts,
-                'current_mtm': round(current_mtm, 2),
-                'base_overall_sl': round(safe_float(parse_overall_sl(strategy_cfg)[1]), 2),
-                'reentry_done': ore_done,
-                'cycle_number': ore_done + 1,
-                'cycle_overall_sl': round(eff_sl, 2),
-                'dynamic_sl_threshold': round(safe_float(dyn_sl), 2),
-                'checked_stoploss': round(safe_float(dyn_sl or eff_sl), 2),
-                'would_hit_cycle_sl': bool(eff_sl > 0 and current_mtm <= -eff_sl),
-                'would_hit_dynamic_sl': bool(dyn_sl > 0 and current_mtm <= -dyn_sl),
-                'skip_same_tick_overall': skip_same_tick_overall,
-                'last_overall_event_at': last_overall_event_at,
-                'last_overall_event_reason': last_overall_event_reason,
-            })
+            if SHOW_PRINT_STATEMENT:
+                print('[OVERALL CHECK]', {
+                    'mode':           ctx.activation_mode,
+                    'trade_id':       trade_id,
+                    'timestamp':      ctx.now_ts,
+                    'current_mtm':    round(current_mtm, 2),
+                    'overall_sl':     eff_sl,
+                    'overall_target': eff_tgt,
+                    'dynamic_sl':     dyn_sl,
+                })
+                print('[OVERALL SL DEBUG]', {
+                    'mode': ctx.activation_mode,
+                    'trade_id': trade_id,
+                    'timestamp': ctx.now_ts,
+                    'current_mtm': round(current_mtm, 2),
+                    'base_overall_sl': round(safe_float(parse_overall_sl(strategy_cfg)[1]), 2),
+                    'reentry_done': ore_done,
+                    'cycle_number': ore_done + 1,
+                    'cycle_overall_sl': round(eff_sl, 2),
+                    'dynamic_sl_threshold': round(safe_float(dyn_sl), 2),
+                    'checked_stoploss': round(safe_float(dyn_sl or eff_sl), 2),
+                    'would_hit_cycle_sl': bool(eff_sl > 0 and current_mtm <= -eff_sl),
+                    'would_hit_dynamic_sl': bool(dyn_sl > 0 and current_mtm <= -dyn_sl),
+                    'skip_same_tick_overall': skip_same_tick_overall,
+                    'last_overall_event_at': last_overall_event_at,
+                    'last_overall_event_reason': last_overall_event_reason,
+                })
 
             if skip_same_tick_overall:
                 ctx.actions_taken.append(
@@ -3340,15 +3408,16 @@ def process_broker_tick(
             hdoc['status'] = OPEN_LEG_STATUS
             legs.append(hdoc)
 
-        print('[BROKER LEGS RESOLVED]', {
-            'mode': ctx.activation_mode,
-            'trade_id': trade_id,
-            'timestamp': ctx.now_ts,
-            'dict_legs': len([l for l in (trade.get('legs') or []) if isinstance(l, dict)]),
-            'string_refs': len([l for l in (trade.get('legs') or []) if isinstance(l, str)]),
-            'loaded_legs': len(legs),
-            'loaded_leg_ids': [str((leg or {}).get('id') or '') for leg in legs[:10] if isinstance(leg, dict)],
-        })
+        if SHOW_PRINT_STATEMENT:
+            print('[BROKER LEGS RESOLVED]', {
+                'mode': ctx.activation_mode,
+                'trade_id': trade_id,
+                'timestamp': ctx.now_ts,
+                'dict_legs': len([l for l in (trade.get('legs') or []) if isinstance(l, dict)]),
+                'string_refs': len([l for l in (trade.get('legs') or []) if isinstance(l, str)]),
+                'loaded_legs': len(legs),
+                'loaded_leg_ids': [str((leg or {}).get('id') or '') for leg in legs[:10] if isinstance(leg, dict)],
+            })
         ltp_map: dict[str, float] = {}
         for leg in legs:
             leg_id = str(leg.get('id') or '')
@@ -3372,27 +3441,29 @@ def process_broker_tick(
             if current_price:
                 ltp_map[leg_id] = current_price
             else:
-                print('[BROKER LEG SKIP]', {
-                    'mode': ctx.activation_mode,
-                    'trade_id': trade_id,
-                    'leg_id': leg_id,
-                    'token': str(leg.get('token') or ''),
-                    'symbol': str(leg.get('symbol') or ''),
-                    'underlying': underlying,
-                    'expiry': expiry,
-                    'strike': strike,
-                    'option_type': option_type,
-                    'reason': 'ltp_missing_before_shared_tick',
-                })
+                if SHOW_PRINT_STATEMENT:
+                    print('[BROKER LEG SKIP]', {
+                        'mode': ctx.activation_mode,
+                        'trade_id': trade_id,
+                        'leg_id': leg_id,
+                        'token': str(leg.get('token') or ''),
+                        'symbol': str(leg.get('symbol') or ''),
+                        'underlying': underlying,
+                        'expiry': expiry,
+                        'strike': strike,
+                        'option_type': option_type,
+                        'reason': 'ltp_missing_before_shared_tick',
+                    })
 
-        print('[BROKER SHARED TICK]', {
-            'mode': ctx.activation_mode,
-            'trade_id': trade_id,
-            'timestamp': ctx.now_ts,
-            'legs': len(legs),
-            'ltp_map_size': len(ltp_map),
-            'uses_shared_backtest_tick': True,
-        })
+        if SHOW_PRINT_STATEMENT:
+            print('[BROKER SHARED TICK]', {
+                'mode': ctx.activation_mode,
+                'trade_id': trade_id,
+                'timestamp': ctx.now_ts,
+                'legs': len(legs),
+                'ltp_map_size': len(ltp_map),
+                'uses_shared_backtest_tick': True,
+            })
         tick_result = _process_backtest_trade_tick(
             db=ctx.db,
             trade=trade,

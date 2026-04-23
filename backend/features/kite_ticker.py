@@ -48,6 +48,7 @@ class _TickerManager:
         self._lock        = threading.Lock()
         self._last_minute = ""
         self._stopped     = False          # flag checked inside _on_ticks to abort early
+        self._listeners: list = []
 
         self.ltp_map:    dict[str, float] = {}   # token_str → last_price
         self.spot_map:   dict[str, float] = {}   # underlying → spot_price (NIFTY, BANKNIFTY…)
@@ -137,6 +138,9 @@ class _TickerManager:
                         spot_ticks_received.append((underlying, lp, now_ts))
 
                 self.tick_count += len(ticks)
+                current_ltp_map = dict(self.ltp_map)
+                current_spot_map = dict(self.spot_map)
+                listeners = list(self._listeners)
                 try:
                     from features.runtime_mode_registry import runtime_mode_registry
                     active_modes = [
@@ -193,6 +197,28 @@ class _TickerManager:
                     )
                 except Exception as exc:
                     logger.error("tick dispatch error: %s", exc)
+
+                if listeners:
+                    tick_payload = {
+                        "timestamp": now_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
+                        "ltp_map": current_ltp_map,
+                        "spot_map": current_spot_map,
+                        "changed_ltp_map": {
+                            str(tick.get("instrument_token") or ""): float(
+                                tick.get("last_price") or tick.get("last_traded_price") or 0
+                            )
+                            for tick in ticks
+                            if str(tick.get("instrument_token") or "").strip()
+                            and (tick.get("last_price") is not None or tick.get("last_traded_price") is not None)
+                        },
+                        "tick_count": self.tick_count,
+                        "status": self.status,
+                    }
+                    for listener in listeners:
+                        try:
+                            listener(tick_payload)
+                        except Exception as exc:
+                            logger.warning("ticker listener error: %s", exc)
 
             def _on_connect(ws, response):
                 logger.info("KiteTicker connected")
@@ -343,6 +369,17 @@ class _TickerManager:
         self.subscribed_tokens.add(normalized_token)
         if str(label or "").strip():
             self.token_labels[normalized_token] = str(label).strip()
+
+    def add_tick_listener(self, listener) -> None:
+        if not callable(listener):
+            return
+        with self._lock:
+            if listener not in self._listeners:
+                self._listeners.append(listener)
+
+    def remove_tick_listener(self, listener) -> None:
+        with self._lock:
+            self._listeners = [item for item in self._listeners if item is not listener]
 
 
 # Singleton

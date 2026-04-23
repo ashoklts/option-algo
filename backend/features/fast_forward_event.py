@@ -17,6 +17,7 @@ Important:
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from bson import ObjectId
@@ -100,10 +101,24 @@ def _get_socket_entry_ltp(token: str) -> float:
     if not normalized_token:
         return 0.0
     try:
-        from features.kite_ticker import ticker_manager
+        from features.live_monitor_socket import _get_active_ticker_manager
+        ticker_manager = _get_active_ticker_manager()
         return _safe_float(ticker_manager.get_ltp(normalized_token))
     except Exception:
         return 0.0
+
+
+def _wait_for_socket_entry_ltp(token: str, timeout_seconds: float = 0.75) -> float:
+    normalized_token = str(token or '').strip()
+    if not normalized_token:
+        return 0.0
+    deadline = time.monotonic() + max(0.0, float(timeout_seconds or 0.0))
+    while time.monotonic() < deadline:
+        ltp = _get_socket_entry_ltp(normalized_token)
+        if ltp > 0:
+            return ltp
+        time.sleep(0.05)
+    return _get_socket_entry_ltp(normalized_token)
 
 
 def _subscribe_option_token(token: str, symbol: str = '') -> None:
@@ -111,7 +126,8 @@ def _subscribe_option_token(token: str, symbol: str = '') -> None:
     if not normalized_token:
         return
     try:
-        from features.kite_ticker import ticker_manager
+        from features.live_monitor_socket import _get_active_ticker_manager
+        ticker_manager = _get_active_ticker_manager()
 
         if not ticker_manager._ticker or ticker_manager.status != 'running':
             return
@@ -147,7 +163,9 @@ def sync_fast_forward_open_position_subscriptions(trade_date: str = '') -> int:
             return 0
 
         subscribed = 0
-        for row in db._db['algo_trade_positions_history'].find(
+        dirty_trade_ids: list[str] = []
+        hist_col = db._db['algo_trade_positions_history']
+        for row in hist_col.find(
             {
                 'trade_id': {'$in': trade_ids},
                 'status': 1,
@@ -158,19 +176,91 @@ def sync_fast_forward_open_position_subscriptions(trade_date: str = '') -> int:
                 'token': 1,
                 'symbol': 1,
                 'leg_id': 1,
+                'entry_trade': 1,
+                'ticker': 1,
+                'strike': 1,
+                'expiry_date': 1,
+                'option': 1,
             },
         ):
-            token = str(row.get('token') or '').strip()
+            _entry_trade = row.get('entry_trade') or {}
+            token = str(row.get('token') or _entry_trade.get('instrument_token') or '').strip()
+            symbol = str(row.get('symbol') or '').strip()
+
+            # Non-numeric token (chain format) — resolve Kite integer token and patch DB
+            if token and not token.isdigit():
+                underlying = str(row.get('ticker') or '').strip().upper()
+                expiry_raw = str(row.get('expiry_date') or '').strip()
+                expiry = expiry_raw[:10] if expiry_raw else ''
+                strike = row.get('strike')
+                opt_raw = str(row.get('option') or '').strip()
+                option_type = opt_raw.split('.')[-1].upper() if '.' in opt_raw else opt_raw.upper()
+                if underlying and expiry and strike not in (None, '') and option_type:
+                    try:
+                        tok_doc = db._db['active_option_tokens'].find_one({
+                            'instrument': underlying,
+                            'expiry': expiry,
+                            'strike': strike,
+                            'option_type': option_type,
+                        }) or {}
+                        kite_tok = str(tok_doc.get('token') or tok_doc.get('tokens') or '').strip()
+                        if kite_tok and kite_tok.isdigit():
+                            new_sym = str(tok_doc.get('symbol') or symbol or kite_tok)
+                            hist_col.update_one(
+                                {'_id': row['_id']},
+                                {'$set': {'token': kite_tok, 'symbol': new_sym}},
+                            )
+                            print(
+                                f'[FF TOKEN PATCH] leg_id={row.get("leg_id")} '
+                                f'chain={token} → kite={kite_tok} sym={new_sym}'
+                            )
+                            token = kite_tok
+                            symbol = new_sym
+                            tid = str(row.get('trade_id') or '').strip()
+                            if tid and tid not in dirty_trade_ids:
+                                dirty_trade_ids.append(tid)
+                    except Exception:
+                        pass
+
             if not token:
                 continue
-            symbol = str(row.get('symbol') or '').strip()
             _subscribe_option_token(token, symbol)
             subscribed += 1
+
+        for _dtid in dirty_trade_ids:
+            try:
+                from features.execution_socket import mark_execute_order_dirty_from_trade_id
+                mark_execute_order_dirty_from_trade_id(db, _dtid)
+            except Exception:
+                pass
+
+        momentum_subscribed = 0
+        for mrow in db._db['algo_leg_feature_status'].find(
+            {
+                'trade_id': {'$in': trade_ids},
+                'feature': 'momentum_pending',
+                'status': 'active',
+                'token': {'$nin': [None, '']},
+            },
+            {'token': 1, 'symbol': 1, 'leg_id': 1},
+        ):
+            mtoken = str(mrow.get('token') or '').strip()
+            if not mtoken:
+                continue
+            msymbol = str(mrow.get('symbol') or '').strip()
+            _subscribe_option_token(mtoken, msymbol)
+            momentum_subscribed += 1
+            print(
+                f'[FF MOMENTUM PENDING SUBSCRIBE] '
+                f'leg_id={str(mrow.get("leg_id") or "-")} '
+                f'token={mtoken}'
+            )
+
         print(
             f'[FF OPEN POSITION SUBSCRIBE] trade_date={normalized_trade_date or "-"} '
-            f'trades={len(trade_ids)} subscribed_tokens={subscribed}'
+            f'trades={len(trade_ids)} subscribed_tokens={subscribed} momentum_tokens={momentum_subscribed}'
         )
-        return subscribed
+        return subscribed + momentum_subscribed
     except Exception:
         return 0
     finally:
@@ -228,6 +318,7 @@ def resolve_fast_forward_pending_entry_snapshot(
     leg_cfg: dict,
     *,
     now_ts: str,
+    fallback_spot_price: float = 0.0,
 ) -> dict:
     underlying = str(
         (trade.get('strategy') or {}).get('Ticker')
@@ -245,6 +336,8 @@ def resolve_fast_forward_pending_entry_snapshot(
             spot_price = _safe_float(ticker_manager.get_spot(underlying))
         except Exception:
             spot_price = 0.0
+    if spot_price <= 0:
+        spot_price = _safe_float(fallback_spot_price)
     if spot_price <= 0:
         return {}
 
@@ -433,6 +526,52 @@ def resolve_fast_forward_entry_execution_payload(
     *,
     now_ts: str,
 ) -> dict:
+    underlying = str(
+        (trade.get('strategy') or {}).get('Ticker')
+        or (trade.get('config') or {}).get('Ticker')
+        or trade.get('ticker') or ''
+    ).strip().upper()
+
+    leg_token = str(leg.get('token') or '').strip()
+    leg_strike = leg.get('strike')
+    leg_expiry = str(leg.get('expiry_date') or '').strip()
+    if ' ' in leg_expiry:
+        leg_expiry = leg_expiry[:10]
+    leg_symbol = str(leg.get('symbol') or '').strip()
+
+    # Fast path: contract already fully resolved → skip DB scan, get LTP from Kite ticker directly
+    if underlying and leg_token and leg_token.isdigit() and leg_strike not in (None, '') and leg_expiry:
+        try:
+            from features.live_monitor_socket import _get_active_ticker_manager
+            _tm_ff = _get_active_ticker_manager()
+            spot_price = _safe_float(_tm_ff.get_spot(underlying))
+        except Exception:
+            spot_price = 0.0
+        ltp = _get_socket_entry_ltp(leg_token)
+        if ltp <= 0:
+            # Token not subscribed or no tick received yet — subscribe now so next tick delivers LTP
+            _subscribe_option_token(leg_token, leg_symbol)
+            ltp = _wait_for_socket_entry_ltp(leg_token, timeout_seconds=0.75)
+            # Also try Kite quote API as immediate fallback (if trade has get_quote enabled)
+            if should_use_fast_forward_quote(trade):
+                _quote_ltp = _get_fast_forward_quote_price(db, trade, leg_symbol)
+                if _quote_ltp > 0:
+                    ltp = _quote_ltp
+                    print(f'[FF FAST PATH QUOTE] token={leg_token} symbol={leg_symbol} quote_ltp={ltp}')
+        entry_price, price_source = resolve_fast_forward_entry_price(db, trade, leg_token, leg_symbol, ltp)
+        return {
+            'spot_price': spot_price,
+            'strike': leg_strike,
+            'expiry_date': leg_expiry,
+            'token': leg_token,
+            'symbol': leg_symbol,
+            'entry_price': entry_price,
+            'current_option_price': entry_price if entry_price > 0 else ltp,
+            'entry_price_source': price_source,
+            'ltp': ltp,
+            'atm_price': 0,
+        }
+
     contract_cfg = {
         'id': str(leg.get('id') or ''),
         'ContractType': {
@@ -444,11 +583,13 @@ def resolve_fast_forward_entry_execution_payload(
         'ExpiryKind': str(leg.get('expiry_kind') or leg.get('ExpiryKind') or 'ExpiryType.Weekly'),
         'StrikeParameter': str(leg.get('strike_parameter') or leg.get('StrikeParameter') or 'StrikeType.ATM'),
     }
+    leg_spot_fallback = _safe_float(leg.get('spot_at_queue') or leg.get('spot_price') or 0)
     snapshot = resolve_fast_forward_pending_entry_snapshot(
         db,
         trade,
         contract_cfg,
         now_ts=now_ts,
+        fallback_spot_price=leg_spot_fallback,
     ) or {}
 
     spot_price = _safe_float(

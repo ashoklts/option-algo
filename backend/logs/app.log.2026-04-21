@@ -1,0 +1,150 @@
+2026-04-21 09:07:02  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:11:04  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 09:11:59  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 09:11:59  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 09:21:00  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:21:05  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:21:20  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 09:21:56  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (WebSocket closing handshake timeout (peer did not finish the opening handshake in time))
+2026-04-21 09:21:56  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (WebSocket closing handshake timeout (peer did not finish the opening handshake in time))
+2026-04-21 09:21:56  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (WebSocket closing handshake timeout (peer did not finish the opening handshake in time))
+2026-04-21 09:21:56  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (WebSocket closing handshake timeout (peer did not finish the opening handshake in time))
+2026-04-21 09:23:18  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:23:36  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 09:23:55  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 09:23:55  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 09:26:13  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:26:35  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:26:49  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:26:54  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 09:28:34  INFO      features.notification_manager        Trail SL rotated leg=k49do8lv step=1: ₹95.89 → ₹90.89
+2026-04-21 09:30:58  INFO      features.notification_manager        Trail SL rotated leg=k49do8lv step=2: ₹90.89 → ₹85.89
+2026-04-21 09:31:26  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:31:38  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:31:41  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=2
+2026-04-21 09:31:41  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=2
+2026-04-21 09:32:16  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 09:32:24  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=2
+2026-04-21 09:35:10  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=1: ₹78.93 → ₹73.93
+2026-04-21 09:35:19  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 09:35:19  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 09:36:28  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:36:32  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=1
+2026-04-21 09:36:37  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:36:40  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=1
+2026-04-21 09:36:47  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:36:51  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=1
+2026-04-21 09:37:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:37:06  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=1
+2026-04-21 09:37:11  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:37:14  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=1
+2026-04-21 09:37:27  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:37:30  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=1
+2026-04-21 09:37:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:37:47  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 09:38:00  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 09:41:01  INFO      features.notification_manager        Trail SL rotated leg=k49do8lv step=1: ₹86.86 → ₹81.86
+2026-04-21 09:45:32  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19dae3ae49e1bce24e1  leg_id=k49do8lv  exit_reason=stoploss  exit_price=82.25  ts=2026-04-21T09:45:32
+2026-04-21 09:45:43  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=1: ₹67.22 → ₹62.22
+2026-04-21 09:45:43  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=2: ₹73.93 → ₹68.93
+2026-04-21 09:45:46  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19dae2276181bce24e1  leg_id=k49do8lv  exit_reason=stoploss  exit_price=86.1  ts=2026-04-21T09:45:46
+2026-04-21 09:48:58  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:48:58  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-21 09:48:58  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:48:58  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (None)
+2026-04-21 09:49:01  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 1. Next retry in around: 3 seconds
+2026-04-21 09:49:01  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 1
+2026-04-21 09:49:08  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 2. Next retry in around: 8 seconds
+2026-04-21 09:49:08  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 2
+2026-04-21 09:49:30  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 09:59:02  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:59:02  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-21 09:59:02  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:59:02  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (None)
+2026-04-21 09:59:04  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 1. Next retry in around: 3 seconds
+2026-04-21 09:59:04  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 1
+2026-04-21 09:59:13  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 09:59:21  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:59:21  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-21 09:59:21  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:59:21  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (None)
+2026-04-21 09:59:23  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 10:03:47  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=3: ₹68.93 → ₹63.93
+2026-04-21 10:03:47  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=2: ₹62.22 → ₹57.22
+2026-04-21 10:03:57  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:04:06  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:05:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:17:50  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 10:21:50  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:21:57  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:28:32  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:28:43  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:29:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:29:45  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 10:29:45  INFO      features.notification_manager        Trail SL rotated leg=k49do8lv step=1: ₹72.63 → ₹67.63
+2026-04-21 10:29:45  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19dae3ae49e1bce24e5  leg_id=ttx2772l  exit_reason=stoploss  exit_price=59.5  ts=2026-04-21T10:29:45
+2026-04-21 10:30:32  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 10:30:32  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 10:32:37  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:34:57  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:35:07  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:37:41  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:37:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:38:08  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:39:24  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:39:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:41:44  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 10:41:54  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:42:28  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 10:42:36  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 10:42:36  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 10:49:51  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:50:12  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 10:51:38  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 10:53:00  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 10:53:00  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 11:03:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:03:51  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:03:56  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:04:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:06:42  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 11:07:43  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 11:07:43  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 11:15:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:16:10  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:16:34  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:17:14  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:17:19  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 11:17:20  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19dae74e6541bce24e9  leg_id=ttx2772l  exit_reason=stoploss  exit_price=2150.05  ts=2026-04-21T11:17:20
+2026-04-21 11:17:42  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 11:17:42  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 11:22:07  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:22:26  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 11:22:26  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19dae94e0351bce24e9  leg_id=ttx2772l  exit_reason=stoploss  exit_price=2161.25  ts=2026-04-21T11:22:26
+2026-04-21 11:22:32  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 11:22:32  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 11:22:56  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 11:32:40  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=1 delivered=1
+2026-04-21 11:32:59  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19dae9953321bce24e1  leg_id=ttx2772l  exit_reason=stoploss  exit_price=62.4  ts=2026-04-21T11:32:59
+2026-04-21 11:33:44  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 11:33:44  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-21 11:39:51  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:41:14  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:43:49  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:43:55  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 11:45:01  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 12:03:40  INFO      features.notification_manager        Trail SL rotated leg=ta45594f step=1: ₹65.02 → ₹60.02
+2026-04-21 12:12:40  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 12:12:53  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 12:13:30  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 12:13:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 12:13:56  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 12:14:10  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 12:14:21  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-21 12:15:12  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-21 12:19:35  INFO      features.notification_manager        Trail SL rotated leg=ta45594f step=2: ₹60.02 → ₹55.02
+2026-04-21 12:23:01  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19daead716c1bce24e9  leg_id=otaolxp9  exit_reason=stoploss  exit_price=50.7  ts=2026-04-21T12:23:01
+2026-04-21 12:38:37  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-21 12:38:37  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-21 12:38:37  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-21 12:38:37  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (None)

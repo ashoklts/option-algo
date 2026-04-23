@@ -112,6 +112,78 @@ def _persist_spot_ticks(db: MongoData, spot_ticks_received: list[tuple[str, floa
         logger.error("spot write error source=%s: %s", source, exc)
 
 
+def _run_momentum_for_live_ff(
+    db: MongoData,
+    trade_date: str,
+    activation_mode: str,
+    now_ts: str,
+    records: list,
+) -> None:
+    """
+    Process momentum-pending legs for ALL running live/fast-forward trades on every tick.
+    This runs independently of entry_time so already-running strategies with queued
+    momentum legs are also checked.
+    """
+    from features.execution_socket import (
+        OPTION_CHAIN_COLLECTION,
+        _process_momentum_pending_feature_legs,
+        mark_execute_order_dirty_from_trade,
+    )
+
+    chain_col = db._db[OPTION_CHAIN_COLLECTION]
+
+    # Build ltp_map and spot_map from Kite ticker once for all trades
+    ltp_map: dict = {}
+    spot_map: dict = {}
+    try:
+        from features.kite_ticker import ticker_manager as _tm_run
+        ltp_map = dict(_tm_run.ltp_map or {})
+        spot_map = dict(_tm_run.spot_map or {})
+    except Exception:
+        pass
+
+    for record in (records or []):
+        trade_id = str(record.get('_id') or '').strip()
+        if not trade_id:
+            continue
+        trade = db._db['algo_trades'].find_one({'_id': trade_id})
+        if not trade:
+            continue
+        underlying = str(
+            (trade.get('config') or {}).get('Ticker')
+            or trade.get('ticker') or ''
+        ).strip().upper()
+        try:
+            lot_size = db.get_lot_size(trade_date, underlying)
+        except Exception:
+            lot_size = 75
+
+        # Build index_spot_doc from Kite spot_map for live/FF
+        index_spot_doc: dict = {}
+        kite_spot = float(spot_map.get(underlying) or 0)
+        if kite_spot > 0:
+            index_spot_doc = {
+                'underlying': underlying,
+                'spot_price': kite_spot,
+                'timestamp': now_ts,
+                'source': 'kite_live',
+            }
+
+        entered_ids = _process_momentum_pending_feature_legs(
+            db, trade, chain_col, trade_date, now_ts, lot_size,
+            index_spot_doc=index_spot_doc or None,
+            ltp_map=ltp_map,
+            activation_mode=activation_mode,
+        )
+        if entered_ids:
+            trade = db._db['algo_trades'].find_one({'_id': trade_id}) or trade
+            mark_execute_order_dirty_from_trade(trade)
+            print(
+                f'[MOMENTUM ENTERED] trade_id={trade_id} '
+                f'mode={activation_mode} legs={entered_ids}'
+            )
+
+
 def _run_entries_for_mode(
     db: MongoData,
     trade_date: str,
@@ -132,6 +204,11 @@ def _run_entries_for_mode(
     )
     if not records:
         return
+
+    # For live/fast-forward: process momentum-pending legs for ALL running trades
+    # on every tick — independent of entry_time matching.
+    if activation_mode in {'live', 'fast-forward'}:
+        _run_momentum_for_live_ff(db, trade_date, activation_mode, now_ts, records)
 
     if activation_mode not in {"live", "fast-forward"}:
         build_entry_spot_snapshots(db, records, listen_time, now_ts)

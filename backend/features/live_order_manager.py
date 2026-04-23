@@ -3,19 +3,29 @@ live_order_manager.py
 ─────────────────────
 Places, tracks and converts broker orders for live-mode strategy entries and exits.
 
+Broker selection
+────────────────
+Each algo_trade has a `broker` field (ObjectId → broker_configuration).
+get_broker_for_trade() reads the broker doc's `name` / `broker_icon` field:
+  - "flattrade" in name/icon → FlatTradeAdapter  (FlatTrade REST API)
+  - otherwise                → KiteConnect        (Zerodha Kite API)
+
+LTP data always comes from Kite WebSocket (kite_ticker), regardless of which
+broker is used for order placement.
+
 Entry flow
 ──────────
 1. Entry conditions met → place_live_entry_order()
    - Reads EntryOrder config from leg_cfg (defaults: LIMIT, LimitBuffer=3pts, ConvertAfter=40s)
    - Calculates limit_price = LTP ± LimitBuffer
-   - Places LIMIT order via Kite Connect API
+   - Places order via selected broker (Kite or FlatTrade)
    - Returns {order_id, order_type, limit_price, order_status}
 
 2. entry_trade_payload stored in DB with order_id + order_status='OPEN'
 
 3. Background poller (poll_pending_order_fills) called from live_fast_monitor loop
    - Finds legs with order_status='OPEN'
-   - Calls kite.orders() to check fill
+   - Calls broker.orders() to check fill
    - On fill  → updates entry_trade.price = actual_fill_price, order_status='COMPLETE'
    - On cancel/reject → marks order_status='REJECTED', entry_trade.price=0
    - On timeout (ConvertAfter exceeded) → cancel + re-place as aggressive limit (bid/ask based)
@@ -32,6 +42,9 @@ import logging
 import threading
 from datetime import datetime
 from typing import Any
+
+# ── broker_orders collection name ─────────────────────────────────────────────
+_BROKER_ORDERS_COL = 'broker_orders'
 
 log = logging.getLogger(__name__)
 
@@ -174,29 +187,246 @@ def _get_leg_entry_buffer(trade: dict, leg_id: str) -> tuple[float, str]:
     return 3.0, 'points'   # default
 
 
-def get_kite_for_trade(db, trade: dict):
-    """Return an authenticated KiteConnect instance for the trade's broker."""
-    from features.kite_broker import get_kite_instance
+# ── broker_orders helpers ─────────────────────────────────────────────────────
+
+def _broker_type_label(broker) -> str:
+    """Return 'flattrade' or 'kite' based on broker instance type."""
+    try:
+        from features.flattrade_broker import FlatTradeAdapter
+        if isinstance(broker, FlatTradeAdapter):
+            return 'flattrade'
+    except Exception:
+        pass
+    return 'kite'
+
+
+def _save_broker_order(
+    db,
+    trade: dict,
+    broker,
+    order_id: str,
+    order_side: str,        # 'entry' | 'exit'
+    symbol: str,
+    exchange: str,
+    txn_type: str,          # 'BUY' | 'SELL'
+    qty: int,
+    order_type: str,
+    price: float,
+    trigger_price: float,
+    product: str,
+    leg_id: str = '',
+    exit_reason: str = '',
+) -> None:
+    """Insert a new row into broker_orders when an order is placed."""
+    try:
+        now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        trade_id   = str(trade.get('_id') or '').strip()
+        broker_id  = str(trade.get('broker') or '').strip()
+        broker_lbl = _broker_type_label(broker)
+        db._db[_BROKER_ORDERS_COL].insert_one({
+            'order_id':         order_id,
+            'broker_doc_id':    broker_id,
+            'broker_type':      broker_lbl,
+            'trade_id':         trade_id,
+            'leg_id':           leg_id,
+            'order_side':       order_side,
+            'symbol':           symbol,
+            'exchange':         exchange,
+            'transaction_type': txn_type,
+            'quantity':         int(qty),
+            'order_type':       order_type,
+            'price':            float(price or 0),
+            'trigger_price':    float(trigger_price or 0),
+            'product':          product,
+            'exit_reason':      exit_reason,
+            'status':           'OPEN',
+            'fill_price':       0.0,
+            'fill_qty':         0,
+            'rejection_reason': '',
+            'placed_at':        now,
+            'updated_at':       now,
+            'filled_at':        '',
+        })
+    except Exception as exc:
+        log.debug('[BROKER ORDERS] save failed order_id=%s: %s', order_id, exc)
+
+
+def _update_broker_order_status(
+    db,
+    order_id: str,
+    status: str,
+    fill_price: float = 0.0,
+    fill_qty: int = 0,
+    rejection_reason: str = '',
+) -> None:
+    """Update status in broker_orders collection only."""
+    try:
+        now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        set_fields: dict = {
+            'status':     status,
+            'updated_at': now,
+        }
+        if status == 'COMPLETE':
+            set_fields['fill_price'] = float(fill_price or 0)
+            set_fields['fill_qty']   = int(fill_qty or 0)
+            set_fields['filled_at']  = now
+        elif status in ('REJECTED', 'CANCELLED'):
+            set_fields['rejection_reason'] = str(rejection_reason or '')
+        db._db[_BROKER_ORDERS_COL].update_one(
+            {'order_id': order_id},
+            {'$set': set_fields},
+        )
+    except Exception as exc:
+        log.debug('[BROKER ORDERS] update failed order_id=%s: %s', order_id, exc)
+
+
+def process_broker_order_update(
+    db,
+    order_id: str,
+    status: str,
+    fill_price: float = 0.0,
+    fill_qty: int = 0,
+    rejection_reason: str = '',
+    source: str = 'poll',       # 'poll' | 'postback'
+) -> bool:
+    """
+    Central handler for any broker order status change (fill / reject / cancel).
+
+    Called from:
+      - poll_pending_order_fills()  (every 5 sec, fallback)
+      - flattrade_postback()        (real-time push)
+
+    Updates:
+      1. broker_orders collection
+      2. algo_trade_positions_history  (entry_trade.price / order_status)
+      3. algo_trades legs array
+      4. Marks execution socket dirty
+
+    Returns True if algo DB was updated, False if order not found / already processed.
+    """
+    now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+
+    # 1. Update broker_orders collection
+    _update_broker_order_status(db, order_id, status, fill_price, fill_qty, rejection_reason)
+
+    # 2. Find the matching history leg document
+    hist_col   = db._db['algo_trade_positions_history']
+    trades_col = db._db['algo_trades']
+
+    hist_doc = hist_col.find_one(
+        {'entry_trade.order_id': order_id},
+        {'_id': 1, 'trade_id': 1, 'leg_id': 1, 'entry_trade.order_status': 1},
+    )
+    if not hist_doc:
+        return False
+
+    # Skip if already processed to avoid double updates
+    current_status = str(
+        (hist_doc.get('entry_trade') or {}).get('order_status') or ''
+    ).upper()
+    if current_status == status:
+        return False
+
+    trade_id = str(hist_doc.get('trade_id') or '')
+    leg_id   = str(hist_doc.get('leg_id')   or '')
+
+    if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
+        hist_col.update_one(
+            {'_id': hist_doc['_id']},
+            {'$set': {
+                'entry_trade.price':        fill_price,
+                'entry_trade.order_status': _ORDER_STATUS_COMPLETE,
+                'entry_trade.fill_qty':     int(fill_qty),
+                'entry_trade.filled_at':    now_ts,
+            }},
+        )
+        trades_col.update_one(
+            {'_id': trade_id},
+            {'$set': {
+                'legs.$[elem].last_saw_price':          fill_price,
+                'legs.$[elem].entry_trade.price':       fill_price,
+                'legs.$[elem].entry_trade.order_status':_ORDER_STATUS_COMPLETE,
+            }},
+            array_filters=[{'elem.id': leg_id}],
+        )
+        try:
+            from features.execution_socket import mark_execute_order_dirty_from_trade_id
+            mark_execute_order_dirty_from_trade_id(db, trade_id)
+        except Exception:
+            pass
+        print(
+            f'[ORDER FILLED][{source}] trade={trade_id} leg={leg_id} '
+            f'order_id={order_id} fill_price={fill_price} qty={fill_qty}'
+        )
+        return True
+
+    elif status in (_ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
+        hist_col.update_one(
+            {'_id': hist_doc['_id']},
+            {'$set': {
+                'entry_trade.order_status':     status,
+                'entry_trade.rejection_reason': rejection_reason,
+            }},
+        )
+        print(
+            f'[ORDER {status}][{source}] trade={trade_id} leg={leg_id} '
+            f'order_id={order_id} reason={rejection_reason or "-"}'
+        )
+        return True
+
+    return False
+
+
+def get_broker_for_trade(db, trade: dict):
+    """
+    Return an authenticated broker instance for the trade's mapped broker.
+
+    Reads broker_configuration by trade['broker'] ObjectId.
+    Detects broker type from doc's `name` / `broker_icon` field:
+      - "flattrade" in name/icon → FlatTradeAdapter
+      - otherwise                → KiteConnect (Zerodha)
+
+    Falls back to default KiteConnect via kite_market_config when no broker
+    is mapped on the trade.
+    """
     broker_id = str(trade.get('broker') or '').strip()
-    access_token = ''
+
     if broker_id:
         try:
             from bson import ObjectId
+            from features.flattrade_broker import _is_flattrade_doc, get_flattrade_instance
             broker_doc = db._db['broker_configuration'].find_one(
-                {'_id': ObjectId(broker_id)}, {'access_token': 1}
+                {'_id': ObjectId(broker_id)},
+                {'access_token': 1, 'user_id': 1, 'name': 1, 'broker_icon': 1},
             ) or {}
             access_token = str(broker_doc.get('access_token') or '').strip()
+            if access_token and _is_flattrade_doc(broker_doc):
+                user_id = str(broker_doc.get('user_id') or '').strip()
+                ft = get_flattrade_instance(user_id, access_token)
+                if ft:
+                    log.debug('broker=flattrade trade=%s', str(trade.get('_id') or ''))
+                    return ft
+            elif access_token:
+                from features.kite_broker import get_kite_instance
+                return get_kite_instance(access_token)
         except Exception as exc:
-            log.debug('broker token lookup error broker=%s: %s', broker_id, exc)
-    if not access_token:
-        try:
-            market_cfg = db._db['kite_market_config'].find_one({'enabled': True}, {'access_token': 1}) or {}
-            access_token = str(market_cfg.get('access_token') or '').strip()
-        except Exception as exc:
-            log.debug('market config token lookup error: %s', exc)
-    if not access_token:
-        return None
-    return get_kite_instance(access_token)
+            log.debug('broker lookup error broker=%s: %s', broker_id, exc)
+
+    # Fallback — default Kite market config
+    try:
+        from features.kite_broker import get_kite_instance
+        market_cfg = db._db['kite_market_config'].find_one({'enabled': True}, {'access_token': 1}) or {}
+        access_token = str(market_cfg.get('access_token') or '').strip()
+        if access_token:
+            return get_kite_instance(access_token)
+    except Exception as exc:
+        log.debug('market config token lookup error: %s', exc)
+
+    return None
+
+
+# Keep old name as alias so other callers (if any) don't break
+get_kite_for_trade = get_broker_for_trade
 
 
 # ── Order config resolution ───────────────────────────────────────────────────
@@ -341,9 +571,9 @@ def place_live_entry_order(
         return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'limit_price': ltp,
                 'trigger_price': 0.0, 'order_status': 'FAILED', 'error': 'no_symbol'}
 
-    kite = get_kite_for_trade(db, trade)
+    kite = get_broker_for_trade(db, trade)
     if not kite:
-        log.warning('[LIVE ORDER] no kite instance for trade=%s', trade_id)
+        log.warning('[LIVE ORDER] no broker instance for trade=%s', trade_id)
         return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'limit_price': ltp,
                 'trigger_price': 0.0, 'order_status': 'FAILED', 'error': 'no_kite_session'}
 
@@ -420,7 +650,13 @@ def place_live_entry_order(
             f'order_type={kite_order_type} limit_price={limit_price} '
             f'trigger_price={trigger_price} order_id={order_id}'
         )
-        log_db_write('kite_orders', 'place_entry_order', order_id, {
+        _save_broker_order(
+            db, trade, kite, order_id, 'entry',
+            symbol, _NFO, txn_type, qty,
+            kite_order_type, limit_price, trigger_price, product,
+            leg_id=leg_id,
+        )
+        log_db_write('broker_orders', 'place_entry_order', order_id, {
             'trade_id': trade_id, 'leg_id': leg_id, 'symbol': symbol,
             'order_type': kite_order_type, 'limit_price': limit_price,
         })
@@ -435,7 +671,7 @@ def place_live_entry_order(
         }
     except Exception as exc:
         log.error('[LIVE ORDER FAILED] trade=%s leg=%s symbol=%s: %s', trade_id, leg_id, symbol, exc)
-        log_db_error('kite_orders', 'place_entry_order', exc, f'{trade_id}/{leg_id}')
+        log_db_error('broker_orders', 'place_entry_order', exc, f'{trade_id}/{leg_id}')
         return {
             'order_id':      '',
             'order_type':    kite_order_type,
@@ -471,9 +707,9 @@ def place_live_exit_order(
     if not symbol:
         return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'order_status': 'FAILED', 'error': 'no_symbol'}
 
-    kite = get_kite_for_trade(db, trade)
+    kite = get_broker_for_trade(db, trade)
     if not kite:
-        return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'order_status': 'FAILED', 'error': 'no_kite_session'}
+        return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'order_status': 'FAILED', 'error': 'no_broker_session'}
 
     cfg = _resolve_exit_order_config(leg_cfg)
     position_str = str(leg.get('position') or 'PositionType.Sell')
@@ -557,7 +793,13 @@ def place_live_exit_order(
             f'reason={exit_reason} order_type={kite_order_type} '
             f'limit_price={limit_price} order_id={order_id}'
         )
-        log_db_write('kite_orders', 'place_exit_order', order_id, {
+        _save_broker_order(
+            db, trade, kite, order_id, 'exit',
+            symbol, _NFO, txn_type, qty,
+            kite_order_type, limit_price, trigger_price, product,
+            leg_id=leg_id, exit_reason=exit_reason,
+        )
+        log_db_write('broker_orders', 'place_exit_order', order_id, {
             'trade_id': trade_id, 'leg_id': leg_id, 'symbol': symbol,
             'exit_reason': exit_reason, 'order_type': kite_order_type,
         })
@@ -571,7 +813,7 @@ def place_live_exit_order(
         }
     except Exception as exc:
         log.error('[LIVE EXIT ORDER FAILED] trade=%s leg=%s: %s', trade_id, leg_id, exc)
-        log_db_error('kite_orders', 'place_exit_order', exc, f'{trade_id}/{leg_id}')
+        log_db_error('broker_orders', 'place_exit_order', exc, f'{trade_id}/{leg_id}')
         return {
             'order_id':      '',
             'order_type':    kite_order_type,
@@ -627,7 +869,7 @@ def poll_pending_order_fills(db) -> int:
         }
 
         # Fetch kite orders once per unique broker
-        kite_orders_cache: dict[str, list[dict]] = {}
+        broker_orders_cache: dict[str, list[dict]] = {}
 
         for hist_doc in pending_legs:
             trade_id = str(hist_doc.get('trade_id') or '')
@@ -644,18 +886,18 @@ def poll_pending_order_fills(db) -> int:
             broker_id = str(trade.get('broker') or '').strip()
             cache_key = broker_id or '_default'
 
-            if cache_key not in kite_orders_cache:
-                kite = get_kite_for_trade(db, trade)
+            if cache_key not in broker_orders_cache:
+                kite = get_broker_for_trade(db, trade)
                 if kite:
                     try:
-                        kite_orders_cache[cache_key] = kite.orders() or []
+                        broker_orders_cache[cache_key] = kite.orders() or []
                     except Exception as exc:
                         log.debug('kite.orders() error: %s', exc)
-                        kite_orders_cache[cache_key] = []
+                        broker_orders_cache[cache_key] = []
                 else:
-                    kite_orders_cache[cache_key] = []
+                    broker_orders_cache[cache_key] = []
 
-            orders_list = kite_orders_cache.get(cache_key) or []
+            orders_list = broker_orders_cache.get(cache_key) or []
             kite_order  = next((o for o in orders_list if str(o.get('order_id') or '') == order_id), None)
 
             if not kite_order:
@@ -666,48 +908,19 @@ def poll_pending_order_fills(db) -> int:
             fill_qty   = int(kite_order.get('filled_quantity') or 0)
 
             if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
-                # Update history doc with actual fill price
-                hist_col.update_one(
-                    {'_id': hist_doc['_id']},
-                    {'$set': {
-                        'entry_trade.price':        fill_price,
-                        'entry_trade.order_status': _ORDER_STATUS_COMPLETE,
-                        'entry_trade.fill_qty':     fill_qty,
-                        'entry_trade.filled_at':    now_ts,
-                    }},
-                )
-                # Also update legs array in algo_trades
-                trades_col.update_one(
-                    {'_id': trade_id},
-                    {'$set': {
-                        'legs.$[elem].last_saw_price':          fill_price,
-                        'legs.$[elem].entry_trade.price':       fill_price,
-                        'legs.$[elem].entry_trade.order_status':_ORDER_STATUS_COMPLETE,
-                    }},
-                    array_filters=[{'elem.id': leg_id}],
-                )
-                from features.execution_socket import mark_execute_order_dirty_from_trade_id
-                mark_execute_order_dirty_from_trade_id(db, trade_id)
-                print(
-                    f'[ORDER FILLED] trade={trade_id} leg={leg_id} '
-                    f'order_id={order_id} fill_price={fill_price} qty={fill_qty}'
-                )
-                updated += 1
+                if process_broker_order_update(
+                    db, order_id, _ORDER_STATUS_COMPLETE,
+                    fill_price=fill_price, fill_qty=fill_qty, source='poll',
+                ):
+                    updated += 1
 
             elif status in (_ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
                 status_msg = str(
                     kite_order.get('status_message') or kite_order.get('status_message_raw') or ''
                 ).lower()
-                hist_col.update_one(
-                    {'_id': hist_doc['_id']},
-                    {'$set': {
-                        'entry_trade.order_status':        status,
-                        'entry_trade.rejection_reason':    status_msg,
-                    }},
-                )
-                print(
-                    f'[ORDER {status}] trade={trade_id} leg={leg_id} '
-                    f'order_id={order_id} reason={status_msg or "-"}'
+                process_broker_order_update(
+                    db, order_id, status,
+                    rejection_reason=status_msg, source='poll',
                 )
                 # MarginAutoSquareOff: margin rejection → exit all open legs
                 is_margin_error = any(
@@ -716,7 +929,7 @@ def poll_pending_order_fills(db) -> int:
                 if is_margin_error:
                     exec_base = trade.get('execution_config_base') or {}
                     if bool(exec_base.get('MarginAutoSquareOff', False)):
-                        kite_sq = get_kite_for_trade(db, trade)
+                        kite_sq = get_broker_for_trade(db, trade)
                         if kite_sq:
                             print(
                                 f'[MARGIN AUTO SQUAREOFF] trade={trade_id} '
@@ -736,7 +949,7 @@ def poll_pending_order_fills(db) -> int:
 
                     if convert_after > 0 and total_elapsed >= convert_after:
                         # Final retry — convert_after timeout exceeded
-                        kite = get_kite_for_trade(db, trade)
+                        kite = get_broker_for_trade(db, trade)
                         if kite:
                             _convert_to_aggressive_limit(
                                 db, kite, trade, hist_doc, order_id, kite_order, now_ts
@@ -751,7 +964,7 @@ def poll_pending_order_fills(db) -> int:
                             last_mod_dt      = datetime.fromisoformat(last_mod)
                             elapsed_since_mod = (datetime.now() - last_mod_dt).total_seconds()
                             if elapsed_since_mod >= mod_freq:
-                                kite = get_kite_for_trade(db, trade)
+                                kite = get_broker_for_trade(db, trade)
                                 if kite:
                                     _convert_to_aggressive_limit(
                                         db, kite, trade, hist_doc, order_id, kite_order, now_ts

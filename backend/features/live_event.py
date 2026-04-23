@@ -83,7 +83,9 @@ def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
             return 0
 
         subscribed = 0
-        for row in db._db['algo_trade_positions_history'].find(
+        dirty_trade_ids: list[str] = []
+        hist_col = db._db['algo_trade_positions_history']
+        for row in hist_col.find(
             {
                 'trade_id': {'$in': trade_ids},
                 'status': 1,
@@ -94,19 +96,91 @@ def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
                 'token': 1,
                 'symbol': 1,
                 'leg_id': 1,
+                'entry_trade': 1,
+                'ticker': 1,
+                'strike': 1,
+                'expiry_date': 1,
+                'option': 1,
             },
         ):
-            token = str(row.get('token') or '').strip()
+            _entry_trade = row.get('entry_trade') or {}
+            token = str(row.get('token') or _entry_trade.get('instrument_token') or '').strip()
+            symbol = str(row.get('symbol') or '').strip()
+
+            # Non-numeric token (chain format) — resolve Kite integer token and patch DB
+            if token and not token.isdigit():
+                underlying = str(row.get('ticker') or '').strip().upper()
+                expiry_raw = str(row.get('expiry_date') or '').strip()
+                expiry = expiry_raw[:10] if expiry_raw else ''
+                strike = row.get('strike')
+                opt_raw = str(row.get('option') or '').strip()
+                option_type = opt_raw.split('.')[-1].upper() if '.' in opt_raw else opt_raw.upper()
+                if underlying and expiry and strike not in (None, '') and option_type:
+                    try:
+                        tok_doc = db._db['active_option_tokens'].find_one({
+                            'instrument': underlying,
+                            'expiry': expiry,
+                            'strike': strike,
+                            'option_type': option_type,
+                        }) or {}
+                        kite_tok = str(tok_doc.get('token') or tok_doc.get('tokens') or '').strip()
+                        if kite_tok and kite_tok.isdigit():
+                            new_sym = str(tok_doc.get('symbol') or symbol or kite_tok)
+                            hist_col.update_one(
+                                {'_id': row['_id']},
+                                {'$set': {'token': kite_tok, 'symbol': new_sym}},
+                            )
+                            print(
+                                f'[LIVE TOKEN PATCH] leg_id={row.get("leg_id")} '
+                                f'chain={token} → kite={kite_tok} sym={new_sym}'
+                            )
+                            token = kite_tok
+                            symbol = new_sym
+                            tid = str(row.get('trade_id') or '').strip()
+                            if tid and tid not in dirty_trade_ids:
+                                dirty_trade_ids.append(tid)
+                    except Exception:
+                        pass
+
             if not token:
                 continue
-            symbol = str(row.get('symbol') or '').strip()
             _subscribe_live_option_token(token, symbol)
             subscribed += 1
+
+        for _dtid in dirty_trade_ids:
+            try:
+                from features.execution_socket import mark_execute_order_dirty_from_trade_id
+                mark_execute_order_dirty_from_trade_id(db, _dtid)
+            except Exception:
+                pass
+
+        momentum_subscribed = 0
+        for mrow in db._db['algo_leg_feature_status'].find(
+            {
+                'trade_id': {'$in': trade_ids},
+                'feature': 'momentum_pending',
+                'status': 'active',
+                'token': {'$nin': [None, '']},
+            },
+            {'token': 1, 'symbol': 1, 'leg_id': 1},
+        ):
+            mtoken = str(mrow.get('token') or '').strip()
+            if not mtoken:
+                continue
+            msymbol = str(mrow.get('symbol') or '').strip()
+            _subscribe_live_option_token(mtoken, msymbol)
+            momentum_subscribed += 1
+            print(
+                f'[LIVE MOMENTUM PENDING SUBSCRIBE] '
+                f'leg_id={str(mrow.get("leg_id") or "-")} '
+                f'token={mtoken}'
+            )
+
         print(
             f'[LIVE OPEN POSITION SUBSCRIBE] trade_date={normalized_trade_date or "-"} '
-            f'trades={len(trade_ids)} subscribed_tokens={subscribed}'
+            f'trades={len(trade_ids)} subscribed_tokens={subscribed} momentum_tokens={momentum_subscribed}'
         )
-        return subscribed
+        return subscribed + momentum_subscribed
     except Exception:
         return 0
     finally:
@@ -210,6 +284,45 @@ def resolve_live_entry_execution_payload(
     *,
     now_ts: str,
 ) -> dict:
+    underlying = str(
+        (trade.get('strategy') or {}).get('Ticker')
+        or (trade.get('config') or {}).get('Ticker')
+        or trade.get('ticker') or ''
+    ).strip().upper()
+
+    leg_token = str(leg.get('token') or '').strip()
+    leg_strike = leg.get('strike')
+    leg_expiry = str(leg.get('expiry_date') or '').strip()
+    if ' ' in leg_expiry:
+        leg_expiry = leg_expiry[:10]
+    leg_symbol = str(leg.get('symbol') or '').strip()
+
+    # Fast path: contract already fully resolved → get LTP from Kite ticker directly, skip DB scan
+    if underlying and leg_token and leg_token.isdigit() and leg_strike not in (None, '') and leg_expiry:
+        try:
+            from features.kite_ticker import ticker_manager as _tm_live
+            spot_price = _safe_float(_tm_live.get_spot(underlying))
+            ltp = _safe_float(_tm_live.get_ltp(leg_token))
+        except Exception:
+            spot_price = 0.0
+            ltp = 0.0
+        if ltp <= 0:
+            # Token not yet subscribed or no tick received — subscribe now so next tick delivers LTP
+            _subscribe_live_option_token(leg_token, leg_symbol)
+            print(f'[LIVE FAST PATH SUBSCRIBE] token={leg_token} symbol={leg_symbol or "-"} ltp_missing=True')
+        return {
+            'spot_price': spot_price,
+            'strike': leg_strike,
+            'expiry_date': leg_expiry,
+            'token': leg_token,
+            'symbol': leg_symbol,
+            'entry_price': ltp,
+            'current_option_price': ltp,
+            'entry_price_source': 'kite_live',
+            'ltp': ltp,
+            'atm_price': 0,
+        }
+
     contract_cfg = {
         'id': str(leg.get('id') or ''),
         'ContractType': {

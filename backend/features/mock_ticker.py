@@ -42,7 +42,6 @@ from features.mongo_data import MongoData
 
 logger = logging.getLogger(__name__)
 
-ACTIVATION_MODE = "live"
 STATE_FILE = Path(__file__).resolve().parent / "mock_ticker_state.json"
 
 # ── Spot token map for mock data ──────────────────────────────────────────────
@@ -50,6 +49,20 @@ STATE_FILE = Path(__file__).resolve().parent / "mock_ticker_state.json"
 # MockTicker builds this dynamically from the DB; _MockTickerManager reads it
 # to populate spot_map (mirrors the SPOT_TOKENS dict in kite_ticker.py).
 MOCK_SPOT_TOKENS: dict[str, str] = {}   # populated at start-time from DB
+
+
+def _get_active_runtime_modes() -> list[str]:
+    try:
+        from features.runtime_mode_registry import runtime_mode_registry
+        active_modes = [
+            mode for mode in ("live", "fast-forward")
+            if runtime_mode_registry.has_active_mode(mode)
+        ]
+        if active_modes:
+            return active_modes
+    except Exception:
+        pass
+    return ["live", "fast-forward"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -258,6 +271,7 @@ class _MockTickerManager:
         self._last_minute   = ""
         self._stopped       = False
         self._mock_time_str = ""       # ISO string — set by set_mock_time()
+        self._listeners: list = []
 
         self.ltp_map:    dict[str, float] = {}
         self.spot_map:   dict[str, float] = {}
@@ -418,22 +432,49 @@ class _MockTickerManager:
                         )
 
                 self.tick_count += len(ticks)
+                current_ltp_map = dict(self.ltp_map)
+                current_spot_map = dict(self.spot_map)
+                listeners = list(self._listeners)
+                active_modes = _get_active_runtime_modes()
 
                 # ── 2. SL / TG / Trail / Exit — every tick ────────────────
                 try:
                     from features.kite_event import build_broker_ltp_map, broker_live_tick
                     _db = MongoData()
                     broker_ltp_map = build_broker_ltp_map(ticks)
-                    broker_live_tick(
-                        _db,
-                        trade_date,
-                        now_ts,
-                        broker_ltp_map,
-                        activation_mode=ACTIVATION_MODE,
-                    )
+                    for activation_mode in active_modes:
+                        broker_live_tick(
+                            _db,
+                            trade_date,
+                            now_ts,
+                            broker_ltp_map,
+                            activation_mode=activation_mode,
+                        )
                     _db.close()
                 except Exception as exc:
                     logger.error("mock broker_live_tick error: %s", exc)
+
+                if listeners:
+                    tick_payload = {
+                        "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
+                        "ltp_map": current_ltp_map,
+                        "spot_map": current_spot_map,
+                        "changed_ltp_map": {
+                            str(tick.get("instrument_token") or ""): float(
+                                tick.get("last_price") or tick.get("last_traded_price") or 0
+                            )
+                            for tick in ticks
+                            if str(tick.get("instrument_token") or "").strip()
+                            and (tick.get("last_price") is not None or tick.get("last_traded_price") is not None)
+                        },
+                        "tick_count": self.tick_count,
+                        "status": self.status,
+                    }
+                    for listener in listeners:
+                        try:
+                            listener(tick_payload)
+                        except Exception as exc:
+                            logger.warning("mock ticker listener error: %s", exc)
 
                 # ── 3. Entry — once per new mock minute ───────────────────
                 if now_minute != self._last_minute:
@@ -447,14 +488,17 @@ class _MockTickerManager:
                             build_entry_spot_snapshots,
                         )
                         _db = MongoData()
-                        records = _load_running_trade_records(
-                            _db, trade_date, activation_mode=ACTIVATION_MODE
-                        )
-                        print(
-                            f"[MOCK TICKER] timestamp={now_ts} "
-                            f"active_strategies={len(records)}"
-                        )
-                        if records:
+                        for activation_mode in active_modes:
+                            records = _load_running_trade_records(
+                                _db, trade_date, activation_mode=activation_mode
+                            )
+                            print(
+                                f"[MOCK TICKER] timestamp={now_ts} "
+                                f"mode={activation_mode} "
+                                f"active_strategies={len(records)}"
+                            )
+                            if not records:
+                                continue
                             build_entry_spot_snapshots(_db, records, listen_time, now_ts)
                             entries_executed = _execute_backtest_entries(
                                 _db, records, listen_time, now_ts
@@ -574,6 +618,17 @@ class _MockTickerManager:
 
     def get_spot(self, underlying: str) -> float | None:
         return self.spot_map.get(underlying.upper())
+
+    def add_tick_listener(self, listener) -> None:
+        if not callable(listener):
+            return
+        with self._lock:
+            if listener not in self._listeners:
+                self._listeners.append(listener)
+
+    def remove_tick_listener(self, listener) -> None:
+        with self._lock:
+            self._listeners = [item for item in self._listeners if item is not listener]
 
 
 # Singleton — imported by api.py

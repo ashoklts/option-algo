@@ -47,6 +47,8 @@ from features.mode_market_adapter import (
 
 log = logging.getLogger(__name__)
 
+SHOW_PRINT_STATEMENT = False
+
 # ─── trading_core integration ─────────────────────────────────────────────────
 # trading_core.py is the canonical implementation of all trading logic.
 # It is the single source of truth shared by every execution mode:
@@ -101,6 +103,8 @@ WEBSOCKET_USER_MAP: dict[int, tuple[str, str]] = {}
 LAST_EXECUTE_ORDER_SIG: dict[str, str] = {}   # user_id → md5 of record structure
 LAST_OPEN_POSITION_SIG: dict[str, str] = {}   # user_id → md5 of open positions
 PENDING_EXECUTE_ORDER_DIRTY: dict[str, dict[str, Any]] = {}
+PENDING_BROKER_SETTINGS_DIRTY: dict[str, str] = {}  # "user_id:activation_mode" → activation_mode
+PENDING_STRATEGY_ACTIVITIES: dict[str, list[dict]] = {}  # user_id → list of activity dicts
 
 OVERALL_FEATURE_LEG_ID = '__overall__'
 SPOT_TOKEN_BY_UNDERLYING = {
@@ -110,6 +114,7 @@ SPOT_TOKEN_BY_UNDERLYING = {
     'SENSEX': '265',
     'MIDCPNIFTY': '288009',
 }
+SPOT_UNDERLYING_BY_TOKEN = {token: underlying for underlying, token in SPOT_TOKEN_BY_UNDERLYING.items()}
 QUOTE_INSTRUMENT_BY_UNDERLYING = {
     'NIFTY': 'NSE:NIFTY 50',
     'BANKNIFTY': 'NSE:NIFTY BANK',
@@ -445,6 +450,69 @@ def mark_execute_order_dirty_from_trade_id(
         return
     if trade:
         mark_execute_order_dirty_from_trade(trade)
+
+
+def mark_strategy_activity(trade: dict, activity_type: str, data: dict | None = None) -> None:
+    """
+    Sync — queue a strategy activity event for a specific user_id.
+    Called from tick-processing (synchronous) code.
+    flush_pending_strategy_activities() emits all queued events asynchronously.
+
+    activity_type values:
+        'trail_sl'        – leg trail SL moved
+        'sl_hit'          – leg SL hit
+        'tp_hit'          – leg TP hit
+        'reentry'         – leg reentry queued (SL or TP)
+        'overall_sl'      – overall SL hit
+        'overall_tgt'     – overall target hit
+        'overall_reentry' – overall reentry queued
+    """
+    uid = str((trade or {}).get('user_id') or '').strip()
+    if not uid:
+        return
+    activity = {
+        'activity_type': str(activity_type or ''),
+        'trade_id':      str((trade or {}).get('_id') or ''),
+        'strategy_name': str((trade or {}).get('name') or ''),
+        'ticker':        str((trade or {}).get('ticker') or ''),
+        'timestamp':     _now_iso(),
+        **(data or {}),
+    }
+    PENDING_STRATEGY_ACTIVITIES.setdefault(uid, []).append(activity)
+
+
+async def flush_pending_strategy_activities() -> int:
+    """
+    Async — emit all queued strategy activity events to each user's WebSocket room.
+    Channel: 'algo-activity'   Message type: 'strategy_activity'
+    Called from the same async loops that call flush_pending_execute_order_emits.
+    """
+    if not PENDING_STRATEGY_ACTIVITIES:
+        return 0
+    users = list(PENDING_STRATEGY_ACTIVITIES.keys())
+    delivered = 0
+    for uid in users:
+        activities = PENDING_STRATEGY_ACTIVITIES.pop(uid, [])
+        if not activities:
+            continue
+        message = _build_message('strategy_activity', 'Strategy activity update', {'activities': activities})
+        delivered += await _broadcast_user_channel_message(uid, 'algo-activity', message)
+    return delivered
+
+
+def mark_broker_settings_dirty(user_id: str, activation_mode: str) -> None:
+    uid = str(user_id or '').strip()
+    mode = str(activation_mode or '').strip()
+    if uid and mode:
+        PENDING_BROKER_SETTINGS_DIRTY[f'{uid}:{mode}'] = mode
+
+
+def _consume_pending_broker_settings_dirty(
+    user_id: str,
+    activation_mode: str,
+) -> bool:
+    key = f'{str(user_id or "").strip()}:{str(activation_mode or "").strip()}'
+    return bool(PENDING_BROKER_SETTINGS_DIRTY.pop(key, None))
 
 
 def _consume_pending_execute_order_dirty(
@@ -1690,7 +1758,7 @@ def _build_position_history_doc(trade: dict, leg: dict) -> dict | None:
     history_leg = {
         'id': str(leg.get('id') or ''),
         'status': int(leg.get('status') if leg.get('status') is not None else OPEN_LEG_STATUS),
-        'token': leg.get('token'),
+        'token': leg.get('token') or str(entry_trade.get('instrument_token') or '').strip() or None,
         'symbol': leg.get('symbol'),
         'quantity': _safe_int(leg.get('quantity')),
         'lot_size': _safe_int(leg.get('lot_size') or leg.get('quantity')),
@@ -2210,8 +2278,8 @@ def _resolve_leg_cfg(leg_id: str, leg: dict, all_leg_configs: dict) -> dict:
 
     Resolution priority:
       1. Exact id match  (original legs, non-momentum lazy legs)
-      2. triggered_by field  (parent-leg direct reentries like leg1_re_...)
-      3. lazy_leg_ref field  (momentum lazy legs created after the fix was applied)
+      2. lazy_leg_ref field  (momentum lazy legs created after the fix was applied)
+      3. triggered_by field  (parent-leg direct reentries like leg1_re_...)
       4. Parent reentry base-id prefix match  (leg1_re_20260416...)
       5. Longest dash-prefix match  (momentum lazy legs from existing/pre-fix history docs)
     """
@@ -2220,18 +2288,21 @@ def _resolve_leg_cfg(leg_id: str, leg: dict, all_leg_configs: dict) -> dict:
     if cfg:
         return cfg
 
-    # 2. Direct parent reentries keep the original parent id in triggered_by.
+    # 2. Stored lazy_leg_ref  (set by _process_momentum_pending_feature_legs)
+    #    This must win over triggered_by for momentum-entered lazy legs:
+    #    triggered_by points to the parent leg, while lazy_leg_ref points to the
+    #    actual IdleLegConfigs key whose SL/Target/NextLeg chain should be used.
+    lazy_ref = str(leg.get('lazy_leg_ref') or '').strip()
+    if lazy_ref:
+        cfg = all_leg_configs.get(lazy_ref)
+        if cfg:
+            return cfg
+
+    # 3. Direct parent reentries keep the original parent id in triggered_by.
     #    Example: leg_id='putLeg2_re_20260416...', triggered_by='putLeg2'
     triggered_by = str(leg.get('triggered_by') or '').strip()
     if triggered_by:
         cfg = all_leg_configs.get(triggered_by)
-        if cfg:
-            return cfg
-
-    # 3. Stored lazy_leg_ref  (set by _process_momentum_pending_feature_legs)
-    lazy_ref = str(leg.get('lazy_leg_ref') or '').strip()
-    if lazy_ref:
-        cfg = all_leg_configs.get(lazy_ref)
         if cfg:
             return cfg
 
@@ -2519,15 +2590,60 @@ def _queue_pending_entry_feature_status(
         return False
 
 
+def _resolve_expiry_from_tokens(tok_col, underlying: str, opt_norm: str, trade_date: str, expiry_kind: str) -> str:
+    """
+    Resolve expiry date string from active_option_tokens based on expiry_kind.
+
+    ExpiryType.Weekly     → nearest expiry >= trade_date
+    ExpiryType.NextWeekly → second nearest expiry >= trade_date
+    ExpiryType.Monthly    → nearest monthly expiry >= trade_date
+                            (last expiry of a calendar month)
+    ExpiryType.NextMonthly→ second monthly expiry >= trade_date
+    """
+    # Fetch all unique expiries >= trade_date for this instrument/option_type
+    raw_expiries = tok_col.distinct(
+        'expiry',
+        {'instrument': underlying, 'option_type': opt_norm, 'expiry': {'$gte': trade_date}},
+    )
+    expiries = sorted(str(e)[:10] for e in raw_expiries if e)
+    if not expiries:
+        return ''
+
+    kind = str(expiry_kind or 'ExpiryType.Weekly')
+
+    if 'Monthly' in kind:
+        # Monthly expiry = last expiry in each calendar month
+        monthly: list[str] = []
+        from itertools import groupby
+        for month_key, group in groupby(expiries, key=lambda d: d[:7]):  # group by YYYY-MM
+            monthly.append(list(group)[-1])
+        if not monthly:
+            return ''
+        if 'NextMonthly' in kind:
+            return monthly[1] if len(monthly) > 1 else monthly[0]
+        return monthly[0]
+
+    # Weekly / NextWeekly
+    if 'NextWeekly' in kind:
+        return expiries[1] if len(expiries) > 1 else expiries[0]
+    return expiries[0]
+
+
 def _process_momentum_pending_feature_legs(
     db: MongoData, trade: dict, chain_col, trade_date: str, now_ts: str,
-    lot_size: int, index_spot_doc: dict | None = None, market_cache: dict | None = None
+    lot_size: int, index_spot_doc: dict | None = None, market_cache: dict | None = None,
+    ltp_map: dict | None = None,
+    activation_mode: str = '',
 ) -> list[str]:
     """
     Every tick: check algo_leg_feature_status for active momentum_pending legs.
     - If momentum target not yet reached: arm (set base/target price) and wait.
     - If momentum triggered: push full entry leg dict into algo_trades.legs.
     Returns list of leg_ids that were entered.
+    ltp_map: optional {token: ltp} from broker WebSocket — used for live/fast-forward
+             as the primary price source instead of historical chain data.
+    activation_mode: 'live' | 'fast-forward' — when set, resolves Kite integer token
+                     from active_option_tokens so Kite subscription works correctly.
     """
     trade_id = str(trade.get('_id') or '')
     feature_col = db._db['algo_leg_feature_status']
@@ -2536,7 +2652,7 @@ def _process_momentum_pending_feature_legs(
     try:
         active_docs = list(feature_col.find({
             'trade_id': trade_id,
-            'feature': 'momentum_pending',
+            'feature': {'$in': ['momentum_pending', 'pending_entry']},
             'status': 'active',
         }))
     except Exception as exc:
@@ -2584,97 +2700,200 @@ def _process_momentum_pending_feature_legs(
         strike = feat_doc.get('strike')
         token = str(feat_doc.get('token') or '')
         symbol = str(feat_doc.get('symbol') or '')
+        _needs_db_write = False
 
         if not expiry or strike in (None, ''):
+            if activation_mode in {'live', 'fast-forward'}:
+                # Live / fast-forward: resolve directly from active_option_tokens,
+                # never touch historical chain_col.
+                try:
+                    from features.spot_atm_utils import resolve_atm_price as _resolve_atm
+                    opt_norm = option_type.upper()
+                    tok_col = db._db['active_option_tokens']
+
+                    # 1. expiry based on expiry_kind
+                    live_expiry = _resolve_expiry_from_tokens(tok_col, underlying, opt_norm, trade_date, expiry_kind)
+                    if not live_expiry:
+                        print(f'[MOMENTUM PENDING] leg={leg_id} no expiry in active_option_tokens — skipping')
+                        continue
+
+                    # 2. ATM strike from spot price
+                    atm_strike = float(_resolve_atm(underlying, spot_price))
+                    if atm_strike <= 0:
+                        print(f'[MOMENTUM PENDING] leg={leg_id} ATM resolve failed spot={spot_price} — skipping')
+                        continue
+
+                    # 3. exact ATM strike lookup, fall back to nearest
+                    tok_doc = tok_col.find_one({
+                        'instrument': underlying,
+                        'option_type': opt_norm,
+                        'expiry': live_expiry,
+                        'strike': atm_strike,
+                    }) or {}
+                    if not tok_doc:
+                        above = tok_col.find_one({
+                            'instrument': underlying, 'option_type': opt_norm,
+                            'expiry': live_expiry, 'strike': {'$gte': atm_strike},
+                        }, sort=[('strike', 1)]) or {}
+                        below = tok_col.find_one({
+                            'instrument': underlying, 'option_type': opt_norm,
+                            'expiry': live_expiry, 'strike': {'$lte': atm_strike},
+                        }, sort=[('strike', -1)]) or {}
+                        a_diff = abs(float(above.get('strike') or 0) - atm_strike) if above else float('inf')
+                        b_diff = abs(float(below.get('strike') or 0) - atm_strike) if below else float('inf')
+                        tok_doc = above if a_diff <= b_diff else below
+
+                    if not tok_doc:
+                        print(f'[MOMENTUM PENDING] leg={leg_id} no token doc in active_option_tokens — skipping')
+                        continue
+
+                    expiry = live_expiry
+                    strike = float(tok_doc.get('strike') or atm_strike)
+                    kite_tok = str(tok_doc.get('token') or tok_doc.get('tokens') or '').strip()
+                    token = kite_tok or make_token(underlying, expiry, strike, option_type)
+                    symbol = str(tok_doc.get('symbol') or token)
+                    _needs_db_write = True
+                    print(
+                        f'[MOMENTUM TOKENS RESOLVED] leg={leg_id} underlying={underlying} '
+                        f'expiry={expiry} strike={strike} option={opt_norm} '
+                        f'token={token} symbol={symbol}'
+                    )
+                except Exception as exc:
+                    log.warning('momentum_pending active_option_tokens resolve error leg=%s: %s', leg_id, exc)
+                    continue
+            else:
+                # Backtest: resolve from historical chain_col
+                try:
+                    expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, now_ts)
+                    if expiry_err:
+                        print(f'[MOMENTUM PENDING] leg={leg_id} expiry resolve error: {expiry_err}')
+                        continue
+                    sel = _resolve_strike_selector(
+                        chain_col=chain_col,
+                        underlying=underlying,
+                        option_type=option_type,
+                        entry_kind=entry_kind,
+                        strike_param_raw=strike_param_raw,
+                        position=position_str,
+                        spot_price=spot_price,
+                        expiry=expiry,
+                        trade_date=trade_date,
+                        snapshot_timestamp=now_ts,
+                        market_cache=market_cache,
+                        leg_id=leg_id,
+                    )
+                    if sel.error:
+                        print(f'[MOMENTUM PENDING] leg={leg_id} strike resolve error: {sel.error}')
+                        continue
+                    strike = sel.strike
+                    resolved_doc = _normalize_chain_market_fields(sel.chain_doc or {})
+                    token = str(resolved_doc.get('token') or token or make_token(underlying, expiry, strike, option_type))
+                    symbol = str(resolved_doc.get('symbol') or symbol or token)
+                    _needs_db_write = True
+                except Exception as exc:
+                    log.warning('momentum_pending strike resolve error leg=%s: %s', leg_id, exc)
+                    continue
+
+        # ── Once strike+expiry+option_type are final, look up the Kite integer
+        #    token from active_option_tokens for live/fast-forward mode.
+        #    This is the token used for Kite subscription and ltp_map lookup.
+        if activation_mode in {'live', 'fast-forward'} and expiry and strike not in (None, ''):
             try:
-                expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, now_ts)
-                if expiry_err:
-                    print(f'[MOMENTUM PENDING] leg={leg_id} expiry resolve error: {expiry_err}')
-                    continue
-                sel = _resolve_strike_selector(
-                    chain_col=chain_col,
-                    underlying=underlying,
-                    option_type=option_type,
-                    entry_kind=entry_kind,
-                    strike_param_raw=strike_param_raw,
-                    position=position_str,
-                    spot_price=spot_price,
-                    expiry=expiry,
-                    trade_date=trade_date,
-                    snapshot_timestamp=now_ts,
-                    market_cache=market_cache,
-                    leg_id=leg_id,
+                tok_doc = db._db['active_option_tokens'].find_one({
+                    'instrument': underlying,
+                    'expiry': str(expiry)[:10],
+                    'strike': strike,
+                    'option_type': option_type.upper(),
+                }) or {}
+                kite_tok = str(tok_doc.get('token') or tok_doc.get('tokens') or '').strip()
+                if kite_tok and kite_tok != token:
+                    token = kite_tok
+                    symbol = str(tok_doc.get('symbol') or symbol or kite_tok)
+                    _needs_db_write = True
+                    print(
+                        f'[MOMENTUM KITE TOKEN] leg={leg_id} '
+                        f'underlying={underlying} strike={strike} '
+                        f'expiry={str(expiry)[:10]} option={option_type} '
+                        f'token={token} symbol={symbol}'
+                    )
+            except Exception as _kt_exc:
+                log.warning('momentum_pending kite token lookup error leg=%s: %s', leg_id, _kt_exc)
+
+        if _needs_db_write:
+            feature_col.update_one(
+                {'_id': feat_doc['_id']},
+                {'$set': {'expiry_date': expiry, 'strike': strike, 'token': token, 'symbol': symbol}},
+            )
+
+        # ── Get current option price ─────────────────────────────────────────────
+        # For live/fast-forward: prefer Kite ticker LTP (real-time).
+        # For backtest: use historical chain data.
+        current_price: float = 0.0
+        kite_ltp = _safe_float((ltp_map or {}).get(token)) if token else 0.0
+        if kite_ltp > 0:
+            current_price = kite_ltp
+        else:
+            try:
+                current_chain_doc = _normalize_chain_market_fields(
+                    get_chain_at_time(chain_col, underlying, expiry, strike, option_type, now_ts, market_cache=market_cache)
                 )
-                if sel.error:
-                    print(f'[MOMENTUM PENDING] leg={leg_id} strike resolve error: {sel.error}')
-                    continue
-                strike = sel.strike
-                resolved_doc = _normalize_chain_market_fields(sel.chain_doc or {})
-                token = str(resolved_doc.get('token') or token or make_token(underlying, expiry, strike, option_type))
-                symbol = str(resolved_doc.get('symbol') or symbol or token)
-                feature_col.update_one(
-                    {'_id': feat_doc['_id']},
-                    {'$set': {'expiry_date': expiry, 'strike': strike, 'token': token, 'symbol': symbol}},
-                )
+                current_price = _resolve_chain_market_price(current_chain_doc)
             except Exception as exc:
-                log.warning('momentum_pending strike resolve error leg=%s: %s', leg_id, exc)
+                log.warning('momentum_pending chain fetch error leg=%s: %s', leg_id, exc)
                 continue
 
-        # ── Get current option price at this specific snapshot timestamp ────────
-        try:
-            current_chain_doc = _normalize_chain_market_fields(
-                get_chain_at_time(chain_col, underlying, expiry, strike, option_type, now_ts, market_cache=market_cache)
-            )
-        except Exception as exc:
-            log.warning('momentum_pending chain fetch error leg=%s: %s', leg_id, exc)
-            continue
-        current_price = _resolve_chain_market_price(current_chain_doc)
-
+        is_instant_entry = str(feat_doc.get('feature') or '') == 'pending_entry'
         base_price = _safe_float(feat_doc.get('momentum_base_price'))
         target_price = _safe_float(feat_doc.get('momentum_target_price'))
 
-        # ── Arm: set base/target price on first tick ─────────────────────────
-        if base_price <= 0 or target_price <= 0:
+        if is_instant_entry:
+            # ── No-momentum lazy leg: enter immediately on current price ──────
             if current_price <= 0:
-                print(f'[MOMENTUM PENDING] leg={leg_id} waiting for price data')
+                print(f'[PENDING ENTRY WAIT] leg={leg_id} waiting for price data')
                 continue
-            base_price = current_price
-            target_price = _resolve_simple_momentum_target(base_price, momentum_type, momentum_value)
-            armed_now = now_ts
-            try:
-                feature_col.update_one(
-                    {'_id': feat_doc['_id']},
-                    {'$set': {
-                        'momentum_base_price': base_price,
-                        'momentum_target_price': target_price,
-                        'armed_at': armed_now,
-                        'strike': strike,
-                        'expiry_date': expiry,
-                        'token': token,
-                        'symbol': symbol,
-                    }},
+            print(f'[PENDING ENTRY] leg={leg_id} current_price={current_price} strike={strike} option={option_type} — entering immediately')
+        else:
+            # ── Arm: set base/target price on first tick ──────────────────────
+            if base_price <= 0 or target_price <= 0:
+                if current_price <= 0:
+                    print(f'[MOMENTUM PENDING] leg={leg_id} waiting for price data')
+                    continue
+                base_price = current_price
+                target_price = _resolve_simple_momentum_target(base_price, momentum_type, momentum_value)
+                armed_now = now_ts
+                try:
+                    feature_col.update_one(
+                        {'_id': feat_doc['_id']},
+                        {'$set': {
+                            'momentum_base_price': base_price,
+                            'momentum_target_price': target_price,
+                            'armed_at': armed_now,
+                            'strike': strike,
+                            'expiry_date': expiry,
+                            'token': token,
+                            'symbol': symbol,
+                        }},
+                    )
+                except Exception as exc:
+                    log.warning('momentum_pending arm error leg=%s: %s', leg_id, exc)
+                print(
+                    f'[MOMENTUM ARMED] leg={leg_id} type={momentum_type} value={momentum_value} '
+                    f'base={base_price} target={target_price} strike={strike} option={option_type}'
                 )
-            except Exception as exc:
-                log.warning('momentum_pending arm error leg=%s: %s', leg_id, exc)
-            print(
-                f'[MOMENTUM ARMED] leg={leg_id} type={momentum_type} value={momentum_value} '
-                f'base={base_price} target={target_price} strike={strike} option={option_type}'
-            )
-            continue
+                continue
 
-        # ── Check if momentum target is reached ──────────────────────────────
-        if not _is_simple_momentum_triggered(current_price, target_price, momentum_type):
-            print(
-                f'[MOMENTUM WAIT] leg={leg_id} type={momentum_type} value={momentum_value} '
-                f'base={base_price} target={target_price} current={current_price} strike={strike}'
-            )
-            continue
+            # ── Check if momentum target is reached ───────────────────────────
+            if not _is_simple_momentum_triggered(current_price, target_price, momentum_type):
+                print(
+                    f'[MOMENTUM WAIT] leg={leg_id} type={momentum_type} value={momentum_value} '
+                    f'base={base_price} target={target_price} current={current_price} strike={strike}'
+                )
+                continue
 
-        # ── Momentum triggered — execute entry ───────────────────────────────
-        print(
-            f'[MOMENTUM OK] leg={leg_id} type={momentum_type} value={momentum_value} '
-            f'base={base_price} target={target_price} current={current_price} — entering'
-        )
+            print(
+                f'[MOMENTUM OK] leg={leg_id} type={momentum_type} value={momentum_value} '
+                f'base={base_price} target={target_price} current={current_price} — entering'
+            )
         entry_price = current_price
         is_sell_pos = _is_sell(position_str)
         all_leg_configs = _resolve_trade_leg_configs(trade)
@@ -2738,8 +2957,9 @@ def _process_momentum_pending_feature_legs(
                 {'_id': feat_doc['_id']},
                 {'$set': {'status': 'triggered', 'triggered_at': now_ts}},
             )
+            entry_label = 'PENDING ENTRY' if is_instant_entry else 'MOMENTUM ENTRY'
             print(
-                f'[MOMENTUM ENTRY] trade={trade_id} leg={leg_id} entry_price={entry_price} '
+                f'[{entry_label}] trade={trade_id} leg={leg_id} entry_price={entry_price} '
                 f'sl={sl_price} strike={strike} option={option_type}'
             )
             # Store position history — pass leg_cfg explicitly so SL/TrailSL
@@ -3013,14 +3233,29 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                 now_ts=snapshot_timestamp or now_ts,
             )
         if not index_spot_doc:
-            index_spot_col = db._db['option_chain_index_spot']
-            index_spot_doc = get_index_spot_at_time(
-                index_spot_col,
-                underlying,
-                snapshot_timestamp or now_ts,
-                market_cache=market_cache,
-                activation_mode=activation_mode,
-            )
+            if activation_mode in {'fast-forward', 'live'}:
+                # Live/FF: never query historical DB — get spot directly from Kite ticker
+                try:
+                    from features.kite_ticker import ticker_manager as _tm_spot_fb
+                    _kite_spot_fb = _safe_float(_tm_spot_fb.get_spot(underlying))
+                    if _kite_spot_fb > 0:
+                        index_spot_doc = {
+                            'underlying': underlying,
+                            'spot_price': _kite_spot_fb,
+                            'timestamp': snapshot_timestamp or now_ts,
+                            'source': 'kite_ticker_direct',
+                        }
+                except Exception:
+                    pass
+            else:
+                index_spot_col = db._db['option_chain_index_spot']
+                index_spot_doc = get_index_spot_at_time(
+                    index_spot_col,
+                    underlying,
+                    snapshot_timestamp or now_ts,
+                    market_cache=market_cache,
+                    activation_mode=activation_mode,
+                )
 
     spot_price = _safe_float(index_spot_doc.get('spot_price'))
     print(
@@ -3063,7 +3298,11 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
         expiry = expiry[:10] if ' ' in expiry else expiry
         if not expiry or strike in (None, ''):
             miss_reason = 'fast_forward_snapshot_missing' if activation_mode == 'fast-forward' else 'live_snapshot_missing'
-            print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} reason={miss_reason}')
+            print(
+                f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} '
+                f'mode={activation_mode} reason={miss_reason} '
+                f'expiry={expiry!r} strike={strike!r} — Kite live snapshot must supply contract details'
+            )
             return False, miss_reason
     elif not expiry or strike in (None, ''):
         expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, snapshot_timestamp)
@@ -3095,6 +3334,24 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
         symbol = str(resolved_chain_doc.get('symbol') or symbol or token)
     else:
         expiry = expiry[:10] if ' ' in expiry else expiry
+
+    # For live/FF: upgrade any chain-format token to Kite integer token from active_option_tokens
+    if activation_mode in {'fast-forward', 'live'} and expiry and strike not in (None, ''):
+        if not token or not str(token).isdigit():
+            try:
+                _atok = db._db['active_option_tokens'].find_one({
+                    'instrument': underlying,
+                    'expiry': expiry[:10],
+                    'strike': strike,
+                    'option_type': option_type.upper(),
+                }) or {}
+                _kite_tok = str(_atok.get('token') or _atok.get('tokens') or '').strip()
+                if _kite_tok and _kite_tok.isdigit():
+                    token = _kite_tok
+                    symbol = str(_atok.get('symbol') or symbol or token)
+                    print(f'[ENTRY KITE TOKEN] leg={leg_id_log} underlying={underlying} strike={strike} option={option_type} kite_tok={token}')
+            except Exception:
+                pass
 
     if 'None' not in _momentum_type and _momentum_value > 0:
         current_chain_doc = resolved_chain_doc
@@ -3388,9 +3645,15 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
         'underlying_trigger_price': spot_price,
         'price': entry_price,
         'quantity': actual_quantity,
+        'lot_size': lot_size,
         'underlying_at_trade': spot_price,
+        'spot_price': spot_price,
         'traded_timestamp': exchange_ts,
         'exchange_timestamp': exchange_ts,
+        'expiry': expiry,
+        'strike': strike,
+        'option_type': option_type,
+        'instrument_token': token,
     }
     _backtest_debug_log(
         f"[BACKTEST ENTRY SPOT] timestamp={exchange_ts} underlying={underlying} "
@@ -3548,6 +3811,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                 except Exception as _rce:
                     log.warning('recost feature status triggered error leg=%s: %s', leg_id_str, _rce)
 
+        mark_execute_order_dirty_from_trade(trade)
         return True, None
     except Exception as exc:
         log.error('_try_enter_pending_leg error: %s', exc)
@@ -4294,6 +4558,22 @@ def _attach_leg_feature_statuses(db: 'MongoData', records: list[dict]) -> list[d
                 f'Waiting for price to {direction} {cost_price} (original entry cost) to re-enter.'
             )
 
+        if feature_key == 'pending_entry':
+            option = str(row.get('option') or '').strip().upper() or '-'
+            position = str(row.get('position') or '').split('.')[-1].strip() or 'Position'
+            strike = str(row.get('strike') or '').strip() or '-'
+            queued_at = _format_feature_status_timestamp(row.get('queued_at'))
+            triggered_at = _format_feature_status_timestamp(row.get('triggered_at'))
+            status = str(row.get('status') or '').strip().lower()
+
+            if status == 'triggered':
+                return f'Pending entry triggered for {strike} {option} {position} leg at {triggered_at or "-"}.'
+
+            return (
+                f'Pending entry active for {strike} {option} {position} leg since {queued_at or "-"}. '
+                f'Waiting for next entry cycle.'
+            )
+
         if feature_key != 'momentum_pending':
             return ''
 
@@ -4335,6 +4615,18 @@ def _attach_leg_feature_statuses(db: 'MongoData', records: list[dict]) -> list[d
         if feature_key:
             feature_map[feature_key] = row_copy
 
+        # Live LTP from Kite ticker for this token (live/fast-forward modes)
+        _pending_token = str(row_copy.get('token') or '').strip()
+        _live_ltp: float | None = None
+        if _pending_token:
+            try:
+                from features.kite_ticker import ticker_manager as _tm_pfl
+                _raw_ltp = (_tm_pfl.ltp_map or {}).get(_pending_token)
+                if _raw_ltp is not None:
+                    _live_ltp = float(_raw_ltp)
+            except Exception:
+                pass
+
         return {
             'id': str(row_copy.get('leg_id') or ''),
             'leg_id': str(row_copy.get('leg_id') or ''),
@@ -4349,6 +4641,7 @@ def _attach_leg_feature_statuses(db: 'MongoData', records: list[dict]) -> list[d
             'lot_config_value': int(row_copy.get('lot_config_value') or 1),
             'entry_trade': None,
             'exit_trade': None,
+            'ltp': _live_ltp,
             'last_saw_price': row_copy.get('momentum_base_price'),
             'is_lazy': bool(row_copy.get('is_lazy', True)),
             'is_pending_feature_leg': True,
@@ -5667,7 +5960,8 @@ def _process_backtest_trade_tick(
     dict with keys: open_positions, strategy_entry, actions_taken,
                     hit_trade_id, hit_ltp_snapshot, trade_mtm
     """
-    print("----------------------_process_backtest_trade_tick inside ---------------")
+    if SHOW_PRINT_STATEMENT:
+        print("----------------------_process_backtest_trade_tick inside ---------------")
     trade_id     = str(trade.get('_id') or '')
     cfg          = trade.get('config') or {}
 
@@ -5779,6 +6073,10 @@ def _process_backtest_trade_tick(
             record_sl_hit(db._db, trade, leg, now_ts, current_price, sl_price or 0.0)
             trigger_leg_feature(db._db, trade_id, leg_id, 'sl', current_price, now_ts)
             disable_leg_features(db._db, trade_id, leg_id, except_feature='sl', reason='sl_triggered', timestamp=now_ts)
+            mark_strategy_activity(trade, 'sl_hit', {
+                'leg_id': leg_id, 'option': option_type, 'position': position_str,
+                'sl_price': round(sl_price or 0.0, 2), 'exit_price': round(current_price, 2),
+            })
             reentry_cfg = get_reentry_sl_config(leg_cfg)
             if reentry_cfg:
                 leg_cfg_with_id = dict(leg_cfg, id=leg_id)
@@ -5791,6 +6089,10 @@ def _process_backtest_trade_tick(
                                'at_cost' if 'AtCost' in re_type else 'like_original')
                     new_leg_id = str((reentry_cfg.get('Value') or {}).get('NextLegRef') or '')
                     record_reentry_queued(db._db, trade, now_ts, leg_id, re_kind, new_leg_id, re_type, reason='sl')
+                    mark_strategy_activity(trade, 'reentry', {
+                        'leg_id': leg_id, 'reason': 'sl', 'reentry_type': re_type,
+                        'reentry_kind': re_kind, 'new_leg_id': new_leg_id,
+                    })
                     if 'AtCost' in re_type:
                         try:
                             from features.notification_manager import upsert_recost_feature_status
@@ -5812,6 +6114,10 @@ def _process_backtest_trade_tick(
             record_target_hit(db._db, trade, leg, now_ts, current_price, tp_price or 0.0)
             trigger_leg_feature(db._db, trade_id, leg_id, 'target', current_price, now_ts)
             disable_leg_features(db._db, trade_id, leg_id, except_feature='target', reason='target_triggered', timestamp=now_ts)
+            mark_strategy_activity(trade, 'tp_hit', {
+                'leg_id': leg_id, 'option': option_type, 'position': position_str,
+                'tp_price': round(tp_price or 0.0, 2), 'exit_price': round(current_price, 2),
+            })
             reentry_cfg = get_reentry_tp_config(leg_cfg)
             if reentry_cfg:
                 leg_cfg_with_id = dict(leg_cfg, id=leg_id)
@@ -5824,6 +6130,10 @@ def _process_backtest_trade_tick(
                                'at_cost' if 'AtCost' in re_type else 'like_original')
                     new_leg_id = str((reentry_cfg.get('Value') or {}).get('NextLegRef') or '')
                     record_reentry_queued(db._db, trade, now_ts, leg_id, re_kind, new_leg_id, re_type, reason='target')
+                    mark_strategy_activity(trade, 'reentry', {
+                        'leg_id': leg_id, 'reason': 'target', 'reentry_type': re_type,
+                        'reentry_kind': re_kind, 'new_leg_id': new_leg_id,
+                    })
                     if 'AtCost' in re_type:
                         try:
                             from features.notification_manager import upsert_recost_feature_status
@@ -5848,6 +6158,11 @@ def _process_backtest_trade_tick(
                     old_sl_price=stored_sl, new_sl_price=sl_price,
                     current_option_price=current_price, trail_config=trail_config, timestamp=now_ts,
                 )
+                mark_strategy_activity(trade, 'trail_sl', {
+                    'leg_id': leg_id, 'option': option_type, 'position': position_str,
+                    'old_sl': round(stored_sl, 2), 'new_sl': round(sl_price, 2),
+                    'current_price': round(current_price, 2),
+                })
 
         # ── Position snapshot for MTM ─────────────────────────────────────
         if strategy_entry is None:
@@ -5928,33 +6243,34 @@ def _process_backtest_trade_tick(
             overall_sl_done=_ore_done,
             overall_tgt_done=_ort_done,
         )
-        print('[OVERALL CHECK]', {
-            'mode': 'backtest', 'trade_id': trade_id,
-            'strategy_name': str(trade.get('name') or ''), 'timestamp': now_ts,
-            'current_mtm': round(current_trade_mtm, 2),
-            'overall_sl_type': osl_type, 'overall_sl_base': round(_safe_float(osl_val), 2),
-            'overall_sl_current': _effective_sl, 'overall_sl_reentry_type': _ore_type,
-            'overall_sl_reentry_done': _ore_done, 'overall_sl_reentry_count': _ore_count,
-            'overall_tgt_type': otgt_type, 'overall_tgt_base': round(_safe_float(otgt_val), 2),
-            'overall_tgt_current': _effective_tgt, 'overall_tgt_reentry_type': _ort_type,
-            'overall_tgt_reentry_done': _ort_done, 'overall_tgt_reentry_count': _ort_count,
-            'dynamic_sl_threshold': round(_safe_float(_dyn_sl), 2),
-        })
-        print('[OVERALL SL DEBUG]', {
-            'mode': 'backtest', 'trade_id': trade_id,
-            'strategy_name': str(trade.get('name') or ''), 'timestamp': now_ts,
-            'current_mtm': round(current_trade_mtm, 2),
-            'base_overall_sl': round(_safe_float(osl_val), 2),
-            'reentry_done': _ore_done, 'cycle_number': _ore_done + 1,
-            'cycle_overall_sl': round(_safe_float(_effective_sl), 2),
-            'dynamic_sl_threshold': round(_safe_float(_dyn_sl), 2),
-            'checked_stoploss': round(_safe_float(_dyn_sl or _effective_sl), 2),
-            'would_hit_cycle_sl': bool(_safe_float(_effective_sl) > 0 and current_trade_mtm <= -_safe_float(_effective_sl)),
-            'would_hit_dynamic_sl': bool(_dyn_sl > 0 and current_trade_mtm <= -_dyn_sl),
-            'skip_same_tick_overall': _skip_same_tick_overall,
-            'last_overall_event_at': _last_overall_event_at,
-            'last_overall_event_reason': _last_overall_event_reason,
-        })
+        if SHOW_PRINT_STATEMENT:
+            print('[OVERALL CHECK]', {
+                'mode': 'backtest', 'trade_id': trade_id,
+                'strategy_name': str(trade.get('name') or ''), 'timestamp': now_ts,
+                'current_mtm': round(current_trade_mtm, 2),
+                'overall_sl_type': osl_type, 'overall_sl_base': round(_safe_float(osl_val), 2),
+                'overall_sl_current': _effective_sl, 'overall_sl_reentry_type': _ore_type,
+                'overall_sl_reentry_done': _ore_done, 'overall_sl_reentry_count': _ore_count,
+                'overall_tgt_type': otgt_type, 'overall_tgt_base': round(_safe_float(otgt_val), 2),
+                'overall_tgt_current': _effective_tgt, 'overall_tgt_reentry_type': _ort_type,
+                'overall_tgt_reentry_done': _ort_done, 'overall_tgt_reentry_count': _ort_count,
+                'dynamic_sl_threshold': round(_safe_float(_dyn_sl), 2),
+            })
+            print('[OVERALL SL DEBUG]', {
+                'mode': 'backtest', 'trade_id': trade_id,
+                'strategy_name': str(trade.get('name') or ''), 'timestamp': now_ts,
+                'current_mtm': round(current_trade_mtm, 2),
+                'base_overall_sl': round(_safe_float(osl_val), 2),
+                'reentry_done': _ore_done, 'cycle_number': _ore_done + 1,
+                'cycle_overall_sl': round(_safe_float(_effective_sl), 2),
+                'dynamic_sl_threshold': round(_safe_float(_dyn_sl), 2),
+                'checked_stoploss': round(_safe_float(_dyn_sl or _effective_sl), 2),
+                'would_hit_cycle_sl': bool(_safe_float(_effective_sl) > 0 and current_trade_mtm <= -_safe_float(_effective_sl)),
+                'would_hit_dynamic_sl': bool(_dyn_sl > 0 and current_trade_mtm <= -_dyn_sl),
+                'skip_same_tick_overall': _skip_same_tick_overall,
+                'last_overall_event_at': _last_overall_event_at,
+                'last_overall_event_reason': _last_overall_event_reason,
+            })
 
         if _skip_same_tick_overall:
             actions_taken.append(f'{trade_id}: skipped same-tick overall recheck after {_last_overall_event_reason}')
@@ -5990,6 +6306,10 @@ def _process_backtest_trade_tick(
             actions_taken.append(f'{trade_id}: overall SL hit mtm={current_trade_mtm}')
             hit_trade_id    = trade_id
             hit_ltp_snapshot = list((strategy_entry or {}).get('open_positions') or [])
+            mark_strategy_activity(trade, 'overall_sl', {
+                'sl_type': osl_type, 'sl_value': round(_safe_float(_effective_sl), 2),
+                'current_mtm': round(current_trade_mtm, 2), 'cycle': _ore_done + 1,
+            })
             try:
                 from features.notification_manager import record_overall_sl_hit
                 record_overall_sl_hit(db._db, trade, now_ts, osl_type, _effective_sl, current_trade_mtm, legs_pnl_snapshot, cycle_number=_ore_done + 1, configured_reentry_count=_ore_count)
@@ -6007,6 +6327,11 @@ def _process_backtest_trade_tick(
                     _reentry_entries = _execute_backtest_entries(db, [_serialize_trade_record(_reentry_trade)], now_time, now_ts, market_cache=market_cache)
                     _sync_overall_strategy_feature_status(db, trade, now_ts, current_mtm=current_trade_mtm, overall_sl_done=_ore_done + 1, overall_tgt_done=_ort_done)
                     print('[OVERALL REENTRY QUEUED]', {'mode': 'backtest', 'trade_id': trade_id, 'reason': 'overall_sl', 'reentry_type': _ore_type, 'reentry_done': _ore_done + 1, 'legs_queued': _new_ids, 'immediate_entries': len(_reentry_entries)})
+                    mark_strategy_activity(trade, 'overall_reentry', {
+                        'reason': 'overall_sl', 'reentry_type': _ore_type,
+                        'reentry_done': _ore_done + 1, 'reentry_count': _ore_count,
+                        'legs_queued': _new_ids,
+                    })
                     try:
                         from features.notification_manager import record_overall_reentry_queued
                         record_overall_reentry_queued(db._db, trade, now_ts, 'overall_sl', _ore_type, _ore_count, _new_ids, completed_reentries=_ore_done + 1, next_cycle_number=_ore_done + 2, next_overall_sl_value=_resolve_next_overall_cycle_value(osl_val, _ore_done), next_overall_tgt_value=_effective_tgt)
@@ -6257,6 +6582,7 @@ def _process_broker_level_events(
                             {'_id': _settings_id},
                             {'$set': {'sl_settings_sig': _sl_sig, 'sl_peak_mtm': 0.0, 'effective_sl': _bsl_val}},
                         )
+                        mark_broker_settings_dirty(_uid, _mode)
                     except Exception as _sue:
                         log.warning('[SL TRAIL STATE RESET] save error: %s', _sue)
                     print(f'[SL TRAIL STATE RESET - {_bkr}]', {'timestamp': now_ts, 'broker': _bkr, 'mode': _mode, 'reason': 'settings changed or new run date', 'old_sig': _stored_sl_sig, 'new_sig': _sl_sig})
@@ -6275,6 +6601,7 @@ def _process_broker_level_events(
                 if _sl_state_upd and _settings_id is not None:
                     try:
                         db._db['algo_borker_stoploss_settings'].update_one({'_id': _settings_id}, {'$set': _sl_state_upd})
+                        mark_broker_settings_dirty(_uid, _mode)
                     except Exception as _sue:
                         log.warning('[SL TRAIL STATE] save error: %s', _sue)
                 print(f'[BROKER SL TRAIL CHECK - {_bkr}]', {'timestamp': now_ts, 'broker': _bkr, 'mode': _mode, 'broker_mtm': round(_group_mtm, 2), 'original_sl': _bsl_val, 'effective_sl': _effective_sl_val, 'sl_peak_mtm': _sl_peak_mtm})
@@ -6394,6 +6721,7 @@ def _process_broker_level_events(
                 if _state_upd and _settings_id is not None:
                     try:
                         db._db['algo_borker_stoploss_settings'].update_one({'_id': _settings_id}, {'$set': _state_upd})
+                        mark_broker_settings_dirty(_uid, _mode)
                     except Exception as _sue:
                         log.warning('[LOCK STATE] save error: %s', _sue)
                 continue
@@ -6421,6 +6749,7 @@ def _process_broker_level_events(
                 if _set_f: _op['$set'] = _set_f
                 if _op:
                     db._db['algo_borker_stoploss_settings'].update_one({'_id': _settings_id}, _op)
+                    mark_broker_settings_dirty(_uid, _mode)
             except Exception as _sue:
                 log.warning('[LOCK STATE] save error: %s', _sue)
 
@@ -8142,10 +8471,32 @@ def _execute_backtest_entries(
                     else:
                         print(f'  leg[{_i}] => history_ref (string): {_l}')
                 if activation_mode in {'live', 'fast-forward'}:
-                    print(
-                        f'[ENTRY FAILED DEBUG] mode={activation_mode} '
-                        'entry uses live market adapter only; historical option-chain debug skipped'
-                    )
+                    print(f'[ENTRY FAILED DEBUG] mode={activation_mode} ── Live/FF debug ──')
+                    try:
+                        from features.live_monitor_socket import _get_active_ticker_manager
+                        _tm_dbg = _get_active_ticker_manager()
+                        _dbg_spot = _tm_dbg.get_spot(underlying)
+                        _dbg_leg_token = str(leg.get('token') or '')
+                        _dbg_ltp = _tm_dbg.get_ltp(_dbg_leg_token) if _dbg_leg_token else None
+                        print(f'[ENTRY FAILED DEBUG] underlying={underlying} kite_spot={_dbg_spot} leg_token={_dbg_leg_token or "-"} kite_ltp={_dbg_ltp}')
+                        print(f'[ENTRY FAILED DEBUG] ltp_map_keys={list(dict(_tm_dbg.ltp_map or {}).keys())[:10]}')
+                    except Exception as _dbg_e:
+                        print(f'[ENTRY FAILED DEBUG] kite_ticker unavailable: {_dbg_e}')
+                    try:
+                        _dbg_expiry = str(leg.get('expiry_date') or '')[:10]
+                        _dbg_strike = leg.get('strike')
+                        _dbg_opt = str(leg.get('option') or option_type or '').split('.')[-1].upper()
+                        _tok_docs = list(db._db['active_option_tokens'].find(
+                            {'instrument': underlying, 'option_type': _dbg_opt},
+                            {'strike': 1, 'expiry': 1, 'token': 1, 'symbol': 1}
+                        ).sort('expiry', 1).limit(10))
+                        print(f'[ENTRY FAILED DEBUG] active_option_tokens for {underlying}/{_dbg_opt} expiry={_dbg_expiry or "-"} strike={_dbg_strike or "-"}:')
+                        for _td in _tok_docs:
+                            print(f'  tok: strike={_td.get("strike")} expiry={_td.get("expiry")} token={_td.get("token")} symbol={_td.get("symbol")}')
+                        if not _tok_docs:
+                            print(f'  [NO TOKEN DOCS] instrument={underlying} option_type={_dbg_opt}')
+                    except Exception as _tok_e:
+                        print(f'[ENTRY FAILED DEBUG] active_option_tokens query error: {_tok_e}')
                 else:
                     print(f'[ENTRY FAILED DEBUG] ── Option Chain at timestamp={listen_timestamp} underlying={underlying} option={option_type} ──')
                     try:
@@ -9024,6 +9375,7 @@ async def execute_orders_socket(
         _init_raw     = list(db._db['algo_trades'].find(_init_query).sort('creation_ts', 1))
         _init_records = [_serialize_trade_record(r) for r in _init_raw]
         _init_enriched = _populate_legs_from_history(db, _init_records)
+        _init_enriched = _attach_broker_configuration_details(db, _init_enriched)
         _seed_execute_order_signatures(_init_enriched, seen_signatures)
         await websocket.send_text(_build_message(
             'execute_order',
@@ -9309,22 +9661,24 @@ async def execute_orders_socket(
                 ))
                 continue
             except asyncio.TimeoutError:
-                # ── fast-forward / live: flush any DB-change dirty emits ──────
+                # ── fast-forward / live: flush dirty-marked DB changes only ────
                 if activation_mode in {'fast-forward', 'live'} and uid:
+                    # algo_trades + algo_trade_positions_history + algo_leg_feature_status
                     try:
-                        flushed = await flush_pending_execute_order_emits(
-                            db,
-                            user_ids={uid},
-                            force=False,
-                        )
-                        if flushed:
-                            print(
-                                f'[EXECUTE-ORDERS FLUSH]  user={uid}'
-                                f'  mode={activation_mode}'
-                                f'  emitted={flushed}'
-                            )
+                        await flush_pending_execute_order_emits(db, user_ids={uid}, force=False)
                     except Exception as _fe:
                         log.debug('execute-orders flush error: %s', _fe)
+                    # strategy activity events (trail SL / SL hit / overall SL / reentry)
+                    try:
+                        await flush_pending_strategy_activities()
+                    except Exception as _ae:
+                        log.debug('strategy-activity flush error: %s', _ae)
+                    # algo_borker_stoploss_settings
+                    try:
+                        if _consume_pending_broker_settings_dirty(uid, activation_mode):
+                            await emit_broker_settings_for_user(uid, activation_mode)
+                    except Exception as _be:
+                        log.debug('broker-settings flush error: %s', _be)
                 if not autorun_enabled:
                     continue
 
@@ -9375,6 +9729,154 @@ async def update_socket(
     prev_subscribed_token_set: set[str] = set()
     current_listen_hhmm: str = ''
     active_contracts: list[dict] = []
+    send_lock = asyncio.Lock()
+    live_tick_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
+    live_tick_listener = None
+    live_tick_source = None
+    live_tick_task: asyncio.Task | None = None
+    live_tick_emit_interval_seconds = 0.5
+
+    async def _send_update_message(message: str) -> None:
+        async with send_lock:
+            await websocket.send_text(message)
+
+    def _build_live_tick_ltp_payload(tick_payload: dict) -> dict:
+        timestamp = str(tick_payload.get('timestamp') or datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3])
+        listen_time = timestamp[11:19] if len(timestamp) >= 19 else timestamp[11:16]
+        changed_ltp_map = tick_payload.get('changed_ltp_map') if isinstance(tick_payload.get('changed_ltp_map'), dict) else {}
+        full_ltp_map = tick_payload.get('ltp_map') if isinstance(tick_payload.get('ltp_map'), dict) else {}
+        spot_map = tick_payload.get('spot_map') if isinstance(tick_payload.get('spot_map'), dict) else {}
+
+        subscribed_token_values = {
+            str(item.get('token') or '').strip()
+            for item in (subscribe_tokens or [])
+            if str(item.get('token') or '').strip()
+        }
+        if subscribed_token_values:
+            option_token_values = [tok for tok in subscribed_token_values if tok not in SPOT_UNDERLYING_BY_TOKEN]
+        else:
+            option_token_values = [tok for tok in changed_ltp_map.keys() if tok not in SPOT_UNDERLYING_BY_TOKEN]
+
+        option_ltp = []
+        for tok in option_token_values:
+            ltp_value = changed_ltp_map.get(tok, full_ltp_map.get(tok))
+            if ltp_value is None:
+                continue
+            ltp_float = _safe_float(ltp_value)
+            if ltp_float <= 0:
+                continue
+            option_ltp.append({
+                'token': tok,
+                'ltp': ltp_float,
+                'timestamp': timestamp,
+            })
+
+        spot_ltp = []
+        for token, underlying in SPOT_UNDERLYING_BY_TOKEN.items():
+            ltp_value = spot_map.get(underlying)
+            if ltp_value is None:
+                ltp_value = changed_ltp_map.get(token, full_ltp_map.get(token))
+            ltp_float = _safe_float(ltp_value)
+            if ltp_float <= 0:
+                continue
+            spot_ltp.append({
+                'token': token,
+                'ltp': ltp_float,
+                'underlying': underlying,
+                'option_type': 'SPOT',
+                'timestamp': timestamp,
+            })
+
+        return {
+            'trade_date': trade_date,
+            'listen_time': listen_time,
+            'listen_timestamp': timestamp,
+            'ltp': spot_ltp + option_ltp,
+            'spot_map': dict(spot_map),
+            'broker_status': str(tick_payload.get('status') or ''),
+            'mode': activation_mode,
+            'tick_count': int(tick_payload.get('tick_count') or 0),
+            'emit_source': 'kite_tick_listener',
+        }
+
+    def _detach_live_tick_listener() -> None:
+        nonlocal live_tick_listener
+        nonlocal live_tick_source
+        if live_tick_source and live_tick_listener and hasattr(live_tick_source, 'remove_tick_listener'):
+            try:
+                live_tick_source.remove_tick_listener(live_tick_listener)
+            except Exception as exc:
+                log.debug('remove live tick listener error: %s', exc)
+        live_tick_listener = None
+        live_tick_source = None
+
+    def _attach_live_tick_listener() -> None:
+        nonlocal live_tick_listener
+        nonlocal live_tick_source
+        if activation_mode not in {'live', 'fast-forward'}:
+            _detach_live_tick_listener()
+            return
+        try:
+            from features.live_monitor_socket import _get_active_ticker_manager
+            ticker_source = _get_active_ticker_manager()
+        except Exception as exc:
+            log.debug('get active ticker manager error: %s', exc)
+            return
+        if ticker_source is live_tick_source and live_tick_listener:
+            return
+        _detach_live_tick_listener()
+        if not hasattr(ticker_source, 'add_tick_listener'):
+            return
+
+        loop = asyncio.get_running_loop()
+
+        def _push_tick_payload(payload: dict) -> None:
+            try:
+                if live_tick_queue.full():
+                    try:
+                        live_tick_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                live_tick_queue.put_nowait(payload)
+            except Exception:
+                pass
+
+        def _on_live_tick(tick_payload: dict) -> None:
+            try:
+                loop.call_soon_threadsafe(_push_tick_payload, dict(tick_payload or {}))
+            except Exception:
+                pass
+
+        ticker_source.add_tick_listener(_on_live_tick)
+        live_tick_listener = _on_live_tick
+        live_tick_source = ticker_source
+
+    async def _live_tick_sender() -> None:
+        while True:
+            tick_payload = await live_tick_queue.get()
+            if activation_mode not in {'live', 'fast-forward'}:
+                continue
+            try:
+                latest_tick_payload = dict(tick_payload or {})
+                window_deadline = asyncio.get_running_loop().time() + live_tick_emit_interval_seconds
+                while True:
+                    remaining = window_deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        next_tick_payload = await asyncio.wait_for(live_tick_queue.get(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        break
+                    latest_tick_payload = dict(next_tick_payload or {})
+
+                payload = _build_live_tick_ltp_payload(latest_tick_payload)
+                await _send_update_message(_build_message(
+                    'ltp_update',
+                    'Live LTP tick (500ms)',
+                    payload,
+                ))
+            except Exception as exc:
+                log.debug('live tick sender error: %s', exc)
 
     def refresh_position_snapshot(refresh_reason: str = '') -> None:
         nonlocal market_cache
@@ -9486,6 +9988,9 @@ async def update_socket(
             count=len(open_positions),
         )
 
+    live_tick_task = asyncio.create_task(_live_tick_sender())
+    _attach_live_tick_listener()
+
     try:
         while True:
             try:
@@ -9523,6 +10028,7 @@ async def update_socket(
                 if requested_mode:
                     activation_mode = requested_mode
                     first_open_strategy_payload_printed = False
+                    _attach_live_tick_listener()
                 if requested_status:
                     subscription_status = requested_status
                 if isinstance(requested_autoload, bool):
@@ -9569,7 +10075,7 @@ async def update_socket(
                         requested_reason
                         or ('explicit_trigger' if requested_action == 'get-position' else 'subscription')
                     )
-                    await websocket.send_text(_build_message(
+                    await _send_update_message(_build_message(
                         'update',
                         'Open position snapshot refreshed',
                         {
@@ -9621,7 +10127,7 @@ async def update_socket(
                             activation_mode=activation_mode,
                         )
                         ltp_list = option_ltp + spot_ltp
-                    await websocket.send_text(_build_message(
+                    await _send_update_message(_build_message(
                         'ltp_update',
                         'LTP update for active positions',
                         {
@@ -9633,7 +10139,7 @@ async def update_socket(
                     ))
                     if requested_action == 'get-position':
                         continue
-                await websocket.send_text(_build_message(
+                await _send_update_message(_build_message(
                     'subscription_ack',
                     'Update websocket subscription confirmed',
                     {
@@ -9650,10 +10156,10 @@ async def update_socket(
                 # Only emit when monitor server is running (not needed for pure backtest)
                 try:
                     from features.live_monitor_socket import live_monitor_loop as _lml
-                    _monitor_running = _lml.is_running()
+                    _monitor_running = _lml.running
                 except Exception:
                     _monitor_running = False
-                if activation_mode in {'fast-forward', 'live'} and _monitor_running:
+                if activation_mode in {'fast-forward', 'live'} and _monitor_running and not live_tick_listener:
                     try:
                         from features.live_monitor_socket import _get_active_ticker_manager, _SPOT_TOKEN_BY_UNDERLYING
                         _live_tm = _get_active_ticker_manager()
@@ -9680,7 +10186,7 @@ async def update_socket(
                             for tok, lp in _live_tm.ltp_map.items()
                             if tok not in _spot_token_set and lp and float(lp) > 0
                         ]
-                        await websocket.send_text(_build_message(
+                        await _send_update_message(_build_message(
                             'ltp_update',
                             'Live LTP tick',
                             {
@@ -9824,6 +10330,10 @@ async def update_socket(
                             )
                         except Exception as _fee:
                             log.warning('flush_pending_execute_order_emits error: %s', _fee)
+                        try:
+                            await flush_pending_strategy_activities()
+                        except Exception as _fae:
+                            log.warning('flush_pending_strategy_activities error: %s', _fae)
 
                     # ── Always rebuild active_contracts from current records ────
                     # Includes already-entered legs from any previous tick
@@ -9901,7 +10411,7 @@ async def update_socket(
                             )
                         # Always emit ltp_update every tick so frontend timestamp stays
                         # in sync even before any legs enter (ltp=[] keeps countdown ticking)
-                        await websocket.send_text(_build_message(
+                        await _send_update_message(_build_message(
                             'ltp_update',
                             'LTP update for active positions',
                             {
@@ -9930,6 +10440,9 @@ async def update_socket(
     except WebSocketDisconnect:
         return
     finally:
+        _detach_live_tick_listener()
+        if live_tick_task:
+            live_tick_task.cancel()
         _unregister_channel_websocket('update', websocket)
         _unregister_user_websocket(websocket)
         _clear_market_cache_snapshot(market_cache)

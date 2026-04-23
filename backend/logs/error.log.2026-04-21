@@ -1,0 +1,28 @@
+2026-04-21 09:11:59  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 09:21:56  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (WebSocket closing handshake timeout (peer did not finish the opening handshake in time))
+2026-04-21 09:21:56  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (WebSocket closing handshake timeout (peer did not finish the opening handshake in time))
+2026-04-21 09:21:56  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (WebSocket closing handshake timeout (peer did not finish the opening handshake in time))
+2026-04-21 09:23:55  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 09:35:19  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 09:48:58  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:48:58  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-21 09:48:58  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:49:01  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 1. Next retry in around: 3 seconds
+2026-04-21 09:49:08  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 2. Next retry in around: 8 seconds
+2026-04-21 09:59:02  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:59:02  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-21 09:59:02  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:59:04  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 1. Next retry in around: 3 seconds
+2026-04-21 09:59:21  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-21 09:59:21  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-21 09:59:21  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-21 10:30:32  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 10:42:36  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 10:53:00  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 11:07:43  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 11:17:42  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 11:22:32  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 11:33:44  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-21 12:38:37  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-21 12:38:37  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-21 12:38:37  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
