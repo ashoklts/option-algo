@@ -17,7 +17,13 @@
         if (typeof window.buildAlgoApiUrl === 'function') {
             return window.buildAlgoApiUrl(path);
         }
-        return 'http://localhost:8000/algo/' + String(path || '').replace(/^\/+/, '');
+        var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+            || window.APP_ALGO_API_BASE_URL
+            || ((((window.location && window.location.hostname || '').toLowerCase() === 'finedgealgo.com'
+                || (window.location && window.location.hostname || '').toLowerCase() === 'www.finedgealgo.com')
+                ? 'https://finedgealgo.com/algo'
+                : 'http://localhost:8000/algo'));
+        return baseUrl.replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
     }
 
     function resolveCurrentUserId() {

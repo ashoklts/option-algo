@@ -261,6 +261,7 @@
   </div>
 </div>
 
+<script src="./assets/js/app-env.js"></script>
 <script src="./assets/js/app-header.js"></script>
 <script src="./assets/js/kite-login.js"></script>
 <script src="./assets/js/flattrade-login.js"></script>
@@ -268,7 +269,7 @@
 <script>
 (function () {
   // Use same base URL as rest of the app
-  var ALGO_API = (window.APP_ALGO_API_BASE_URL || "http://localhost:8000/algo").replace(/\/+$/, "");
+  var ALGO_API = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || "http://localhost:8000/algo").replace(/\/+$/, "");
   var BACKEND  = ALGO_API.replace(/\/algo$/, "");
   var brokerListEl = document.getElementById("broker-list");
   var alertBox     = document.getElementById("alert-box");

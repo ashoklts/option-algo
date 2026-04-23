@@ -4756,7 +4756,8 @@
             if (window.location && /^https?:/i.test(window.location.protocol || '')) {
                 return window.location.origin.replace(/\/+$/, '') + '/' + normalizedPath;
             }
-            return 'http://localhost:8000/' + normalizedPath;
+            var backendBase = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/algo\/?$/, '');
+            return backendBase.replace(/\/+$/, '') + '/' + normalizedPath;
         }
 
         function setPausedFlag(value) {
@@ -5003,7 +5004,7 @@
             if (typeof window.buildAlgoApiUrl === 'function') {
                 return window.buildAlgoApiUrl(path);
             }
-            return 'http://localhost:8000/algo/' + String(path || '').replace(/^\/+/, '');
+            return ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
         }
 
         function getNumericValue(id) {
@@ -5489,6 +5490,7 @@
     }());
 </script>
 <script src="../assets/js/script.js"></script>
+<script src="../assets/js/app-env.js"></script>
 <script src="../assets/js/app-header.js"></script>
 
 </html>

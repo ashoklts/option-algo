@@ -222,12 +222,14 @@
   <div class="started-at" id="startedAt"></div>
 
   <div class="mock-link">
-    <a href="http://localhost:8000/mock/start">&#9654; Mock Ticker</a>
+    <a href="#" id="mock-start-link">&#9654; Mock Ticker</a>
   </div>
 </div>
 
 <script>
-  const API = 'http://localhost:8000';
+  const API = (((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/algo\/?$/, '')).replace(/\/+$/, '');
+  const mockStartLink = document.getElementById('mock-start-link');
+  if (mockStartLink) mockStartLink.href = API + '/mock/start';
   let polling = null;
 
   async function fetchStatus() {

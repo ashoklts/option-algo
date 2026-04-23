@@ -10574,7 +10574,7 @@
             const createButton = document.getElementById('portfolio-create-btn');
             const portfolioGrid = document.getElementById('portfolio-grid');
             const portfolioSearchInput = document.getElementById('portfolio-search-input');
-            const API_BASE_URL = 'http://localhost:8000/algo';
+            const API_BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '');
 
             if (!openButton || !modalOverlay || !strategyList) {
                 return;

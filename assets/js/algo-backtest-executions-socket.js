@@ -2,6 +2,14 @@
     'use strict';
 
     function buildDefaultSocketUrl() {
+        var configuredApiBase = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || '';
+        if (configuredApiBase) {
+            var normalizedApiBase = String(configuredApiBase).replace(/\/+$/, '');
+            if (/^https?:\/\//i.test(normalizedApiBase)) {
+                return normalizedApiBase.replace(/^http/i, 'ws') + '/ws/executions';
+            }
+        }
+
         var protocol = window.location.protocol || '';
         if (protocol === 'file:') {
             return 'ws://localhost:8000/algo/ws/executions';

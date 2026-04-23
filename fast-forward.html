@@ -1617,9 +1617,10 @@
                                         });
 
                                         function fetchActiveTabData() {
+                                            var apiBaseUrl = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '');
                                             var url = activeTab === 'portfolios'
-                                                ? 'http://127.0.0.1:8000/algo/portfolio/list'
-                                                : 'http://127.0.0.1:8000/algo/strategy/list';
+                                                ? apiBaseUrl + '/portfolio/list'
+                                                : apiBaseUrl + '/strategy/list';
                                             fetch(url)
                                                 .then(function (response) {
                                                     if (!response.ok) {

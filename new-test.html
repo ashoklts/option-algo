@@ -5210,7 +5210,7 @@
                 btn.addEventListener('click', function (event) {
                     event.preventDefault();
                     var config = buildConfig();
-                    var BASE_URL = 'http://localhost:8000/algo';
+                    var BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '');
                     var originalText = btn.textContent;
                     btn.disabled = true;
                     btn.textContent = 'Starting...';
@@ -5746,7 +5746,7 @@
 
     <script>
         (function () {
-            const JSON_PATH = window.location.protocol === 'file:' ? 'http://localhost:8000/algo/backtest/sample-result' : '/algo/backtest/sample-result';
+            const JSON_PATH = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '') + '/backtest/sample-result';
             const TD = 'border-r border-r-primaryBlack-350 bg-primaryBlack-50 px-2 py-1 text-left text-xs font-light md:border-none md:px-4 md:py-3 !p-0 border-r border-r-primaryBlack-350';
 
             function fmt(n) {
@@ -6771,7 +6771,7 @@
 
     <script>
         (function () {
-            var API_URL = 'http://localhost:8000/algo/backtest/sample-result';
+            var API_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '') + '/backtest/sample-result';
             var pnlChart = null;
             var ddChart = null;
 
@@ -7101,7 +7101,7 @@
 
     <script>
         (function () {
-            var BASE_URL = 'http://localhost:8000/algo';
+            var BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '');
             var modal = document.getElementById('save-strategy-modal');
             var nameInput = document.getElementById('save-strategy-name');
             var alertEl = document.getElementById('save-strategy-alert');
@@ -7189,7 +7189,7 @@
     <!-- ── Load Strategy from URL (?strategy_id=...) ─────────────────────────── -->
     <script>
         (function () {
-            var BASE_URL = 'http://localhost:8000/algo';
+            var BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '');
 
             /* ── helpers ─────────────────────────────────────────────────── */
             function setSwitchEnabled(btn, enabled) {
@@ -7736,7 +7736,7 @@
 
     <script>
         (function () {
-            var BASE_URL = 'http://localhost:8000/algo';
+            var BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '');
             var importBtn = document.getElementById('import-algtst-btn');
             var modal = document.getElementById('import-algtst-modal');
             var closeBtn = document.getElementById('import-algtst-close');

@@ -18,7 +18,41 @@
 
     var APP_HEADER_ROOT_PATH = window.APP_HEADER_ROOT_PATH
         || (window.location && window.location.protocol === 'file:' ? detectFileRootPath() : '/' + APP_ROOT_FOLDER_NAME);
-    var APP_ALGO_API_BASE_URL = window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo';
+    var APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || '';
+    var APP_LIVE_ALGO_API_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL || APP_LOCAL_ALGO_API_BASE_URL;
+
+    function parseBooleanFlag(value) {
+        if (typeof value === 'boolean') {
+            return value;
+        }
+        if (value === null || typeof value === 'undefined') {
+            return null;
+        }
+        var normalizedValue = String(value).trim().toLowerCase();
+        if (['1', 'true', 'yes', 'y', 'live', 'production', 'prod'].indexOf(normalizedValue) !== -1) {
+            return true;
+        }
+        if (['0', 'false', 'no', 'n', 'local', 'development', 'dev'].indexOf(normalizedValue) !== -1) {
+            return false;
+        }
+        return null;
+    }
+
+    function detectLiveEnvironment() {
+        var configuredLiveFlag = parseBooleanFlag(window.APP_ENV_LIVE);
+        if (configuredLiveFlag !== null) {
+            return configuredLiveFlag;
+        }
+        var configuredEnv = parseBooleanFlag(window.APP_ENV);
+        if (configuredEnv !== null) {
+            return configuredEnv;
+        }
+        var hostname = (window.location && window.location.hostname || '').toLowerCase();
+        return hostname === 'finedgealgo.com' || hostname === 'www.finedgealgo.com';
+    }
+
+    var APP_ENV_LIVE = detectLiveEnvironment();
+    var APP_ALGO_API_BASE_URL = window.APP_ALGO_API_BASE_URL || (APP_ENV_LIVE ? APP_LIVE_ALGO_API_BASE_URL : APP_LOCAL_ALGO_API_BASE_URL);
     var APP_LISTENING_STORAGE_PREFIX = window.APP_LISTENING_STORAGE_PREFIX || 'option_algo_listening';
     var APP_API_ROUTES = Object.assign({
         strategySave: 'strategy/save',
@@ -219,6 +253,9 @@
     window.APP_HEADER_HTML = APP_HEADER_TEMPLATE;
     window.APP_ROOT_FOLDER_NAME = APP_ROOT_FOLDER_NAME;
     window.APP_HEADER_ROOT_PATH = APP_HEADER_ROOT_PATH;
+    window.APP_ENV_LIVE = APP_ENV_LIVE;
+    window.APP_LOCAL_ALGO_API_BASE_URL = APP_LOCAL_ALGO_API_BASE_URL;
+    window.APP_LIVE_ALGO_API_BASE_URL = APP_LIVE_ALGO_API_BASE_URL;
     window.APP_ALGO_API_BASE_URL = APP_ALGO_API_BASE_URL;
     window.APP_LISTENING_STORAGE_PREFIX = APP_LISTENING_STORAGE_PREFIX;
     window.APP_API_ROUTES = APP_API_ROUTES;
@@ -235,6 +272,9 @@
     window.APP_CONFIG = Object.assign({}, window.APP_CONFIG || {}, {
         rootFolderName: APP_ROOT_FOLDER_NAME,
         rootPath: APP_HEADER_ROOT_PATH,
+        isLive: APP_ENV_LIVE,
+        localAlgoApiBaseUrl: APP_LOCAL_ALGO_API_BASE_URL,
+        liveAlgoApiBaseUrl: APP_LIVE_ALGO_API_BASE_URL,
         algoApiBaseUrl: APP_ALGO_API_BASE_URL,
         listeningStoragePrefix: APP_LISTENING_STORAGE_PREFIX,
         apiRoutes: APP_API_ROUTES,
