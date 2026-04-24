@@ -42,23 +42,43 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+_SPOT_TOKEN_BY_UNDERLYING = {
+    'NIFTY': '256265',
+    'BANKNIFTY': '260105',
+    'FINNIFTY': '257801',
+    'SENSEX': '265',
+    'MIDCPNIFTY': '288009',
+}
+_LIVE_KITE_OWNER = '__live_event__'
+
+
+def _get_live_ltp_map() -> dict[str, float]:
+    try:
+        from features.kite_broker_ws import get_ltp_map
+        return dict(get_ltp_map() or {})
+    except Exception:
+        return {}
+
+
+def _get_live_spot_price(underlying: str) -> float:
+    normalized_underlying = str(underlying or '').strip().upper()
+    if not normalized_underlying:
+        return 0.0
+    token = _SPOT_TOKEN_BY_UNDERLYING.get(normalized_underlying, '')
+    if not token:
+        return 0.0
+    return _safe_float(_get_live_ltp_map().get(token))
+
+
 def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
     normalized_token = str(token or '').strip()
-    if not normalized_token:
+    if not normalized_token or not normalized_token.isdigit():
         return
     try:
-        from features.kite_ticker import ticker_manager
-
-        if not ticker_manager._ticker or ticker_manager.status != 'running':
+        from features.kite_broker_ws import is_configured, register_user_tokens
+        if not is_configured():
             return
-        if normalized_token in getattr(ticker_manager, 'subscribed_tokens', set()):
-            if symbol:
-                ticker_manager.register_option_token(normalized_token, symbol)
-            return
-        subscribe_token = int(normalized_token)
-        ticker_manager._ticker.subscribe([subscribe_token])
-        ticker_manager._ticker.set_mode(ticker_manager._ticker.MODE_LTP, [subscribe_token])
-        ticker_manager.register_option_token(normalized_token, symbol)
+        register_user_tokens(_LIVE_KITE_OWNER, [int(normalized_token)])
         print(f'[LIVE OPTION SUBSCRIBE] token={normalized_token} symbol={symbol or "-"}')
     except Exception:
         return
@@ -206,13 +226,12 @@ def resolve_live_pending_entry_snapshot(
     if not underlying:
         return {}
     try:
-        from features.kite_ticker import ticker_manager
         from features.backtest_engine import STRIKE_STEPS, _resolve_expiry, _resolve_strike
         from features.spot_atm_utils import resolve_atm_price
     except Exception:
         return {}
 
-    spot_price = _safe_float(ticker_manager.get_spot(underlying))
+    spot_price = _get_live_spot_price(underlying)
     if spot_price <= 0:
         return {}
 
@@ -249,7 +268,7 @@ def resolve_live_pending_entry_snapshot(
         symbol = str(token_doc.get('symbol') or '').strip()
         if token:
             _subscribe_live_option_token(token, symbol)
-        ltp = _safe_float(ticker_manager.get_ltp(token))
+        ltp = _safe_float(_get_live_ltp_map().get(token))
 
     print(
         '[LIVE ENTRY SNAPSHOT] '
@@ -299,13 +318,9 @@ def resolve_live_entry_execution_payload(
 
     # Fast path: contract already fully resolved → get LTP from Kite ticker directly, skip DB scan
     if underlying and leg_token and leg_token.isdigit() and leg_strike not in (None, '') and leg_expiry:
-        try:
-            from features.kite_ticker import ticker_manager as _tm_live
-            spot_price = _safe_float(_tm_live.get_spot(underlying))
-            ltp = _safe_float(_tm_live.get_ltp(leg_token))
-        except Exception:
-            spot_price = 0.0
-            ltp = 0.0
+        ltp_map = _get_live_ltp_map()
+        spot_price = _get_live_spot_price(underlying)
+        ltp = _safe_float(ltp_map.get(leg_token))
         if ltp <= 0:
             # Token not yet subscribed or no tick received — subscribe now so next tick delivers LTP
             _subscribe_live_option_token(leg_token, leg_symbol)

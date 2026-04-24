@@ -952,6 +952,94 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _build_mode_entry_order_payload(
+    db: MongoData,
+    trade: dict,
+    leg: dict,
+    leg_cfg: dict,
+    symbol: str,
+    quantity: int,
+    entry_price: float,
+    exchange_ts: str,
+) -> dict[str, Any]:
+    """
+    Build mode-specific broker-order metadata for a leg entry.
+
+    Common entry storage stays shared for every mode; only live mode injects
+    the real broker order details here.
+    """
+    activation_mode = str(trade.get('activation_mode') or '').strip()
+    if activation_mode != 'live' or not symbol:
+        return {}
+
+    leg_id_str = str(leg.get('id') or '')
+    try:
+        from features.live_order_manager import place_live_entry_order
+
+        live_order = place_live_entry_order(
+            db, trade, leg, leg_cfg, symbol, quantity, entry_price
+        )
+        if not live_order.get('order_id'):
+            log.warning(
+                '[LIVE ORDER] placement failed leg=%s trade=%s: %s',
+                leg_id_str,
+                str(trade.get('_id') or ''),
+                live_order.get('error'),
+            )
+            return {}
+
+        payload: dict[str, Any] = {
+            'order_id': live_order['order_id'],
+            'order_type': live_order['order_type'],
+            'exchange': live_order.get('exchange', ''),
+            'order_status': live_order['order_status'],
+            'limit_price': live_order['limit_price'],
+            'trigger_price': live_order['trigger_price'],
+            'order_placed_at': exchange_ts,
+            'convert_after': live_order.get('convert_after', 40),
+        }
+        if _safe_float(live_order.get('limit_price')) > 0:
+            payload['price'] = live_order['limit_price']
+        return payload
+    except Exception as exc:
+        log.error('[LIVE ORDER] entry order error leg=%s: %s', leg_id_str, exc)
+        return {}
+
+
+def _dispatch_mode_exit_order(
+    db: MongoData,
+    trade: dict,
+    leg: dict,
+    leg_cfg: dict,
+    symbol: str,
+    quantity: int,
+    exit_price: float,
+    exit_reason: str,
+) -> None:
+    """
+    Trigger mode-specific exit-order side effects without branching the shared
+    close-leg DB flow.
+    """
+    activation_mode = str(trade.get('activation_mode') or '').strip()
+    if activation_mode != 'live' or not symbol or quantity <= 0:
+        return
+
+    leg_id = str(leg.get('id') or '')
+    try:
+        from features.live_order_manager import place_live_exit_order
+
+        place_live_exit_order(
+            db, trade, leg, leg_cfg, symbol, quantity, exit_price, exit_reason
+        )
+    except Exception as exc:
+        log.error(
+            '[LIVE EXIT ORDER] error trade=%s leg=%s: %s',
+            str(trade.get('_id') or ''),
+            leg_id,
+            exc,
+        )
+
+
 def _is_valid_trade_date(value: Any) -> bool:
     return bool(DATE_RE.fullmatch(str(value or '').strip()))
 
@@ -1186,28 +1274,31 @@ def close_leg_in_db(db: MongoData, trade_id: str, leg_index: int,
         })
     if leg_id:
         _update_position_history_exit(db, trade_id, leg_id, exit_price, exit_reason, now_ts)
-    # ── Live mode: place real broker exit order ───────────────────────────────
-    if activation_mode == 'live' and leg_id:
-        try:
-            from features.live_order_manager import place_live_exit_order
-            _hist = db._db['algo_trade_positions_history'].find_one(
-                {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
-                {'symbol': 1, 'quantity': 1, 'position': 1},
-            ) or {}
-            _symbol = str(_hist.get('symbol') or '').strip()
-            _qty    = int(_hist.get('quantity') or 1)
-            _trade  = db._db['algo_trades'].find_one({'_id': trade_id}) or {}
-            _leg    = next(
-                (l for l in (_trade.get('legs') or [])
-                 if isinstance(l, dict) and str(l.get('id') or '') == leg_id),
-                {},
-            )
-            _all_cfgs = _resolve_trade_leg_configs(_trade)
-            _leg_cfg  = _resolve_leg_cfg(leg_id, _leg, _all_cfgs)
-            if _symbol and _qty > 0:
-                place_live_exit_order(db, _trade, _leg, _leg_cfg, _symbol, _qty, exit_price, exit_reason)
-        except Exception as _loe:
-            log.error('[LIVE EXIT ORDER] error trade=%s leg=%s: %s', trade_id, leg_id, _loe)
+    if leg_id:
+        _hist = db._db['algo_trade_positions_history'].find_one(
+            {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
+            {'symbol': 1, 'quantity': 1, 'position': 1},
+        ) or {}
+        _symbol = str(_hist.get('symbol') or '').strip()
+        _qty = int(_hist.get('quantity') or 1)
+        _trade = db._db['algo_trades'].find_one({'_id': trade_id}) or {}
+        _leg = next(
+            (l for l in (_trade.get('legs') or [])
+             if isinstance(l, dict) and str(l.get('id') or '') == leg_id),
+            {},
+        )
+        _all_cfgs = _resolve_trade_leg_configs(_trade)
+        _leg_cfg = _resolve_leg_cfg(leg_id, _leg, _all_cfgs)
+        _dispatch_mode_exit_order(
+            db,
+            _trade,
+            _leg,
+            _leg_cfg,
+            _symbol,
+            _qty,
+            exit_price,
+            exit_reason,
+        )
     mark_execute_order_dirty_from_trade_id(db, trade_id)
 
 
@@ -3670,31 +3761,18 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
         f'price={entry_price}'
     )
 
-    # ── Live mode: place real broker entry order ──────────────────────────────
-    if activation_mode == 'live' and symbol:
-        try:
-            from features.live_order_manager import place_live_entry_order
-            _live_order = place_live_entry_order(
-                db, trade, leg, leg_cfg, symbol, actual_quantity, entry_price
-            )
-            if _live_order.get('order_id'):
-                entry_trade_payload.update({
-                    'order_id':        _live_order['order_id'],
-                    'order_type':      _live_order['order_type'],
-                    'exchange':        _live_order.get('exchange', ''),
-                    'order_status':    _live_order['order_status'],
-                    'limit_price':     _live_order['limit_price'],
-                    'trigger_price':   _live_order['trigger_price'],
-                    'order_placed_at': exchange_ts,
-                    'convert_after':   _live_order.get('convert_after', 40),
-                })
-                if _safe_float(_live_order.get('limit_price')) > 0:
-                    entry_trade_payload['price'] = _live_order['limit_price']
-            else:
-                log.warning('[LIVE ORDER] placement failed leg=%s trade=%s: %s',
-                            leg_id_str, str(trade.get('_id') or ''), _live_order.get('error'))
-        except Exception as _loe:
-            log.error('[LIVE ORDER] entry order error leg=%s: %s', leg_id_str, _loe)
+    entry_trade_payload.update(
+        _build_mode_entry_order_payload(
+            db,
+            trade,
+            leg,
+            leg_cfg,
+            symbol,
+            actual_quantity,
+            entry_price,
+            exchange_ts,
+        )
+    )
 
     leg_is_reentered = _is_reentered_leg(leg, trade)
 
@@ -3899,6 +3977,22 @@ def apply_resolved_live_entries(
             'traded_timestamp': exchange_ts,
             'exchange_timestamp': exchange_ts,
         }
+        synthetic_leg = {
+            'id': leg_id,
+            'position': position_str,
+        }
+        entry_trade_payload.update(
+            _build_mode_entry_order_payload(
+                db,
+                trade_doc,
+                synthetic_leg,
+                leg_cfg,
+                str(info.get('symbol') or ''),
+                actual_quantity,
+                entry_price,
+                exchange_ts,
+            )
+        )
 
         entered_leg = {
             'id': leg_id,
