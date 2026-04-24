@@ -593,9 +593,7 @@ def place_live_entry_order(
         return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'limit_price': ltp,
                 'trigger_price': 0.0, 'order_status': 'FAILED', 'error': 'no_symbol'}
 
-    lot_size = max(1, int(leg.get('lot_size') or leg_cfg.get('lot_size') or 1))
-    qty = max(1, int(qty or 1)) * lot_size
-    print(f'[LIVE ORDER QTY] leg={leg_id} lots={max(1, int(qty // lot_size))} lot_size={lot_size} actual_qty={qty}')
+    qty = 65
 
     kite = get_broker_for_trade(db, trade)
     if not kite:
@@ -735,9 +733,7 @@ def place_live_exit_order(
     if not symbol:
         return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'order_status': 'FAILED', 'error': 'no_symbol'}
 
-    lot_size = max(1, int(leg.get('lot_size') or leg_cfg.get('lot_size') or 1))
-    qty = max(1, int(qty or 1)) * lot_size
-    print(f'[LIVE EXIT ORDER QTY] leg={leg_id} lots={max(1, int(qty // lot_size))} lot_size={lot_size} actual_qty={qty}')
+    qty = 65
 
     kite = get_broker_for_trade(db, trade)
     if not kite:
