@@ -970,7 +970,11 @@ def _build_mode_entry_order_payload(
     """
     activation_mode = str(trade.get('activation_mode') or '').strip()
     if activation_mode != 'live' or not symbol:
-        return {}
+        return {
+            'allowed': True,
+            'payload': {},
+            'error': '',
+        }
 
     leg_id_str = str(leg.get('id') or '')
     try:
@@ -986,7 +990,11 @@ def _build_mode_entry_order_payload(
                 str(trade.get('_id') or ''),
                 live_order.get('error'),
             )
-            return {}
+            return {
+                'allowed': False,
+                'payload': {},
+                'error': str(live_order.get('error') or 'live_order_failed'),
+            }
 
         payload: dict[str, Any] = {
             'order_id': live_order['order_id'],
@@ -1000,10 +1008,18 @@ def _build_mode_entry_order_payload(
         }
         if _safe_float(live_order.get('limit_price')) > 0:
             payload['price'] = live_order['limit_price']
-        return payload
+        return {
+            'allowed': True,
+            'payload': payload,
+            'error': '',
+        }
     except Exception as exc:
         log.error('[LIVE ORDER] entry order error leg=%s: %s', leg_id_str, exc)
-        return {}
+        return {
+            'allowed': False,
+            'payload': {},
+            'error': str(exc),
+        }
 
 
 def _dispatch_mode_exit_order(
@@ -3761,18 +3777,24 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
         f'price={entry_price}'
     )
 
-    entry_trade_payload.update(
-        _build_mode_entry_order_payload(
-            db,
-            trade,
-            leg,
-            leg_cfg,
-            symbol,
-            actual_quantity,
-            entry_price,
-            exchange_ts,
-        )
+    mode_entry_order = _build_mode_entry_order_payload(
+        db,
+        trade,
+        leg,
+        leg_cfg,
+        symbol,
+        actual_quantity,
+        entry_price,
+        exchange_ts,
     )
+    if not bool(mode_entry_order.get('allowed', True)):
+        error_message = str(mode_entry_order.get('error') or 'live_order_failed')
+        print(
+            f'[ENTRY BLOCKED] trade_id={str(trade.get("_id") or "")} '
+            f'leg={leg_id_str} mode={activation_mode} reason={error_message}'
+        )
+        return False, error_message
+    entry_trade_payload.update(mode_entry_order.get('payload') or {})
 
     leg_is_reentered = _is_reentered_leg(leg, trade)
 
@@ -3981,18 +4003,23 @@ def apply_resolved_live_entries(
             'id': leg_id,
             'position': position_str,
         }
-        entry_trade_payload.update(
-            _build_mode_entry_order_payload(
-                db,
-                trade_doc,
-                synthetic_leg,
-                leg_cfg,
-                str(info.get('symbol') or ''),
-                actual_quantity,
-                entry_price,
-                exchange_ts,
-            )
+        mode_entry_order = _build_mode_entry_order_payload(
+            db,
+            trade_doc,
+            synthetic_leg,
+            leg_cfg,
+            str(info.get('symbol') or ''),
+            actual_quantity,
+            entry_price,
+            exchange_ts,
         )
+        if not bool(mode_entry_order.get('allowed', True)):
+            print(
+                f'[LIVE ENTRY SKIP] trade={trade_id} leg={leg_id} '
+                f'reason={str(mode_entry_order.get("error") or "live_order_failed")}'
+            )
+            continue
+        entry_trade_payload.update(mode_entry_order.get('payload') or {})
 
         entered_leg = {
             'id': leg_id,
