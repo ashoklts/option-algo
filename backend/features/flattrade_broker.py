@@ -198,19 +198,12 @@ class FlatTradeAdapter:
         if payload_data.get("tsym"):
             payload_data["tsym"] = quote(str(payload_data["tsym"]), safe="")
         body = f"jData={json.dumps(payload_data, separators=(',', ':'))}&jKey={self.jkey}"
-        print(
-            f'[FLATTRADE RAW REQUEST] endpoint={endpoint} '
-            f'url={url} '
-            f'jData={json.dumps(payload_data, indent=2)} '
-            f'jKey={"*" * min(len(self.jkey), 8)}...'
-        )
         resp = requests.post(
             url,
             data=body,
             headers={"Content-Type": "application/json"},
             timeout=10,
         )
-        print(f'[FLATTRADE RAW RESPONSE] endpoint={endpoint} status={resp.status_code} body={resp.text[:500]}')
         try:
             resp.raise_for_status()
         except requests.HTTPError as exc:
