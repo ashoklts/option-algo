@@ -159,11 +159,9 @@
 </div>
 
 <script>
-const API = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+const API = (((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
   || window.APP_ALGO_API_BASE_URL
-  || ((['finedgealgo.com', 'www.finedgealgo.com'].indexOf((window.location && window.location.hostname || '').toLowerCase()) !== -1)
-    ? 'https://finedgealgo.com/algo'
-    : 'http://localhost:8000/algo')).replace(/\/+$/, '');
+  || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, ''));
 
 let allNotifications = [];
 let selectedTradeId   = null;

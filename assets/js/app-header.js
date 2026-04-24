@@ -16,8 +16,6 @@
         return '/' + APP_ROOT_FOLDER_NAME;
     }
 
-    var APP_HEADER_ROOT_PATH = window.APP_HEADER_ROOT_PATH
-        || (window.location && window.location.protocol === 'file:' ? detectFileRootPath() : '/' + APP_ROOT_FOLDER_NAME);
     var APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || '';
     var APP_LIVE_ALGO_API_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL || APP_LOCAL_ALGO_API_BASE_URL;
 
@@ -52,6 +50,10 @@
     }
 
     var APP_ENV_LIVE = detectLiveEnvironment();
+    var APP_HEADER_ROOT_PATH = window.APP_HEADER_ROOT_PATH
+        || (window.location && window.location.protocol === 'file:'
+            ? detectFileRootPath()
+            : (APP_ENV_LIVE ? '' : '/' + APP_ROOT_FOLDER_NAME));
     var APP_ALGO_API_BASE_URL = APP_ENV_LIVE ? APP_LIVE_ALGO_API_BASE_URL : APP_LOCAL_ALGO_API_BASE_URL;
     var APP_LISTENING_STORAGE_PREFIX = window.APP_LISTENING_STORAGE_PREFIX || 'option_algo_listening';
     var APP_API_ROUTES = Object.assign({
@@ -173,6 +175,14 @@
         return APP_ALGO_API_BASE_URL.replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
     }
 
+    function getAlgoApiBaseUrl() {
+        return String(APP_ALGO_API_BASE_URL || '').replace(/\/+$/, '');
+    }
+
+    function getApiOriginUrl() {
+        return getAlgoApiBaseUrl().replace(/\/algo\/?$/, '').replace(/\/+$/, '');
+    }
+
     function buildNamedApiUrl(routeName, suffix) {
         var routePath = APP_API_ROUTES[routeName] || routeName || '';
         var normalizedRoute = String(routePath).replace(/\/+$/, '');
@@ -262,6 +272,8 @@
     window.APP_PAGE_ROUTES = APP_PAGE_ROUTES;
     window.buildAppUrl = buildAppUrl;
     window.buildAlgoApiUrl = buildAlgoApiUrl;
+    window.getAlgoApiBaseUrl = getAlgoApiBaseUrl;
+    window.getApiOriginUrl = getApiOriginUrl;
     window.buildNamedApiUrl = buildNamedApiUrl;
     window.buildNamedPageUrl = buildNamedPageUrl;
     window.APP_LISTENING_MANAGER = {
@@ -276,11 +288,14 @@
         localAlgoApiBaseUrl: APP_LOCAL_ALGO_API_BASE_URL,
         liveAlgoApiBaseUrl: APP_LIVE_ALGO_API_BASE_URL,
         algoApiBaseUrl: APP_ALGO_API_BASE_URL,
+        apiOriginUrl: getApiOriginUrl(),
         listeningStoragePrefix: APP_LISTENING_STORAGE_PREFIX,
         apiRoutes: APP_API_ROUTES,
         pageRoutes: APP_PAGE_ROUTES,
         buildAppUrl: buildAppUrl,
         buildAlgoApiUrl: buildAlgoApiUrl,
+        getAlgoApiBaseUrl: getAlgoApiBaseUrl,
+        getApiOriginUrl: getApiOriginUrl,
         buildNamedApiUrl: buildNamedApiUrl,
         buildNamedPageUrl: buildNamedPageUrl,
         listeningManager: window.APP_LISTENING_MANAGER

@@ -60,11 +60,11 @@
                 || (window.APP_CONFIG && window.APP_CONFIG.liveAlgoApiBaseUrl)
                 || (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
                 || window.APP_ALGO_API_BASE_URL
-                || 'https://finedgealgo.com/algo');
+                || '');
         } else {
             configuredApiBase = (window.APP_LOCAL_ALGO_API_BASE_URL
                 || (window.APP_CONFIG && window.APP_CONFIG.localAlgoApiBaseUrl)
-                || 'http://localhost:8000/algo');
+                || '');
         }
 
         if (configuredApiBase) {
@@ -76,13 +76,15 @@
         }
 
         if (!isLive || pageProtocol === 'file:') {
-            return 'ws://localhost:8000/algo/ws';
+            return 'ws://' + (((window.APP_LOCAL_ALGO_API_BASE_URL || '').replace(/^https?:\/\//i, '') || 'localhost:8000/algo').replace(/\/+$/, '')) + '/ws';
         }
 
-        var origin = window.location.origin || 'https://finedgealgo.com';
+        var origin = window.location.origin || '';
         var socketOrigin = origin.replace(/^https?:\/\//i, socketProtocol);
         if (!/^wss?:\/\//i.test(socketOrigin)) {
-            socketOrigin = socketProtocol + (isLive ? 'finedgealgo.com' : 'localhost:8000');
+            var configuredLiveHost = String(window.APP_LIVE_ALGO_API_BASE_URL || '').replace(/^https?:\/\//i, '').replace(/\/algo\/?$/, '').replace(/\/+$/, '');
+            var configuredLocalHost = String(window.APP_LOCAL_ALGO_API_BASE_URL || '').replace(/^https?:\/\//i, '').replace(/\/algo\/?$/, '').replace(/\/+$/, '');
+            socketOrigin = socketProtocol + (isLive ? configuredLiveHost : configuredLocalHost);
         }
         return socketOrigin.replace(/\/$/, '') + '/algo/ws';
     }

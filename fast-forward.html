@@ -1617,7 +1617,9 @@
                                         });
 
                                         function fetchActiveTabData() {
-                                            var apiBaseUrl = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '');
+                                            var apiBaseUrl = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+                                                || window.APP_ALGO_API_BASE_URL
+                                                || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '');
                                             var url = activeTab === 'portfolios'
                                                 ? apiBaseUrl + '/portfolio/list'
                                                 : apiBaseUrl + '/strategy/list';

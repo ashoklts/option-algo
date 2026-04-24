@@ -227,7 +227,9 @@
 </div>
 
 <script>
-  const API = (((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/algo\/?$/, '')).replace(/\/+$/, '');
+  const API = (((window.APP_CONFIG && window.APP_CONFIG.apiOriginUrl)
+    || (typeof window.getApiOriginUrl === 'function' ? window.getApiOriginUrl() : '')
+    || ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || '').replace(/\/algo\/?$/, ''))).replace(/\/+$/, '');
   const mockStartLink = document.getElementById('mock-start-link');
   if (mockStartLink) mockStartLink.href = API + '/mock/start';
   let polling = null;

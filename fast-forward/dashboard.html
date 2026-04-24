@@ -4778,7 +4778,9 @@
             if (typeof window.buildAlgoApiUrl === 'function') {
                 return window.buildAlgoApiUrl(path);
             }
-            return ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
+            return ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+                || window.APP_ALGO_API_BASE_URL
+                || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
         }
 
         function getNumericValue(id) {
