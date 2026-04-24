@@ -1,24 +1,33 @@
 (function (window) {
     'use strict';
 
+    function resolveLiveFlag() {
+        if (typeof window.APP_ENV_LIVE === 'boolean') {
+            return window.APP_ENV_LIVE;
+        }
+        var normalized = String(window.APP_ENV_LIVE == null ? '' : window.APP_ENV_LIVE).trim().toLowerCase();
+        return ['1', 'true', 'yes', 'y', 'live', 'production', 'prod'].indexOf(normalized) !== -1;
+    }
+
     function buildDefaultSocketUrl() {
+        var isLive = resolveLiveFlag();
         var configuredApiBase = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || '';
         if (configuredApiBase) {
             var normalizedApiBase = String(configuredApiBase).replace(/\/+$/, '');
             if (/^https?:\/\//i.test(normalizedApiBase)) {
-                return normalizedApiBase.replace(/^http/i, 'ws') + '/ws/executions';
+                return normalizedApiBase.replace(/^https?:\/\//i, isLive ? 'wss://' : 'ws://') + '/ws/executions';
             }
         }
 
         var protocol = window.location.protocol || '';
-        if (protocol === 'file:') {
+        if (!isLive || protocol === 'file:') {
             return 'ws://localhost:8000/algo/ws/executions';
         }
 
-        var origin = window.location.origin || 'http://localhost:8000';
-        var socketOrigin = origin.replace(/^http/i, 'ws');
+        var origin = window.location.origin || 'https://finedgealgo.com';
+        var socketOrigin = origin.replace(/^https?:\/\//i, isLive ? 'wss://' : 'ws://');
         if (!/^wss?:\/\//i.test(socketOrigin)) {
-            socketOrigin = 'ws://localhost:8000';
+            socketOrigin = isLive ? 'wss://finedgealgo.com' : 'ws://localhost:8000';
         }
         return socketOrigin.replace(/\/$/, '') + '/algo/ws/executions';
     }

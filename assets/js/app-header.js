@@ -52,7 +52,7 @@
     }
 
     var APP_ENV_LIVE = detectLiveEnvironment();
-    var APP_ALGO_API_BASE_URL = window.APP_ALGO_API_BASE_URL || (APP_ENV_LIVE ? APP_LIVE_ALGO_API_BASE_URL : APP_LOCAL_ALGO_API_BASE_URL);
+    var APP_ALGO_API_BASE_URL = APP_ENV_LIVE ? APP_LIVE_ALGO_API_BASE_URL : APP_LOCAL_ALGO_API_BASE_URL;
     var APP_LISTENING_STORAGE_PREFIX = window.APP_LISTENING_STORAGE_PREFIX || 'option_algo_listening';
     var APP_API_ROUTES = Object.assign({
         strategySave: 'strategy/save',

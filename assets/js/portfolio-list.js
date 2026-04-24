@@ -1,10 +1,21 @@
 
 (function () {
+    function getAlgoBaseUrl() {
+        const configuredBaseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || '';
+        if (configuredBaseUrl) {
+            return configuredBaseUrl;
+        }
+        const hostname = String((window.location && window.location.hostname) || '').toLowerCase();
+        return (hostname === 'finedgealgo.com' || hostname === 'www.finedgealgo.com')
+            ? 'https://finedgealgo.com/algo'
+            : 'http://localhost:8000/algo';
+    }
+
     function getPortfolioListApiUrl(routeName, suffix) {
         if (typeof window.buildNamedApiUrl === 'function') {
             return window.buildNamedApiUrl(routeName, suffix);
         }
-        const baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || '';
+        const baseUrl = getAlgoBaseUrl();
         const routeMap = window.APP_API_ROUTES || {};
         const routePath = routeMap[routeName] || routeName || '';
         const normalizedRoute = String(routePath).replace(/\/+$/, '');
