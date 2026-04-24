@@ -9,6 +9,55 @@
         crossorigin="">
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <script>
+        (function () {
+            var protocol = window.location && window.location.protocol;
+            if (protocol !== 'file:') {
+                return;
+            }
+
+            var forcedBaseUrl = 'http://localhost:8000/algo';
+            window.APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || forcedBaseUrl;
+            window.APP_ALGO_API_BASE_URL = window.APP_ALGO_API_BASE_URL || forcedBaseUrl;
+
+            var originalFetch = window.fetch;
+            if (typeof originalFetch !== 'function' || window.__ffFetchRewriteBound) {
+                return;
+            }
+            window.__ffFetchRewriteBound = true;
+
+            function rewriteUrl(input) {
+                var rawUrl = typeof input === 'string' ? input : (input && input.url) || '';
+                var normalized = String(rawUrl || '').trim();
+                if (!normalized || /^(https?:|wss?:|file:)/i.test(normalized)) {
+                    return input;
+                }
+                var cleaned = normalized.replace(/^\/+/, '');
+                var apiLikePrefixes = [
+                    'strategy/',
+                    'portfolio/',
+                    'trades/',
+                    'executions',
+                    'backtest/',
+                    'broker-stoploss-settings/',
+                    'get_broker_stoploss_settings/',
+                    'monitor/',
+                    'algo/'
+                ];
+                var shouldRewrite = apiLikePrefixes.some(function (prefix) {
+                    return cleaned.indexOf(prefix) === 0;
+                });
+                if (!shouldRewrite) {
+                    return input;
+                }
+                return forcedBaseUrl.replace(/\/+$/, '') + '/' + cleaned.replace(/^algo\/+/, '');
+            }
+
+            window.fetch = function (input, init) {
+                return originalFetch.call(this, rewriteUrl(input), init);
+            };
+        }());
+    </script>
     <title>
         Options Simulator for Nifty, Banknifty, Finnifty, Sensex, Midcpnifty -
         Stockmock
@@ -4778,9 +4827,11 @@
             if (typeof window.buildAlgoApiUrl === 'function') {
                 return window.buildAlgoApiUrl(path);
             }
-            return ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+            var baseUrl = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
                 || window.APP_ALGO_API_BASE_URL
-                || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
+                || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')
+                || (window.location && window.location.protocol === 'file:' ? 'http://localhost:8000/algo' : ''));
+            return String(baseUrl || '').replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
         }
 
         function getNumericValue(id) {
@@ -5318,8 +5369,8 @@
         });
     }());
 </script>
-<script src="../assets/js/script.js"></script>
 <script src="../assets/js/app-env.js"></script>
 <script src="../assets/js/app-header.js"></script>
+<script src="../assets/js/script.js"></script>
 
 </html>
