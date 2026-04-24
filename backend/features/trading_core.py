@@ -522,20 +522,45 @@ def resolve_leg_expiry(
       - process_momentum_legs      (§12)
     """
     try:
-        from features.strike_selector import resolve_expiry  # type: ignore
+        from features.backtest_engine import _resolve_expiry  # type: ignore
         expiry_kind = str(
             leg_cfg.get('ExpiryKind')
             or leg_cfg.get('expiry_kind')
             or leg_cfg.get('ExpiryType')
-            or 'WEEKLY'
+            or 'ExpiryType.Weekly'
         ).strip()
-        return resolve_expiry(
-            db._db,
-            underlying=underlying,
-            expiry_kind=expiry_kind,
-            reference_date=now_ts[:10],
-            market_cache=market_cache,
-        )
+        trade_date = now_ts[:10]
+
+        # Get expiries list: prefer market_cache, then active_option_tokens, then option chain
+        expiries: list[str] = []
+        if market_cache:
+            expiries = list(
+                (market_cache.get('expiries_by_underlying') or {}).get(underlying) or []
+            )
+        if not expiries:
+            try:
+                raw = db._db['active_option_tokens'].distinct(
+                    'expiry',
+                    {'instrument': underlying, 'expiry': {'$gte': trade_date}},
+                )
+                expiries = sorted(str(e)[:10] for e in raw if e)
+            except Exception:
+                pass
+        if not expiries:
+            try:
+                from features.spot_atm_utils import get_kite_expiries  # type: ignore
+                expiries = get_kite_expiries(underlying, trade_date)
+            except Exception:
+                pass
+        if not expiries:
+            chain_col = db._db['option_chain_historical_data']
+            raw = chain_col.distinct(
+                'expiry',
+                {'underlying': underlying, 'expiry': {'$gte': trade_date}},
+            )
+            expiries = sorted(str(e)[:10] for e in raw if e)
+
+        return _resolve_expiry(trade_date, expiry_kind, expiries)
     except Exception as exc:
         log.warning('resolve_leg_expiry error underlying=%s: %s', underlying, exc)
         return None

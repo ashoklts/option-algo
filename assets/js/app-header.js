@@ -16,8 +16,18 @@
         return '/' + APP_ROOT_FOLDER_NAME;
     }
 
-    var APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || '';
-    var APP_LIVE_ALGO_API_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL || APP_LOCAL_ALGO_API_BASE_URL;
+    function getDefaultLocalAlgoApiBaseUrl() {
+        if (window.location && window.location.protocol === 'file:') {
+            return 'http://localhost:8000/algo';
+        }
+        if (window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin) {
+            return window.location.origin.replace(/\/+$/, '') + '/algo';
+        }
+        return 'http://localhost:8000/algo';
+    }
+
+    var APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || getDefaultLocalAlgoApiBaseUrl();
+    var APP_LIVE_ALGO_API_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL || 'https://finedgealgo.com/algo';
 
     function parseBooleanFlag(value) {
         if (typeof value === 'boolean') {
@@ -54,7 +64,18 @@
         || (window.location && window.location.protocol === 'file:'
             ? detectFileRootPath()
             : (APP_ENV_LIVE ? '' : '/' + APP_ROOT_FOLDER_NAME));
-    var APP_ALGO_API_BASE_URL = APP_ENV_LIVE ? APP_LIVE_ALGO_API_BASE_URL : APP_LOCAL_ALGO_API_BASE_URL;
+    function normalizeAlgoApiBaseUrl(baseUrl, isLive) {
+        var normalized = String(baseUrl || '').trim();
+        if (normalized) {
+            return normalized.replace(/\/+$/, '');
+        }
+        return isLive ? 'https://finedgealgo.com/algo' : getDefaultLocalAlgoApiBaseUrl();
+    }
+
+    var APP_ALGO_API_BASE_URL = normalizeAlgoApiBaseUrl(
+        APP_ENV_LIVE ? APP_LIVE_ALGO_API_BASE_URL : APP_LOCAL_ALGO_API_BASE_URL,
+        APP_ENV_LIVE
+    );
     var APP_LISTENING_STORAGE_PREFIX = window.APP_LISTENING_STORAGE_PREFIX || 'option_algo_listening';
     var APP_API_ROUTES = Object.assign({
         strategySave: 'strategy/save',

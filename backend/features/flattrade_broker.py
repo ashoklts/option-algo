@@ -49,6 +49,48 @@ _TOKEN_URL   = "https://authapi.flattrade.in/trade/apitoken"
 _BASE_URL    = "https://piconnect.flattrade.in/PiConnectAPI"
 
 
+# ── Symbol conversion ─────────────────────────────────────────────────────────
+
+def _to_flattrade_symbol(kite_symbol: str, exchange: str) -> str:
+    """
+    Convert Kite trading symbol to FlatTrade symbol format.
+
+    Kite  : NIFTY26APR23850CE  →  {name}{YY}{MMM}{strike}{CE|PE}
+    FlatTrade: NIFTY28APR26C23850  →  {name}{DD}{MMM}{YY}{C|P}{strike}
+    """
+    sym = str(kite_symbol or '').strip()
+    if not sym or str(exchange or '').upper() not in ('NFO', 'BFO'):
+        return sym
+
+    if sym.endswith('CE'):
+        ft_type = 'C'
+    elif sym.endswith('PE'):
+        ft_type = 'P'
+    else:
+        return sym  # equity / index — no conversion needed
+
+    try:
+        from features.spot_atm_utils import _load_kite_instruments  # type: ignore
+        from datetime import datetime as _dt
+
+        cache = _load_kite_instruments()
+        for (_name, exp_str, _strike, _opt), inst in cache.items():
+            if str(inst.get('symbol') or '').strip() == sym:
+                dt = _dt.strptime(exp_str[:10], '%Y-%m-%d')
+                day = dt.strftime('%d')
+                mon = dt.strftime('%b').upper()
+                yr  = dt.strftime('%y')
+                strike_int = int(_strike) if float(_strike).is_integer() else _strike
+                ft_sym = f'{_name}{day}{mon}{yr}{ft_type}{strike_int}'
+                print(f'[FLATTRADE SYMBOL] kite={sym} → flattrade={ft_sym}')
+                return ft_sym
+    except Exception as exc:
+        log.warning('[FLATTRADE SYMBOL] conversion error symbol=%s: %s', sym, exc)
+
+    log.warning('[FLATTRADE SYMBOL] not found in kite instruments cache: %s — using as-is', sym)
+    return sym
+
+
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def get_login_url(state: str = "") -> str:
@@ -156,12 +198,19 @@ class FlatTradeAdapter:
         if payload_data.get("tsym"):
             payload_data["tsym"] = quote(str(payload_data["tsym"]), safe="")
         body = f"jData={json.dumps(payload_data, separators=(',', ':'))}&jKey={self.jkey}"
+        print(
+            f'[FLATTRADE RAW REQUEST] endpoint={endpoint} '
+            f'url={url} '
+            f'jData={json.dumps(payload_data, indent=2)} '
+            f'jKey={"*" * min(len(self.jkey), 8)}...'
+        )
         resp = requests.post(
             url,
             data=body,
             headers={"Content-Type": "application/json"},
             timeout=10,
         )
+        print(f'[FLATTRADE RAW RESPONSE] endpoint={endpoint} status={resp.status_code} body={resp.text[:500]}')
         try:
             resp.raise_for_status()
         except requests.HTTPError as exc:
@@ -192,11 +241,13 @@ class FlatTradeAdapter:
             "SL-M":    "SL-MKT",
         }.get(order_type, "LMT")
 
+        ft_symbol = _to_flattrade_symbol(tradingsymbol, exchange)
+
         body: dict = {
             "uid":         self.user_id,
             "actid":       self.user_id,
             "exch":        exchange,
-            "tsym":        tradingsymbol,
+            "tsym":        ft_symbol,
             "qty":         str(int(quantity)),
             "prc":         str(round(float(price or 0), 2)),
             "dscqty":      "0",

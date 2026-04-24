@@ -233,6 +233,12 @@ def resolve_live_pending_entry_snapshot(
 
     spot_price = _get_live_spot_price(underlying)
     if spot_price <= 0:
+        try:
+            from features.live_monitor_socket import _get_active_ticker_manager
+            spot_price = _safe_float(_get_active_ticker_manager().get_spot(underlying))
+        except Exception:
+            spot_price = 0.0
+    if spot_price <= 0:
         return {}
 
     contract_cfg = leg_cfg.get('ContractType') or {}
@@ -256,6 +262,12 @@ def resolve_live_pending_entry_snapshot(
         )
         if e
     ])
+    if not expiries:
+        try:
+            from features.spot_atm_utils import get_kite_expiries
+            expiries = get_kite_expiries(underlying, str(now_ts or '')[:10])
+        except Exception:
+            pass
     expiry = _resolve_expiry(str(now_ts or '')[:10], expiry_kind, expiries) if expiries else None
     if expiry and strike not in (None, ''):
         token_doc = db._db['active_option_tokens'].find_one({
@@ -266,6 +278,20 @@ def resolve_live_pending_entry_snapshot(
         }) or {}
         token = str(token_doc.get('token') or token_doc.get('tokens') or '').strip()
         symbol = str(token_doc.get('symbol') or '').strip()
+        if not token:
+            try:
+                from features.spot_atm_utils import get_kite_chain_doc
+                _kcd = get_kite_chain_doc(underlying, expiry, strike, option_type.upper())
+                token = str(_kcd.get('token') or '').strip()
+                symbol = str(_kcd.get('symbol') or symbol or '').strip()
+                if token:
+                    print(
+                        f'[LIVE ENTRY SNAPSHOT FALLBACK] '
+                        f'underlying={underlying} expiry={expiry} strike={strike} '
+                        f'option={option_type} token={token} symbol={symbol}'
+                    )
+            except Exception:
+                pass
         if token:
             _subscribe_live_option_token(token, symbol)
         ltp = _safe_float(_get_live_ltp_map().get(token))
