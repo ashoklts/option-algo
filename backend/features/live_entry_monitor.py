@@ -526,7 +526,6 @@ class LiveEntryMonitor:
         """
         from features.trading_core import TickContext, process_pending_entries  # type: ignore
         from features.kite_broker_ws import (
-            get_ltp_map,
             register_user_tokens,
             wait_for_tokens_ltp,
         )  # type: ignore
@@ -585,16 +584,12 @@ class LiveEntryMonitor:
                 f'tokens={",".join(str(tok) for tok in trigger_tokens)}'
             )
 
-        # Snapshot of current Kite LTP map — used for live entry pricing
-        live_ltp_map = get_ltp_map()
-
         ctx = TickContext(
             db              = self._db,
             trade_date      = trade_date,
             now_ts          = now_ts,
             activation_mode = 'live',
             market_cache    = None,          # live DB queries for chain/spot
-            live_ltp_map    = live_ltp_map or None,
         )
 
         # Re-fetch trade from DB to get the latest leg state
