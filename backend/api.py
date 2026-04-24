@@ -21,6 +21,7 @@ import logging
 import multiprocessing
 import os
 import re
+import threading
 
 log = logging.getLogger(__name__)
 import time
@@ -79,6 +80,9 @@ DEFAULT_APP_USER_ID = "69dcf52711877c164638d2a7"
 
 _jobs: dict = {}
 _jobs_lock = multiprocessing.Lock()
+_LIST_CACHE_TTL_SECONDS = 30.0
+_list_cache: dict[str, dict] = {}
+_list_cache_lock = threading.Lock()
 
 
 def _resolve_app_user_id(value: str | None = None) -> str:
@@ -86,6 +90,32 @@ def _resolve_app_user_id(value: str | None = None) -> str:
     if normalized_value:
         return normalized_value
     return DEFAULT_APP_USER_ID
+
+
+def _list_cache_get(key: str):
+    now = time.time()
+    with _list_cache_lock:
+        item = _list_cache.get(key)
+        if not item:
+            return None
+        if now - item.get("ts", 0) > _LIST_CACHE_TTL_SECONDS:
+            _list_cache.pop(key, None)
+            return None
+        return deepcopy(item["value"])
+
+
+def _list_cache_set(key: str, value) -> None:
+    with _list_cache_lock:
+        _list_cache[key] = {"ts": time.time(), "value": deepcopy(value)}
+
+
+def _invalidate_list_cache(*keys: str) -> None:
+    with _list_cache_lock:
+        if not keys:
+            _list_cache.clear()
+            return
+        for key in keys:
+            _list_cache.pop(key, None)
 
 
 def _request_fingerprint(request: dict) -> str:
@@ -896,6 +926,10 @@ app.add_middleware(
 async def _setup_logging():
     from features.app_logger import setup_logging
     setup_logging()
+    try:
+        MongoData().ensure_core_indexes()
+    except Exception:
+        log.exception("Failed to ensure MongoDB indexes at startup")
 
 
 @app.on_event("startup")
@@ -1232,22 +1266,31 @@ async def strategy_save(payload: dict):
         "report_data": report_data,
     }
     result = col.insert_one(doc)
+    _invalidate_list_cache("strategy_list", "portfolio_list")
     return {"success": True, "id": str(result.inserted_id), "name": name}
 
 
 @router.get("/strategy/list")
 async def strategy_list():
     """List all saved strategy names."""
+    cached = _list_cache_get("strategy_list")
+    if cached is not None:
+        return cached
     db = MongoData()
     docs = list(db._db["saved_strategies"].find({}, {"_id": 1, "name": 1, "created_at": 1}))
     for d in docs:
         d["_id"] = str(d["_id"])
-    return {"strategies": docs}
+    response = {"strategies": docs}
+    _list_cache_set("strategy_list", response)
+    return response
 
 
 @router.get("/portfolio/list")
 async def portfolio_list():
     """List all saved portfolios."""
+    cached = _list_cache_get("portfolio_list")
+    if cached is not None:
+        return cached
     db = MongoData()
     docs = list(
         db._db["saved_portfolios"]
@@ -1275,7 +1318,9 @@ async def portfolio_list():
             for strategy_id in resolved_ids
             if strategy_name_map.get(strategy_id)
         ]
-    return {"portfolios": docs}
+    response = {"portfolios": docs}
+    _list_cache_set("portfolio_list", response)
+    return response
 
 
 @router.get("/portfolio/{portfolio_id}")
@@ -1435,6 +1480,7 @@ async def portfolio_save(payload: dict):
         result = portfolio_col.insert_one(portfolio_doc)
         result_id = result.inserted_id
 
+    _invalidate_list_cache("portfolio_list")
     return {
         "success": True,
         "id": str(result_id),
@@ -2522,6 +2568,7 @@ async def strategy_update(strategy_id: str, payload: dict):
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Strategy not found")
+    _invalidate_list_cache("strategy_list", "portfolio_list")
     return {"success": True, "id": strategy_id}
 
 
@@ -3726,6 +3773,11 @@ def _start_ticker_bg():
     """Run in background thread — loads tokens from DB and starts KiteTicker."""
     _db = MongoData()
     try:
+        print(
+            f'[MONITOR TICKER START] '
+            f'current_status={ticker_manager.status} '
+            f'tick_count={int(ticker_manager.tick_count or 0)}'
+        )
         if ticker_manager.status == "running":
             ticker_manager.restart(_db._db)
         else:
@@ -4113,6 +4165,12 @@ def _start_monitor_services(trade_date: str = '') -> dict:
     import threading
 
     normalized_trade_date = str(trade_date or '').strip() or datetime.now().strftime('%Y-%m-%d')
+    print(
+        f'[MONITOR START REQUEST] '
+        f'trade_date={normalized_trade_date} '
+        f'ticker_status={ticker_manager.status} '
+        f'tick_count={int(ticker_manager.tick_count or 0)}'
+    )
     if ticker_manager.status not in ('running', 'connecting'):
         threading.Thread(target=_start_ticker_bg, daemon=True).start()
     live_fast_monitor_supervisor.start(trade_date=normalized_trade_date)
@@ -4140,6 +4198,7 @@ def _build_monitor_status_payload() -> dict:
         'tick_count': ticker_status.get('tick_count'),
         'ltp_count': ticker_status.get('ltp_count'),
         'spot_map': ticker_status.get('spot_map') or {},
+        'ticker_error': str(ticker_status.get('error') or ''),
     }
 
 
@@ -4221,9 +4280,16 @@ def _get_kite_market_session_status() -> tuple[bool, str]:
     try:
         cfg = local_db._db["kite_market_config"].find_one(
             {"enabled": True},
-            {"access_token": 1},
+            {"access_token": 1, "api_key": 1, "login_time": 1},
         ) or {}
+        api_key = str(cfg.get("api_key") or "").strip()
         access_token = str(cfg.get("access_token") or "").strip()
+        login_time = str(cfg.get("login_time") or "").strip()
+        if not api_key:
+            return False, (
+                "Kite market config missing api_key"
+                + (f" (login_time: {login_time})" if login_time else "")
+            )
         if not access_token:
             return False, "Access token not found"
     finally:

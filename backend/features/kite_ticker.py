@@ -72,15 +72,29 @@ class _TickerManager:
             if not cfg:
                 self.status    = "error"
                 self.error_msg = "No enabled kite_market_config found in MongoDB"
+                print("[KITE TICKER START FAIL] reason=no_enabled_kite_market_config")
                 return {"ok": False, "message": self.error_msg}
 
             api_key      = (cfg.get("api_key") or "").strip()
             access_token = (cfg.get("access_token") or "").strip()
+            login_time   = str(cfg.get("login_time") or "").strip()
+            cfg_id       = str(cfg.get("_id") or "").strip()
 
             if not api_key or not access_token:
                 self.status    = "error"
                 self.error_msg = "api_key or access_token missing in kite_market_config"
+                print(
+                    f"[KITE TICKER START FAIL] reason=missing_credentials "
+                    f"config_id={cfg_id or '-'} has_api_key={bool(api_key)} "
+                    f"has_access_token={bool(access_token)} login_time={login_time or '-'}"
+                )
                 return {"ok": False, "message": self.error_msg}
+
+            print(
+                f"[KITE TICKER START] config_id={cfg_id or '-'} "
+                f"login_time={login_time or '-'} api_key_tail={api_key[-4:] if len(api_key) >= 4 else api_key} "
+                f"token_len={len(access_token)}"
+            )
 
             # ── Subscribe only spot/index instrument tokens at startup ─────
             # Option strikes are subscribed lazily only when an entry actually
@@ -143,6 +157,17 @@ class _TickerManager:
                 current_ltp_map = dict(self.ltp_map)
                 current_spot_map = dict(self.spot_map)
                 listeners = list(self._listeners)
+                if self.tick_count <= len(ticks):
+                    first_tick_tokens = [
+                        str(tick.get("instrument_token") or "")
+                        for tick in ticks[:10]
+                        if str(tick.get("instrument_token") or "").strip()
+                    ]
+                    print(
+                        f"[KITE FIRST TICKS] batch_size={len(ticks)} "
+                        f"tokens={first_tick_tokens or ['-']} "
+                        f"spot_map={current_spot_map}"
+                    )
                 try:
                     from features.runtime_mode_registry import runtime_mode_registry
                     active_modes = [
@@ -229,7 +254,8 @@ class _TickerManager:
                 ws.set_mode(ws.MODE_LTP, all_tokens)
                 print(
                     f"[KITE TICKER] connected and subscribed "
-                    f"total={len(all_tokens)} tokens"
+                    f"total={len(all_tokens)} tokens "
+                    f"response={response}"
                 )
 
                 try:
@@ -286,15 +312,27 @@ class _TickerManager:
             def _on_close(ws, code, reason):
                 logger.info("KiteTicker closed: %s %s", code, reason)
                 self.status = "stopped"
+                print(
+                    f"[KITE TICKER CLOSED] code={code} reason={reason} "
+                    f"tick_count={self.tick_count} ltp_count={len(self.ltp_map)} spot_count={len(self.spot_map)}"
+                )
 
             def _on_error(ws, code, reason):
                 logger.error("KiteTicker error: %s %s", code, reason)
                 self.status    = "error"
                 self.error_msg = f"{code}: {reason}"
+                print(
+                    f"[KITE TICKER ERROR] code={code} reason={reason} "
+                    f"tick_count={self.tick_count} subscribed={len(self.subscribed_tokens)}"
+                )
 
             def _on_reconnect(ws, attempts_count):
                 logger.info("KiteTicker reconnecting... attempt %s", attempts_count)
                 self.status = "connecting"
+                print(
+                    f"[KITE TICKER RECONNECT] attempt={attempts_count} "
+                    f"tick_count={self.tick_count} error={self.error_msg or '-'}"
+                )
 
             ticker.on_ticks     = _on_ticks
             ticker.on_connect   = _on_connect

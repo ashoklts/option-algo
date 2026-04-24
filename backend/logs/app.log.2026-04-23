@@ -1,0 +1,192 @@
+2026-04-23 08:01:40  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:08:14  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:20:56  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:33:29  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:33:54  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:34:11  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:34:34  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:34:57  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:35:16  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:39:04  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:39:17  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:40:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:40:17  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:40:36  INFO      api                                  [FLATTRADE POSTBACK] order_id=TEST001 status=COMPLETE fill_price=100.25 fill_qty=75
+2026-04-23 08:47:35  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 08:47:35  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 08:47:42  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 08:47:42  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 08:47:42  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-23 08:47:42  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-23 08:51:33  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:51:40  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:51:48  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:12  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:20  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:28  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:52:47  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:53:09  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 08:54:45  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 08:54:45  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 08:54:48  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 08:54:48  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 08:54:48  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-04-23 08:54:48  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-04-23 09:11:23  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 09:15:49  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:15:49  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:16:00  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 09:16:11  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:16:11  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:18:27  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 09:18:53  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 09:18:53  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 09:19:56  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=1: ₹422.73 → ₹417.73
+2026-04-23 09:20:12  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 09:20:21  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 09:20:28  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:20:28  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 09:20:29  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 09:20:29  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 09:21:01  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=2: ₹417.73 → ₹412.73
+2026-04-23 09:30:55  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=3: ₹412.73 → ₹407.73
+2026-04-23 09:31:20  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=4: ₹407.73 → ₹402.73
+2026-04-23 09:37:42  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-23 09:37:42  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-23 09:37:42  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-23 09:37:42  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (None)
+2026-04-23 09:37:45  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 09:47:31  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=5: ₹402.73 → ₹397.73
+2026-04-23 09:48:58  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db85661711bce24e1  leg_id=k49do8lv  exit_reason=stoploss  exit_price=137.35  ts=2026-04-23T09:48:58
+2026-04-23 09:50:11  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=6: ₹397.73 → ₹392.73
+2026-04-23 09:53:16  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=7: ₹392.73 → ₹387.73
+2026-04-23 10:04:08  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=8: ₹387.73 → ₹382.73
+2026-04-23 10:20:21  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=1: ₹266.38 → ₹261.38
+2026-04-23 10:21:58  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-04-23 10:21:58  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-04-23 10:21:58  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-04-23 10:21:58  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-04-23 10:22:02  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 10:23:34  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:25:00  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:26:10  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:26:29  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:27:33  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:27:33  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:27:44  INFO      features.db_change_watcher           [DB WATCHER] change-stream mode, trade_date=2026-04-23
+2026-04-23 10:28:28  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:28:28  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:31:48  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:31:54  ERROR     features.execution_socket            execute-orders initial emit error: No replica set members found yet, Timeout: 5.0s, Topology Description: <TopologyDescription id: 69e9a7bd5bb43d2e50cc1f81, topology_type: ReplicaSetNoPrimary, servers: [<ServerDescription ('ac-llfjck1-shard-00-00.e66us4f.mongodb.net', 27017) server_type: Unknown, rtt: None>, <ServerDescription ('ac-llfjck1-shard-00-01.e66us4f.mongodb.net', 27017) server_type: Unknown, rtt: None>, <ServerDescription ('ac-llfjck1-shard-00-02.e66us4f.mongodb.net', 27017) server_type: Unknown, rtt: None>]>
+2026-04-23 10:32:05  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:32:48  INFO      features.db_change_watcher           [DB WATCHER] change-stream mode, trade_date=2026-04-23
+2026-04-23 10:33:02  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:33:02  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:35:29  INFO      features.db_change_watcher           [DB WATCHER] change-stream mode, trade_date=2026-04-23
+2026-04-23 10:35:46  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:35:46  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:39:21  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:39:39  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:39:47  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:39:52  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:42:33  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:42:41  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:44:37  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
+2026-04-23 10:44:39  INFO      features.spot_atm_utils              [kite_instruments] loaded 56532 option instruments for 2026-04-23
+2026-04-23 10:44:41  INFO      features.spot_atm_utils              [kite_instruments] loaded 56532 option instruments for 2026-04-23
+2026-04-23 10:45:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:45:21  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
+2026-04-23 10:45:23  INFO      features.spot_atm_utils              [kite_instruments] loaded 56532 option instruments for 2026-04-23
+2026-04-23 10:45:26  INFO      features.spot_atm_utils              [kite_instruments] loaded 56532 option instruments for 2026-04-23
+2026-04-23 10:48:18  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:48:18  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:48:36  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:48:45  INFO      features.db_change_watcher           [DB WATCHER] change-stream mode, trade_date=2026-04-23
+2026-04-23 10:48:52  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:48:52  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:51:27  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:51:36  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:51:43  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:52:57  INFO      features.db_change_watcher           [DB WATCHER] change-stream mode, trade_date=2026-04-23
+2026-04-23 10:53:12  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:53:12  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-04-23 10:54:23  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 10:54:50  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-04-23
+2026-04-23 10:54:50  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 10:58:56  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=1: ₹289.14 → ₹284.14
+2026-04-23 11:04:52  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=jz7z14bt  exit_reason=target  exit_price=199.9  ts=2026-04-23T11:04:51
+2026-04-23 11:06:07  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=putLeg1  exit_reason=stoploss  exit_price=204.1  ts=2026-04-23T11:06:07
+2026-04-23 11:06:42  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=u1kx1rsu  exit_reason=target  exit_price=190.3  ts=2026-04-23T11:06:42
+2026-04-23 11:07:59  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=putLeg2  exit_reason=target  exit_price=202.1  ts=2026-04-23T11:07:59
+2026-04-23 11:08:04  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=callLeg1  exit_reason=stoploss  exit_price=194.2  ts=2026-04-23T11:08:04
+2026-04-23 11:09:36  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=callLeg2  exit_reason=target  exit_price=191.6  ts=2026-04-23T11:09:36
+2026-04-23 11:09:42  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=putLeg3-putLeg2  exit_reason=stoploss  exit_price=204.7  ts=2026-04-23T11:09:42
+2026-04-23 11:12:48  INFO      features.notification_manager        Trail SL rotated leg=k49do8lv step=1: ₹229.86 → ₹224.86
+2026-04-23 11:46:49  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-23 11:46:49  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-23 11:46:49  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-23 11:46:49  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (None)
+2026-04-23 11:46:52  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 1. Next retry in around: 3 seconds
+2026-04-23 11:46:52  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 1
+2026-04-23 11:47:02  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 2. Next retry in around: 10 seconds
+2026-04-23 11:47:02  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 2
+2026-04-23 11:47:31  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 3. Next retry in around: 30 seconds
+2026-04-23 11:47:31  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 3
+2026-04-23 11:48:24  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 4. Next retry in around: 53 seconds
+2026-04-23 11:48:24  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 4
+2026-04-23 11:49:32  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 11:50:20  INFO      features.notification_manager        Trail SL rotated leg=k49do8lv step=1: ₹202.34 → ₹197.34
+2026-04-23 11:53:01  INFO      features.notification_manager        Trail SL rotated leg=ta45594f step=1: ₹266.5 → ₹261.5
+2026-04-23 11:54:31  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=1: ₹240.72 → ₹235.72
+2026-04-23 13:16:31  ERROR     kiteconnect.ticker                   Connection error: 1006 - connection was closed uncleanly (None)
+2026-04-23 13:16:31  ERROR     features.kite_ticker                 KiteTicker error: 1006 connection was closed uncleanly (None)
+2026-04-23 13:16:31  ERROR     kiteconnect.ticker                   Connection closed: 1006 - connection was closed uncleanly (None)
+2026-04-23 13:16:31  INFO      features.kite_ticker                 KiteTicker closed: 1006 connection was closed uncleanly (None)
+2026-04-23 13:16:34  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 1. Next retry in around: 3 seconds
+2026-04-23 13:16:34  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 1
+2026-04-23 13:16:42  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 2. Next retry in around: 8 seconds
+2026-04-23 13:16:42  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 2
+2026-04-23 13:17:01  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 3. Next retry in around: 19 seconds
+2026-04-23 13:17:01  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 3
+2026-04-23 13:17:40  ERROR     kiteconnect.ticker                   Retrying connection. Retry attempt count: 4. Next retry in around: 39 seconds
+2026-04-23 13:17:40  INFO      features.kite_ticker                 KiteTicker reconnecting... attempt 4
+2026-04-23 13:18:35  INFO      features.kite_ticker                 KiteTicker connected
+2026-04-23 13:18:35  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=2: ₹284.14 → ₹279.14
+2026-04-23 13:18:35  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=2: ₹235.72 → ₹230.72
+2026-04-23 13:18:35  INFO      features.notification_manager        Trail SL rotated leg=ta45594f step=2: ₹261.5 → ₹256.5
+2026-04-23 13:18:42  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=3: ₹279.14 → ₹274.14
+2026-04-23 13:19:03  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=callLeg3-callLeg2  exit_reason=stoploss  exit_price=193.4  ts=2026-04-23T13:19:03
+2026-04-23 13:19:04  INFO      features.notification_manager        Trail SL rotated leg=ta45594f step=3: ₹256.5 → ₹251.5
+2026-04-23 13:19:11  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=putLeg4  exit_reason=stoploss  exit_price=197.45  ts=2026-04-23T13:19:11
+2026-04-23 13:19:16  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=3: ₹230.72 → ₹225.72
+2026-04-23 13:19:47  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=4: ₹274.14 → ₹269.14
+2026-04-23 13:19:54  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=putLeg4_re_2026-04-23131911  exit_reason=stoploss  exit_price=178.2  ts=2026-04-23T13:19:54
+2026-04-23 13:20:03  INFO      features.notification_manager        Trail SL rotated leg=ta45594f step=4: ₹251.5 → ₹246.5
+2026-04-23 13:20:31  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19db8d2842330de9e84  leg_id=putLeg4_re_2026-04-23131911_re_2026-04-23131954  exit_reason=stoploss  exit_price=183.6  ts=2026-04-23T13:20:31
+2026-04-23 13:20:48  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=4: ₹225.72 → ₹220.72
+2026-04-23 13:20:48  INFO      features.notification_manager        Trail SL rotated leg=ttx2772l step=5: ₹269.14 → ₹264.14
+2026-04-23 14:04:22  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 18:38:18  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 18:44:43  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 18:46:57  INFO      api                                  [FLATTRADE POSTBACK] order_id=23010376 status=OPEN fill_price=0.0 fill_qty=0
+2026-04-23 18:53:58  INFO      api                                  [FLATTRADE POSTBACK] order_id=23010376 status=OPEN fill_price=0.0 fill_qty=0
+2026-04-23 19:00:05  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 19:00:17  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 19:01:09  INFO      api                                  FlatTrade login started broker_doc_id=69e8f91d0e59052e21916992 state=d429c739a361608c3abee0105b697fbf
+2026-04-23 19:01:42  ERROR     features.flattrade_broker            FlatTrade token exchange failed: Invalid Input : INVALID_IP
+2026-04-23 19:01:42  ERROR     api                                  FlatTrade token exchange failed state=- broker_doc_id=-
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/api.py", line 3403, in flattrade_redirect
+    session = ft_generate_session(request_code)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 83, in generate_session
+    raise ValueError(f"FlatTrade session error: {data.get('emsg', data)}")
+ValueError: FlatTrade session error: Invalid Input : INVALID_IP
+2026-04-23 19:03:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 19:15:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 19:47:45  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 20:02:10  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 20:43:46  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-04-23 20:44:09  INFO      api                                  FlatTrade login started broker_doc_id=69e8f91d0e59052e21916992 state=cbbe5eb70ae638cc2479b989f0aace94
+2026-04-23 20:47:30  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs

@@ -1762,6 +1762,7 @@ def _build_position_history_doc(trade: dict, leg: dict) -> dict | None:
         'status': int(leg.get('status') if leg.get('status') is not None else OPEN_LEG_STATUS),
         'token': leg.get('token') or str(entry_trade.get('instrument_token') or '').strip() or None,
         'symbol': leg.get('symbol'),
+        'exchange': str(leg.get('exchange') or entry_trade.get('exchange') or ''),
         'quantity': _safe_int(leg.get('quantity')),
         'lot_size': _safe_int(leg.get('lot_size') or leg.get('quantity')),
         'position': leg.get('position'),
@@ -3249,16 +3250,6 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                         }
                 except Exception:
                     pass
-                # fast-forward: fallback to DB if ticker has no data (e.g. server restart)
-                if not index_spot_doc and activation_mode == 'fast-forward':
-                    index_spot_col = db._db['option_chain_index_spot']
-                    index_spot_doc = get_index_spot_at_time(
-                        index_spot_col,
-                        underlying,
-                        snapshot_timestamp or now_ts,
-                        market_cache=market_cache,
-                        activation_mode=activation_mode,
-                    )
             else:
                 index_spot_col = db._db['option_chain_index_spot']
                 index_spot_doc = get_index_spot_at_time(
@@ -3690,6 +3681,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                 entry_trade_payload.update({
                     'order_id':        _live_order['order_id'],
                     'order_type':      _live_order['order_type'],
+                    'exchange':        _live_order.get('exchange', ''),
                     'order_status':    _live_order['order_status'],
                     'limit_price':     _live_order['limit_price'],
                     'trigger_price':   _live_order['trigger_price'],
@@ -3715,6 +3707,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                 'expiry_date': _normalize_expiry_datetime(expiry),
                 'token': token,
                 'symbol': symbol,
+                'exchange': str(entry_trade_payload.get('exchange') or ''),
                 'quantity': actual_quantity,
                 'lot_size': lot_size,
                 'lot_config_value': lot_config_value,
@@ -3763,6 +3756,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                     'legs.$[elem].expiry_date': _normalize_expiry_datetime(expiry),
                     'legs.$[elem].token': token,
                     'legs.$[elem].symbol': symbol,
+                    'legs.$[elem].exchange': str(entry_trade_payload.get('exchange') or ''),
                     'legs.$[elem].quantity': actual_quantity,
                     'legs.$[elem].lot_size': lot_size,
                     'legs.$[elem].lot_config_value': lot_config_value,

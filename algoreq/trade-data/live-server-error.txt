@@ -1,0 +1,162 @@
+[FF OPEN POSITION SUBSCRIBE] trade_date=2026-04-24 trades=1 subscribed_tokens=0 momentum_tokens=0
+[LIVE+FF MONITOR] trade_date=2026-04-24 live=0 fast_forward=1
+[LIVE+FF CHECK] mode=fast-forward group=new 0 dte test-fast-forward strategy=NIFTY-0DTE-1-1-5 - 31342 entry_time=2026-04-24 09:15:59 current_time=09:55 open_legs=0/10
+[FAST-FORWARD QUOTE CYCLE] trade_date=2026-04-24 timestamp=2026-04-24T09:55:50 ticker_tick_count=0 quote_trades=False records=1
+[MOMENTUM TOKENS RESOLVED] leg=k49do8lv underlying=NIFTY expiry=2026-04-28 strike=25700.0 option=CE token=18541314 symbol=NIFTY26APR25700CE
+[PENDING ENTRY WAIT] leg=k49do8lv waiting for price data
+[MOMENTUM TOKENS RESOLVED] leg=ttx2772l underlying=NIFTY expiry=2026-04-28 strike=25700.0 option=PE token=18541570 symbol=NIFTY26APR25700PE
+[PENDING ENTRY WAIT] leg=ttx2772l waiting for price data
+[BACKTEST ENTRY TRIGGER] trade_id=exec_19dbdb3644e1bce24e1 group_name= strategy_name=NIFTY-0DTE-1-1-5 - 31342 entry_time=09:15:59 listen_time=09:55:50 triggering_previous_entry_execution=true catch_up=true
+[STRIKE CALC] leg=k49do8lv type=CE spot_price=0.0 mode=fast-forward source=fast_forward_event
+[ENTRY MISS] leg=k49do8lv underlying=NIFTY snapshot=2026-04-24T09:55:50 reason=spot_price_missing_or_zero
+[BACKTEST ENTRY] trade_id=exec_19dbdb3644e1bce24e1 strategy=NIFTY-0DTE-1-1-5 - 31342 entry_time=09:15:59 leg_id=k49do8lv entered=False reason=spot_missing listen_time=09:55:50
+[ENTRY FAILED DEBUG] ── Failed Leg Object ──
+{
+  "id": "k49do8lv",
+  "leg_id": "k49do8lv",
+  "status": 0,
+  "position": "PositionType.Sell",
+  "option": "CE",
+  "strike": 25700.0,
+  "expiry_date": "2026-04-28",
+  "token": "18541314",
+  "symbol": "NIFTY26APR25700CE",
+  "quantity": 0,
+  "lot_config_value": 1,
+  "entry_trade": null,
+  "exit_trade": null,
+  "ltp": null,
+  "last_saw_price": null,
+  "is_lazy": false,
+  "is_pending_feature_leg": true,
+  "queued_at": "2026-04-24T09:47:01",
+  "armed_at": null,
+  "triggered_at": null,
+  "leg_type": "leg_1",
+  "triggered_by": "",
+  "lazy_leg_ref": "k49do8lv",
+  "parent_leg_id": "",
+  "reentry_type": "",
+  "reentry_count_remaining": null,
+  "entry_kind": "EntryType.EntryByStrikeType",
+  "strike_parameter": "StrikeType.ATM",
+  "expiry_kind": "ExpiryType.Weekly",
+  "skip_momentum_check": false,
+  "spot_at_queue": null,
+  "momentum_base_price": null,
+  "momentum_target_price": null,
+  "momentum_reference_set_at": "",
+  "momentum_armed_notified_at": "",
+  "pending_feature": "pending_entry",
+  "feature_row_id": "69eaeebf958bed0c3f4cf671",
+  "feature_status_rows": [
+    {
+      "_id": "69eaeebf958bed0c3f4cf671",
+      "trade_id": "exec_19dbdb3644e1bce24e1",
+      "strategy_id": "69eaee70958bed0c3f4cf670",
+      "strategy_name": "NIFTY-0DTE-1-1-5 - 31342",
+      "ticker": "NIFTY",
+      "trade_date": "2026-04-24",
+      "feature": "pending_entry",
+      "feature_scope": "leg",
+      "enabled": true,
+      "status": "active",
+      "leg_id": "k49do8lv",
+      "lazy_leg_ref": "k49do8lv",
+      "parent_leg_id": "",
+      "triggered_by": "",
+      "leg_type": "leg_1",
+      "position": "PositionType.Sell",
+      "option": "CE",
+      "expiry_kind": "ExpiryType.Weekly",
+      "strike_parameter": "StrikeType.ATM",
+      "entry_kind": "EntryType.EntryByStrikeType",
+      "lot_config_value": 1,
+      "is_lazy": false,
+      "skip_momentum_check": false,
+      "reentry_type": "",
+      "reentry_count_remaining": null,
+      "strike": 25700.0,
+      "expiry_date": "2026-04-28",
+      "token": "18541314",
+      "symbol": "NIFTY26APR25700CE",
+      "spot_at_queue": null,
+      "momentum_base_price": null,
+      "momentum_target_price": null,
+      "momentum_reference_set_at": "",
+      "momentum_armed_notified_at": "",
+      "queued_at": "2026-04-24T09:47:01",
+      "armed_at": null,
+      "triggered_at": null,
+      "trigger_description": "Pending entry queued for CE leg k49do8lv.",
+      "created_at": "2026-04-24T09:47:01",
+      "updated_at": "2026-04-24T09:47:01"
+    }
+  ],
+  "feature_status_map": {
+    "pending_entry": {
+      "_id": "69eaeebf958bed0c3f4cf671",
+      "trade_id": "exec_19dbdb3644e1bce24e1",
+      "strategy_id": "69eaee70958bed0c3f4cf670",
+      "strategy_name": "NIFTY-0DTE-1-1-5 - 31342",
+      "ticker": "NIFTY",
+      "trade_date": "2026-04-24",
+      "feature": "pending_entry",
+      "feature_scope": "leg",
+      "enabled": true,
+      "status": "active",
+      "leg_id": "k49do8lv",
+      "lazy_leg_ref": "k49do8lv",
+      "parent_leg_id": "",
+      "triggered_by": "",
+      "leg_type": "leg_1",
+      "position": "PositionType.Sell",
+      "option": "CE",
+      "expiry_kind": "ExpiryType.Weekly",
+      "strike_parameter": "StrikeType.ATM",
+      "entry_kind": "EntryType.EntryByStrikeType",
+      "lot_config_value": 1,
+      "is_lazy": false,
+      "skip_momentum_check": false,
+      "reentry_type": "",
+      "reentry_count_remaining": null,
+      "strike": 25700.0,
+      "expiry_date": "2026-04-28",
+      "token": "18541314",
+      "symbol": "NIFTY26APR25700CE",
+      "spot_at_queue": null,
+      "momentum_base_price": null,
+      "momentum_target_price": null,
+      "momentum_reference_set_at": "",
+      "momentum_armed_notified_at": "",
+      "queued_at": "2026-04-24T09:47:01",
+      "armed_at": null,
+      "triggered_at": null,
+      "trigger_description": "Pending entry queued for CE leg k49do8lv.",
+      "created_at": "2026-04-24T09:47:01",
+      "updated_at": "2026-04-24T09:47:01"
+    }
+  },
+  "active_trigger_descriptions": [
+    "Pending entry queued for CE leg k49do8lv."
+  ]
+}
+[ENTRY FAILED DEBUG] ── Trade Legs entry_trade details ──
+[ENTRY FAILED DEBUG] mode=fast-forward ── Live/FF debug ──
+[ENTRY FAILED DEBUG] underlying=NIFTY kite_spot=None leg_token=18541314 kite_ltp=None
+[ENTRY FAILED DEBUG] ltp_map_keys=[]
+[ENTRY FAILED DEBUG] active_option_tokens for NIFTY/CE expiry=2026-04-28 strike=25700.0:
+  tok: strike=20500 expiry=2026-04-28 token=18387714 symbol=NIFTY26APR20500CE
+  tok: strike=20550 expiry=2026-04-28 token=18388226 symbol=NIFTY26APR20550CE
+  tok: strike=20300 expiry=2026-04-28 token=18383618 symbol=NIFTY26APR20300CE
+  tok: strike=20450 expiry=2026-04-28 token=18387202 symbol=NIFTY26APR20450CE
+  tok: strike=20350 expiry=2026-04-28 token=18384642 symbol=NIFTY26APR20350CE
+  tok: strike=20250 expiry=2026-04-28 token=18383106 symbol=NIFTY26APR20250CE
+  tok: strike=20150 expiry=2026-04-28 token=18382082 symbol=NIFTY26APR20150CE
+  tok: strike=20100 expiry=2026-04-28 token=18381570 symbol=NIFTY26APR20100CE
+  tok: strike=20200 expiry=2026-04-28 token=18382594 symbol=NIFTY26APR20200CE
+  tok: strike=20400 expiry=2026-04-28 token=18386690 symbol=NIFTY26APR20400CE
+[STRIKE CALC] leg=ttx2772l type=PE spot_price=0.0 mode=fast-forward source=fast_forward_event
+[ENTRY MISS] leg=ttx2772l underlying=NIFTY snapshot=2026-04-24T09:55:50 reason=spot_price_missing_or_zero
+[BACKTEST ENTRY] trade_id=exec_19dbdb3644e1bce24e1 strategy=NIFTY-0DTE-1-1-5 - 31342 entry_time=09:15:59 leg_id=ttx2772l entered=False reason=spot_missing listen_time=09:55:50
+[ENTRY FAILED DEBUG] ── Failed Leg Object ──

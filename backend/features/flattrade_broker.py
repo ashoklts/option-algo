@@ -243,6 +243,7 @@ class FlatTradeAdapter:
                 "filled_quantity":    int(o.get("fillshares") or 0),
                 "quantity":           int(o.get("qty") or 0),
                 "tradingsymbol":      str(o.get("tsym") or ""),
+                "exchange":           str(o.get("exch") or ""),
                 "transaction_type":   "BUY" if o.get("trantype") == "B" else "SELL",
                 "product":            "MIS" if o.get("prd") == "I" else "NRML",
                 "last_price":         float(o.get("lp") or 0),

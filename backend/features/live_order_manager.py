@@ -50,6 +50,7 @@ log = logging.getLogger(__name__)
 
 # ── Exchange / product constants ──────────────────────────────────────────────
 _NFO  = 'NFO'
+_BFO  = 'BFO'
 _NSE  = 'NSE'
 _MIS  = 'MIS'
 _NRML = 'NRML'
@@ -120,11 +121,32 @@ def _mpp_protection_pct(ltp: float, is_option: bool = True) -> float:
         return 0.5
 
 
-def _get_bid_ask(kite, symbol: str, ltp: float) -> tuple[float, float]:
+def _resolve_exchange(symbol: str = '', trade: dict | None = None, leg: dict | None = None, fallback: str = _NFO) -> str:
+    """Resolve option exchange for order placement. SENSEX options trade on BFO."""
+    candidates = [
+        (leg or {}).get('exchange'),
+        ((leg or {}).get('entry_trade') or {}).get('exchange'),
+        (trade or {}).get('exchange'),
+        (trade or {}).get('ticker'),
+        ((trade or {}).get('strategy') or {}).get('Ticker'),
+        ((trade or {}).get('config') or {}).get('Ticker'),
+        symbol,
+    ]
+    text = ' '.join(str(item or '').upper() for item in candidates)
+    if 'BFO' in text or 'BSE' in text or 'SENSEX' in text:
+        return _BFO
+    if 'NFO' in text or 'NSE' in text:
+        return _NFO
+    return fallback
+
+
+def _get_bid_ask(kite, symbol: str, ltp: float, exchange: str = _NFO) -> tuple[float, float]:
     """Fetch best bid/ask via kite.quote(). Falls back to ltp on any error."""
     try:
-        q = kite.quote([f'NFO:{symbol}'])
-        depth = (q.get(f'NFO:{symbol}') or {}).get('depth') or {}
+        exch = str(exchange or _NFO).upper()
+        sym_key = f'{exch}:{symbol}'
+        q = kite.quote([sym_key])
+        depth = (q.get(sym_key) or {}).get('depth') or {}
         buy_depth  = depth.get('buy')  or []
         sell_depth = depth.get('sell') or []
         bid = _safe_float((buy_depth[0]  if buy_depth  else {}).get('price'), ltp)
@@ -135,7 +157,7 @@ def _get_bid_ask(kite, symbol: str, ltp: float) -> tuple[float, float]:
             ask = ltp
         return bid, ask
     except Exception as exc:
-        log.debug('_get_bid_ask error symbol=%s: %s', symbol, exc)
+        log.debug('_get_bid_ask error exchange=%s symbol=%s: %s', exchange, symbol, exc)
         return ltp, ltp
 
 
@@ -587,6 +609,7 @@ def place_live_entry_order(
     # Product type from config
     product_raw = str((leg_cfg.get('ProductType') or leg_cfg.get('Product') or _NRML)).upper()
     product = _MIS if 'MIS' in product_raw else _NRML
+    exchange = _resolve_exchange(symbol, trade, leg)
 
     order_type    = cfg['order_type']
     limit_buffer  = cfg['limit_buffer']
@@ -602,7 +625,7 @@ def place_live_entry_order(
         #   BUY  → BID + pct%  (crosses ask → guaranteed fill, less overpay)
         #   SELL → ASK - pct%  (crosses bid → guaranteed fill, less slippage)
         # Then: tick align to 0.05, min sell price ₹0.05
-        bid, ask = _get_bid_ask(kite, symbol, ltp)
+        bid, ask = _get_bid_ask(kite, symbol, ltp, exchange)
         pct = _mpp_protection_pct(ltp, is_option=True)
         if is_buy_order:
             base_price = bid if bid > 0 else ltp
@@ -629,7 +652,7 @@ def place_live_entry_order(
     try:
         order_params: dict[str, Any] = {
             'tradingsymbol':   symbol,
-            'exchange':        _NFO,
+            'exchange':        exchange,
             'transaction_type':txn_type,
             'quantity':        int(qty),
             'order_type':      kite_order_type,
@@ -646,23 +669,24 @@ def place_live_entry_order(
 
         print(
             f'[LIVE ORDER PLACED] trade={trade_id} leg={leg_id} '
-            f'symbol={symbol} txn={txn_type} qty={qty} '
+            f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
             f'order_type={kite_order_type} limit_price={limit_price} '
             f'trigger_price={trigger_price} order_id={order_id}'
         )
         _save_broker_order(
             db, trade, kite, order_id, 'entry',
-            symbol, _NFO, txn_type, qty,
+            symbol, exchange, txn_type, qty,
             kite_order_type, limit_price, trigger_price, product,
             leg_id=leg_id,
         )
         log_db_write('broker_orders', 'place_entry_order', order_id, {
-            'trade_id': trade_id, 'leg_id': leg_id, 'symbol': symbol,
+            'trade_id': trade_id, 'leg_id': leg_id, 'exchange': exchange, 'symbol': symbol,
             'order_type': kite_order_type, 'limit_price': limit_price,
         })
         return {
             'order_id':      order_id,
             'order_type':    kite_order_type,
+            'exchange':      exchange,
             'limit_price':   limit_price,
             'trigger_price': trigger_price,
             'order_status':  _ORDER_STATUS_OPEN,
@@ -720,6 +744,7 @@ def place_live_exit_order(
 
     product_raw = str((leg_cfg.get('ProductType') or leg_cfg.get('Product') or _NRML)).upper()
     product = _MIS if 'MIS' in product_raw else _NRML
+    exchange = _resolve_exchange(symbol, trade, leg)
 
     order_type     = cfg['order_type']
     limit_buffer   = cfg['limit_buffer']
@@ -734,7 +759,7 @@ def place_live_exit_order(
         # Algotest MPP formula:
         #   BUY to close  → BID + pct%
         #   SELL to close → ASK - pct%
-        bid, ask = _get_bid_ask(kite, symbol, exit_price)
+        bid, ask = _get_bid_ask(kite, symbol, exit_price, exchange)
         is_exit_buy = is_sell   # sell position → BUY to close; buy position → SELL to close
         pct = _mpp_protection_pct(exit_price, is_option=True)
         if is_exit_buy:
@@ -772,7 +797,7 @@ def place_live_exit_order(
     try:
         order_params: dict[str, Any] = {
             'tradingsymbol':    symbol,
-            'exchange':         _NFO,
+            'exchange':         exchange,
             'transaction_type': txn_type,
             'quantity':         int(qty),
             'order_type':       kite_order_type,
@@ -789,23 +814,24 @@ def place_live_exit_order(
 
         print(
             f'[LIVE EXIT ORDER] trade={trade_id} leg={leg_id} '
-            f'symbol={symbol} txn={txn_type} qty={qty} '
+            f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
             f'reason={exit_reason} order_type={kite_order_type} '
             f'limit_price={limit_price} order_id={order_id}'
         )
         _save_broker_order(
             db, trade, kite, order_id, 'exit',
-            symbol, _NFO, txn_type, qty,
+            symbol, exchange, txn_type, qty,
             kite_order_type, limit_price, trigger_price, product,
             leg_id=leg_id, exit_reason=exit_reason,
         )
         log_db_write('broker_orders', 'place_exit_order', order_id, {
-            'trade_id': trade_id, 'leg_id': leg_id, 'symbol': symbol,
+            'trade_id': trade_id, 'leg_id': leg_id, 'exchange': exchange, 'symbol': symbol,
             'exit_reason': exit_reason, 'order_type': kite_order_type,
         })
         return {
             'order_id':      order_id,
             'order_type':    kite_order_type,
+            'exchange':      exchange,
             'limit_price':   limit_price,
             'trigger_price': trigger_price,
             'order_status':  _ORDER_STATUS_OPEN,
@@ -1011,6 +1037,7 @@ def _margin_squareoff_trade(db, trade: dict, kite, _now_ts: str) -> None:
         symbol   = str(hist.get('symbol') or '').strip()
         qty      = int(hist.get('quantity') or 0)
         leg_id   = str(hist.get('leg_id') or '').strip()
+        exchange = _resolve_exchange(symbol, trade, {'id': leg_id})
         is_sell  = 'sell' in str(hist.get('position') or '').lower()
         txn_type = _TXN_BUY if is_sell else _TXN_SELL
         product  = _get_leg_product(trade, leg_id)
@@ -1019,7 +1046,7 @@ def _margin_squareoff_trade(db, trade: dict, kite, _now_ts: str) -> None:
         try:
             order_id = kite.place_order(
                 tradingsymbol=symbol,
-                exchange=_NFO,
+                exchange=exchange,
                 transaction_type=txn_type,
                 quantity=qty,
                 order_type=_ORDER_TYPE_MARKET,
@@ -1028,7 +1055,7 @@ def _margin_squareoff_trade(db, trade: dict, kite, _now_ts: str) -> None:
             )
             print(
                 f'[MARGIN SQUAREOFF] trade={trade_id} leg={leg_id} '
-                f'symbol={symbol} txn={txn_type} qty={qty} '
+                f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
                 f'product={product} order_id={order_id}'
             )
         except Exception as exc:
@@ -1046,6 +1073,7 @@ def _convert_to_aggressive_limit(
     trade_id = str(trade.get('_id') or '')
     leg_id   = str(hist_doc.get('leg_id') or '')
     symbol   = str(kite_order.get('tradingsymbol') or '').strip()
+    exchange = str(kite_order.get('exchange') or '').strip().upper()
     txn_type = str(kite_order.get('transaction_type') or '').upper()
     product  = str(kite_order.get('product') or _NRML).upper()
     qty      = int(kite_order.get('quantity') or 0)
@@ -1053,6 +1081,8 @@ def _convert_to_aggressive_limit(
     if not symbol or qty <= 0 or txn_type not in (_TXN_BUY, _TXN_SELL):
         log.warning('[AGGRESSIVE LIMIT] missing order info trade=%s leg=%s', trade_id, leg_id)
         return
+    if not exchange:
+        exchange = _resolve_exchange(symbol, trade, {'id': leg_id})
 
     is_buy_order = txn_type == _TXN_BUY
 
@@ -1065,7 +1095,7 @@ def _convert_to_aggressive_limit(
 
     # Step 2 — Fresh bid/ask via kite.quote()
     ltp = _safe_float(kite_order.get('last_price') or kite_order.get('average_price'))
-    bid, ask = _get_bid_ask(kite, symbol, ltp)
+    bid, ask = _get_bid_ask(kite, symbol, ltp, exchange)
     base_price = ask if is_buy_order else bid
     if base_price <= 0:
         base_price = ltp
@@ -1078,7 +1108,7 @@ def _convert_to_aggressive_limit(
     try:
         new_order_id = str(kite.place_order(
             tradingsymbol=symbol,
-            exchange=_NFO,
+            exchange=exchange,
             transaction_type=txn_type,
             quantity=qty,
             order_type=_ORDER_TYPE_LIMIT,
@@ -1100,7 +1130,7 @@ def _convert_to_aggressive_limit(
         )
         print(
             f'[AGGRESSIVE LIMIT PLACED] trade={trade_id} leg={leg_id} '
-            f'symbol={symbol} txn={txn_type} bid={bid} ask={ask} '
+            f'exchange={exchange} symbol={symbol} txn={txn_type} bid={bid} ask={ask} '
             f'limit_price={limit_price} new_order_id={new_order_id}'
         )
     except Exception as exc:

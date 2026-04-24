@@ -247,6 +247,34 @@ def _get_quote_spot_price(db: MongoData, trade_doc: dict, underlying: str) -> tu
     return 0.0, instrument
 
 
+def _resolve_entry_spot_price(
+    db: MongoData,
+    trade_doc: dict,
+    underlying: str,
+    activation_mode: str,
+    now_ts: str,
+) -> tuple[float, float, str, str]:
+    normalized_underlying = str(underlying or '').strip().upper()
+    use_quote = _should_use_quote(trade_doc, activation_mode)
+    quote_spot_price = 0.0
+    quote_instrument = ''
+
+    if use_quote:
+        quote_spot_price, quote_instrument = _get_quote_spot_price(
+            db,
+            trade_doc,
+            normalized_underlying,
+        )
+        if quote_spot_price > 0:
+            return quote_spot_price, quote_spot_price, quote_instrument, 'kite_quote'
+
+    live_spot_price, spot_token = _get_live_spot_price(normalized_underlying)
+    if live_spot_price > 0:
+        return live_spot_price, quote_spot_price, spot_token, 'ticker_spot'
+
+    return 0.0, quote_spot_price, spot_token if 'spot_token' in locals() else '', 'unavailable'
+
+
 def _execute_live_entry(
     db: MongoData,
     trade_doc: dict,
@@ -433,8 +461,6 @@ class _LiveMonitorLoop:
                         ticker_name = rec.get('ticker') or ''
                         has_pending = rec.get('open_legs', 0) == 0
                         trade_doc = db._db['algo_trades'].find_one({'_id': rec['_id']}) or {}
-                        quote_spot_price = 0.0
-                        quote_instrument = ''
                         use_quote = _should_use_quote(trade_doc, self.activation_mode)
                         if use_quote:
                             from features.spot_atm_utils import resolve_atm_price
@@ -465,16 +491,22 @@ class _LiveMonitorLoop:
 
                         # Entry condition: current_time >= entry_time and legs not yet entered
                         if listen_hhmm and entry_hhmm and listen_hhmm >= entry_hhmm and has_pending:
-                            _tm = _get_active_ticker_manager()
                             from features.spot_atm_utils import resolve_atm_price
                             from features.backtest_engine import _resolve_expiry, _resolve_strike, STRIKE_STEPS
 
-                            spot_price, spot_token = _get_live_spot_price(ticker_name)
+                            spot_price, quote_spot_price, spot_token, spot_source = _resolve_entry_spot_price(
+                                db,
+                                trade_doc,
+                                ticker_name,
+                                self.activation_mode,
+                                now_ts,
+                            )
                             atm_price  = resolve_atm_price(ticker_name, spot_price) if spot_price > 0 else 0
                             print(
                                 f'  [ENTRY MARKET SNAPSHOT] '
                                 f'mode={self.activation_mode} | '
                                 f'ticker={ticker_name} | '
+                                f'spot_source={spot_source} | '
                                 f'spot_token={spot_token or "NOT_FOUND"} | '
                                 f'spot_price={spot_price} | '
                                 f'atm_price={atm_price}'

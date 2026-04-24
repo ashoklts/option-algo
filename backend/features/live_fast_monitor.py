@@ -197,7 +197,8 @@ class _LiveFastMonitorSupervisor:
                     '[LIVE+FF MONITOR] '
                     f'trade_date={self.trade_date} '
                     f'live={len(records_by_mode.get("live") or [])} '
-                    f'fast_forward={len(records_by_mode.get("fast-forward") or [])}'
+                    f'fast_forward={len(records_by_mode.get("fast-forward") or [])} '
+                    f'ticker_tick_count={ticker_tick_count}'
                 )
                 for activation_mode in SUPPORTED_MODES:
                     for record in (records_by_mode.get(activation_mode) or []):
@@ -254,6 +255,7 @@ class _LiveFastMonitorSupervisor:
                         or _should_run_fast_forward_quote_cycle(now_ts, ticker_tick_count)
                     ):
                         from features.live_tick_dispatcher import _run_entries_for_mode
+                        from features.kite_ticker import ticker_manager
 
                         print(
                             '[FAST-FORWARD QUOTE CYCLE] '
@@ -261,7 +263,10 @@ class _LiveFastMonitorSupervisor:
                             f'timestamp={now_ts} '
                             f'ticker_tick_count={ticker_tick_count} '
                             f'quote_trades={has_quote_trades} '
-                            f'records={len(fast_forward_records)}'
+                            f'records={len(fast_forward_records)} '
+                            f'ticker_status={ticker_manager.status} '
+                            f'spot_keys={list((ticker_manager.spot_map or {}).keys())[:10]} '
+                            f'ltp_count={len(ticker_manager.ltp_map or {})}'
                         )
                         _run_entries_for_mode(
                             db,
