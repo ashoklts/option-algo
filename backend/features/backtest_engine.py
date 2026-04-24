@@ -5,6 +5,8 @@ Bulk-load all data once → process fully in-memory.
 No per-candle DB queries → fast execution.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from collections import defaultdict

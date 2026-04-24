@@ -4,6 +4,8 @@ mongo_data.py
 Single bulk-load from MongoDB — no per-candle queries during backtest.
 """
 
+from __future__ import annotations
+
 import logging
 import threading
 import time

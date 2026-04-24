@@ -50,6 +50,8 @@ JSON config (strategy-level)
     }
 """
 
+from __future__ import annotations
+
 from typing import Optional, Tuple, List
 
 
