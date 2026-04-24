@@ -14,7 +14,7 @@ from pymongo import MongoClient
 from pymongo import monitoring
 from pymongo import ASCENDING, DESCENDING
 
-MONGO_LIVE_DB_CONNECT = False  # True = Atlas cloud DB | False = Local MongoDB
+MONGO_LIVE_DB_CONNECT = True  # True = Atlas cloud DB | False = Local MongoDB
 
 _LIVE_MONGO_URI  = "mongodb://finedgealgo:finedgealgo@13.202.184.58:27017/?authSource=admin" #"mongodb+srv://finedgealgo:finedgealgo@cluster0.e66us4f.mongodb.net/"
 _LOCAL_MONGO_URI = "mongodb://localhost:27017"
