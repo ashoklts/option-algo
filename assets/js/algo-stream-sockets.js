@@ -55,10 +55,16 @@
         var isLive = resolveLiveFlag();
         var socketProtocol = isLive ? 'wss://' : 'ws://';
         var configuredApiBase = '';
-        if (window.APP_CONFIG && typeof window.APP_CONFIG.algoApiBaseUrl === 'string') {
-            configuredApiBase = window.APP_CONFIG.algoApiBaseUrl;
-        } else if (typeof window.APP_ALGO_API_BASE_URL === 'string') {
-            configuredApiBase = window.APP_ALGO_API_BASE_URL;
+        if (isLive) {
+            configuredApiBase = (window.APP_LIVE_ALGO_API_BASE_URL
+                || (window.APP_CONFIG && window.APP_CONFIG.liveAlgoApiBaseUrl)
+                || (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+                || window.APP_ALGO_API_BASE_URL
+                || 'https://finedgealgo.com/algo');
+        } else {
+            configuredApiBase = (window.APP_LOCAL_ALGO_API_BASE_URL
+                || (window.APP_CONFIG && window.APP_CONFIG.localAlgoApiBaseUrl)
+                || 'http://localhost:8000/algo');
         }
 
         if (configuredApiBase) {
@@ -171,8 +177,18 @@
                 emitStatus('error', { url: socketUrl, channel: channel });
             };
 
-            socket.onclose = function () {
-                emitStatus('disconnected', { url: socketUrl, channel: channel });
+            socket.onclose = function (event) {
+                var closeMeta = {
+                    url: socketUrl,
+                    channel: channel,
+                    code: event && typeof event.code === 'number' ? event.code : 0,
+                    reason: event && event.reason ? event.reason : '',
+                    wasClean: !!(event && event.wasClean)
+                };
+                emitStatus('disconnected', closeMeta);
+                try {
+                    console.warn('[AlgoStreamSockets] socket closed', closeMeta);
+                } catch (e) { /* ignore */ }
                 socket = null;
                 if (!manuallyClosed) {
                     reconnectTimer = window.setTimeout(connect, reconnectDelayMs);

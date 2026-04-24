@@ -11,7 +11,15 @@
 
     function buildDefaultSocketUrl() {
         var isLive = resolveLiveFlag();
-        var configuredApiBase = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || '';
+        var configuredApiBase = isLive
+            ? (window.APP_LIVE_ALGO_API_BASE_URL
+                || (window.APP_CONFIG && window.APP_CONFIG.liveAlgoApiBaseUrl)
+                || (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+                || window.APP_ALGO_API_BASE_URL
+                || 'https://finedgealgo.com/algo')
+            : (window.APP_LOCAL_ALGO_API_BASE_URL
+                || (window.APP_CONFIG && window.APP_CONFIG.localAlgoApiBaseUrl)
+                || 'http://localhost:8000/algo');
         if (configuredApiBase) {
             var normalizedApiBase = String(configuredApiBase).replace(/\/+$/, '');
             if (/^https?:\/\//i.test(normalizedApiBase)) {
