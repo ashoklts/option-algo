@@ -211,6 +211,10 @@
             activation_mode: listeningModeKey,
             status: listeningModeKey
         };
+        var currentUserId = resolveCurrentUserId();
+        if (currentUserId) {
+            payload.user_id = currentUserId;
+        }
         if (executeOrdersGroupId) {
             payload.group_id = executeOrdersGroupId;
         }
@@ -3901,6 +3905,10 @@
             strategy_id: pendingCancelDeployment.strategy_id,
             group_id: pendingCancelDeployment.group_id
         };
+        var currentUserId = resolveCurrentUserId();
+        if (currentUserId) {
+            payload.user_id = currentUserId;
+        }
         if (executeOrdersSocketClient) {
             executeOrdersSocketClient.send(payload);
         }
@@ -3920,6 +3928,10 @@
             group_id: pendingSquareOff.group_id,
             listen_timestamp: latestListenTimestamp || ''
         };
+        var currentUserId = resolveCurrentUserId();
+        if (currentUserId) {
+            payload.user_id = currentUserId;
+        }
         if (executeOrdersSocketClient) {
             executeOrdersSocketClient.send(payload);
         }
