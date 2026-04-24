@@ -2,12 +2,9 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
     if (typeof window.buildNamedApiUrl === 'function') {
         return window.buildNamedApiUrl(routeName, suffix);
     }
-    var hostname = String((window.location && window.location.hostname) || '').toLowerCase();
     var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
         || window.APP_ALGO_API_BASE_URL
-        || ((hostname === 'finedgealgo.com' || hostname === 'www.finedgealgo.com')
-            ? 'https://finedgealgo.com/algo'
-            : 'http://localhost:8000/algo');
+        || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '');
     var routeMap = window.APP_API_ROUTES || {};
     var routePath = routeMap[routeName] || routeName || '';
     var normalizedRoute = String(routePath).replace(/\/+$/, '');

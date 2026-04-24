@@ -61,6 +61,7 @@ from features.execution_socket import (
 )
 from features.live_fast_monitor import live_fast_monitor_supervisor
 from features.live_monitor_socket import live_monitor_loop
+from features import live_entry_monitor
 from features.mock_kite_socket import mock_kite_socket_router
 from features.kite_broker_ws import load_credentials_from_db
 
@@ -4163,6 +4164,7 @@ def _build_monitor_control_html() -> str:
 
 def _start_monitor_services(trade_date: str = '') -> dict:
     import threading
+    import asyncio
 
     normalized_trade_date = str(trade_date or '').strip() or datetime.now().strftime('%Y-%m-%d')
     print(
@@ -4174,6 +4176,10 @@ def _start_monitor_services(trade_date: str = '') -> dict:
     if ticker_manager.status not in ('running', 'connecting'):
         threading.Thread(target=_start_ticker_bg, daemon=True).start()
     live_fast_monitor_supervisor.start(trade_date=normalized_trade_date)
+    try:
+        live_entry_monitor.start(asyncio.get_running_loop())
+    except RuntimeError:
+        pass
     return {
         'ok': True,
         'message': 'Global monitor started',
@@ -4644,6 +4650,7 @@ async def monitor_stop():
     ticker_manager.stop()
     live_fast_monitor_supervisor.stop()
     live_monitor_loop.stop()
+    live_entry_monitor.stop()
     return HTMLResponse(
         content=_build_monitor_action_page(
             running=False,
