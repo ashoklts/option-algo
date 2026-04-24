@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from features.mongo_data import MongoData
@@ -25,10 +25,11 @@ from features.runtime_mode_registry import runtime_mode_registry
 log = logging.getLogger(__name__)
 
 SUPPORTED_MODES = ('live', 'fast-forward')
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _now_iso() -> str:
-    return datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    return datetime.now(IST).strftime('%Y-%m-%dT%H:%M:%S')
 
 
 def _normalize_trade_date(value: str | None = None) -> str:

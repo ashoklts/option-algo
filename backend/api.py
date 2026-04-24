@@ -3008,7 +3008,7 @@ async def algo_backtest_simulator(
             from features.kite_event import broker_live_tick
             from features.live_tick_dispatcher import _run_entries_for_mode
 
-            live_now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            live_now = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%dT%H:%M:%S")
             trade_date = live_now[:10]
             listen_hhmm = live_now[11:16]
             _start_monitor_services(trade_date=trade_date)

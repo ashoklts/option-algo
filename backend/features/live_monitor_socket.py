@@ -21,12 +21,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from bson import ObjectId
 
 from features.mongo_data import MongoData
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ _QUOTE_INSTRUMENT_BY_UNDERLYING = {
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _now_iso() -> str:
-    return datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    return datetime.now(IST).strftime('%Y-%m-%dT%H:%M:%S')
 
 
 def _build_message(message_type: str, message: str, data: Any = None) -> str:

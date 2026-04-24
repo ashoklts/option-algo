@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -14,6 +14,7 @@ from features.mock_ticker import mock_ticker_manager
 from features.mongo_data import MongoData
 
 log = logging.getLogger(__name__)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 mock_kite_socket_router = APIRouter()
 
@@ -24,7 +25,7 @@ VALID_MODES = {MODE_LTP, MODE_QUOTE, MODE_FULL}
 
 
 def _now_iso() -> str:
-    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _json_default(value: Any) -> str:
