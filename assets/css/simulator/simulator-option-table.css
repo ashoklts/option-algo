@@ -1,0 +1,782 @@
+/* ── Option Chain Table Styles ──────────────────────────────── */
+
+/* ── layout ── */
+/* position_table sticky header fix — <tr> can't reliably sticky; use relative */
+.position_table .sticky-top {
+    position: relative !important;
+    top: auto !important;
+    z-index: auto !important;
+    background: #fff;
+}
+
+/* make individual <th> cells sticky so header stays visible on scroll */
+.position_table .sticky-top th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: #fff;
+}
+
+.oc-custom-table {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 480px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+}
+
+.oc-custom-table table {
+    min-width: 560px;
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.oc-custom-table thead tr {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f1f5f9;
+}
+
+.oc-custom-table th {
+    padding: 8px 10px;
+    font-weight: 600;
+    font-size: 12px;
+    color: #475569;
+    border-bottom: 2px solid #e2e8f0;
+    letter-spacing: 0.03em;
+}
+
+.oc-call-head {
+    text-align: right;
+    color: #16a34a !important;
+    width: 25%;
+}
+
+.oc-call-oi-head {
+    text-align: right;
+    color: #ef4444 !important;
+    width: 12%;
+    font-size: 11px;
+}
+
+.oc-iv-head {
+    text-align: center;
+    color: #7c3aed !important;
+    width: 10%;
+    font-size: 11px;
+}
+
+.oc-strike-head {
+    text-align: center;
+    width: 16%;
+    color: #1e293b !important;
+}
+
+.oc-put-oi-head {
+    text-align: left;
+    color: #22c55e !important;
+    width: 12%;
+    font-size: 11px;
+}
+
+.oc-put-head {
+    text-align: left;
+    color: #dc2626 !important;
+    width: 25%;
+}
+
+/* ── IV cell ── */
+.oc-iv {
+    text-align: center;
+    padding: 4px 4px !important;
+}
+
+.oc-iv-value {
+    font-size: 11px;
+    font-weight: 200;
+    color: #1e293b;
+    white-space: nowrap;
+}
+
+.oc-row.oc-atm .oc-iv {
+    background: #EBFBFF !important;
+}
+
+.oc-head-delta {
+    font-weight: 400;
+    opacity: 0.7;
+    font-size: 11px;
+}
+
+/* ── rows ── */
+.oc-row td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+
+.oc-call {
+    text-align: right;
+}
+
+.oc-put {
+    text-align: left;
+}
+
+.oc-strike {
+    text-align: center;
+    font-weight: 300;
+    font-size: 13px;
+    color: #334155;
+    background: #f8fafc;
+}
+
+/* ── text ── */
+.oc-ltp {
+    font-weight: 300;
+    color: #1e293b;
+    margin-right: 3px;
+}
+
+.oc-delta {
+    font-size: 11px;
+    color: #64748b;
+}
+
+/* ── row hover → bold strike + ltp only ── */
+.oc-row:hover .oc-strike,
+.oc-row:hover .oc-ltp {
+    font-weight: 600;
+}
+
+.oc-empty {
+    color: #94a3b8;
+}
+
+/* ── ATM row ── */
+.oc-row.oc-atm td {
+    background: #EBFBFF !important;
+}
+
+.oc-row.oc-atm .oc-strike {
+    background: #c7f2ff !important;
+    font-weight: 300;
+}
+
+/* ── ITM highlights — LTP cells only ── */
+.oc-row.oc-call-itm .oc-call {
+    background: #fefce8 !important;
+}
+
+/* yellow – call ITM */
+.oc-row.oc-put-itm .oc-put {
+    background: #fefce8 !important;
+}
+
+/* yellow – put  ITM */
+
+/* ── OI cells ── */
+.oc-call-oi {
+    text-align: right;
+    padding: 4px 6px !important;
+}
+
+.oc-put-oi {
+    text-align: left;
+    padding: 4px 6px !important;
+}
+
+.oc-oi-value {
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+    opacity: 0.6;
+}
+
+.oc-oi-call {
+    color: #ef4444;
+}
+
+.oc-oi-put {
+    color: #22c55e;
+}
+
+/* progress bar wrapper */
+.oc-oi-bar-wrap {
+    height: 3px;
+    background: #e2e8f0;
+    border-radius: 2px;
+    margin-top: 3px;
+    overflow: hidden;
+    opacity: 0.4;
+}
+
+/* call OI bar fills from the right */
+.oc-call-oi .oc-oi-bar-wrap {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.oc-oi-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+}
+
+.oc-oi-bar-call {
+    background: #ef4444;
+}
+
+.oc-oi-bar-put {
+    background: #22c55e;
+}
+
+/* ── Buy / Sell hover buttons ── */
+/* hidden by default — JS mouseenter/mouseleave controls visibility */
+.oc-actions {
+    display: none;
+    /* fully removed from layout until hover  */
+    align-items: center;
+    gap: 3px;
+}
+
+/* default button style */
+.oc-custom-table .action_button button {
+    background: #fff;
+    color: #999;
+    border: 1px solid;
+    opacity: 1;
+}
+
+/* B button hover — green text */
+.oc-custom-table .buy_button:hover {
+    color: #03B760 !important;
+    transition: 0.3s;
+    opacity: 1 !important;
+}
+
+/* S button hover — red text */
+.oc-custom-table .sell_button:hover {
+    color: #EF6161 !important;
+    transition: 0.3s;
+    opacity: 1 !important;
+}
+
+/* call cell: full width flex row — buttons pinned to LEFT corner, text to right */
+.oc-call .oc-cell-inner {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.oc-call .oc-actions {
+    margin-right: auto;
+    /* push B/S to the far left */
+}
+
+/* put cell: full width flex row — text to left, buttons pinned to RIGHT corner */
+.oc-put .oc-cell-inner {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.oc-put .oc-actions {
+    margin-left: auto;
+    /* push B/S to the far right */
+}
+
+/* Active button states — filled when a position is open */
+.oc-custom-table .buy_button.oc-btn-active {
+    background: #03B760 !important;
+    color: #fff !important;
+    border-color: #03B760 !important;
+}
+
+.oc-custom-table .sell_button.oc-btn-active {
+    background: #EF6161 !important;
+    color: #fff !important;
+    border-color: #EF6161 !important;
+}
+
+/* Keep the whole action wrapper visible when any button is active */
+.oc-actions.has-active {
+    display: inline-flex !important;
+}
+
+/* ── Option Chain Calendar Picker ──────────────────────────────── */
+
+
+.oc-cal-popup {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 272px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .2);
+    z-index: 9999;
+    overflow: hidden;
+    user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.oc-cal-hdr {
+    background: #2c3e50;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    gap: 6px;
+}
+
+.oc-cal-nav-btn {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    opacity: .8;
+}
+
+.oc-cal-nav-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, .15);
+}
+
+.oc-cal-title {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 600;
+    font-size: 14px;
+    flex: 1;
+    justify-content: center;
+}
+
+.oc-cal-yr-wrap {
+    display: flex;
+    flex-direction: column;
+    margin-left: 2px;
+}
+
+.oc-cal-yr-btn {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 9px;
+    line-height: 1.2;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: .7;
+}
+
+.oc-cal-yr-btn:hover {
+    opacity: 1;
+}
+
+.oc-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    padding: 8px 6px 10px;
+    gap: 1px;
+}
+
+.oc-cal-dow {
+    text-align: center;
+    color: #bbb;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 0 4px;
+}
+
+.oc-cal-day {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    color: #333;
+    transition: background .1s;
+}
+
+.oc-cal-day:hover:not(.oc-cal-other) {
+    background: #eef6fb;
+}
+
+.oc-cal-other {
+    color: #ddd;
+    cursor: default;
+    pointer-events: none;
+}
+
+.oc-cal-sel {
+    background: #2c3e50 !important;
+    color: #fff !important;
+    font-weight: 600;
+}
+
+.oc-cal-sun,
+.oc-cal-sat {
+    color: #4da1c7;
+}
+
+.oc-cal-sel.oc-cal-sun,
+.oc-cal-sel.oc-cal-sat {
+    color: #fff;
+}
+
+
+.sl-remove-link {
+    font-size: 10px;
+    font-weight: 700;
+    color: #dc2626;
+    text-decoration: none;
+    border: 1px solid #dc2626;
+    border-radius: 3px;
+    padding: 1px 5px;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.sl-remove-link:hover {
+    background: #dc2626;
+    color: #fff;
+}
+
+/* ══════════════════════════════════════════════════════════
+Trading Control Bar  (single horizontal row of cards)
+Lives immediately below .builder_actions_box.__no__print
+══════════════════════════════════════════════════════════ */
+
+/* ── bar wrapper ── */
+.tcp-bar {
+    display: flex;
+    flex-direction: column;
+    background: #f8fafc;
+    border-top: 1px solid #dde3ed;
+    border-bottom: 2px solid #dde3ed;
+    padding: 0;
+    gap: 0;
+    font-family: inherit;
+}
+
+/* ── row inside bar ── */
+.tcp-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    min-height: 58px;
+    overflow-x: auto;
+}
+
+.tcp-row+.tcp-row {
+    border-top: 1px solid #dde3ed;
+}
+
+/* ── card ── */
+.tcp-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 6px 12px;
+    border-right: 1px solid #dde3ed;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.tcp-card:last-child {
+    border-right: none;
+}
+
+/* header: toggle + title */
+.tcp-card-hdr {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tcp-card-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    white-space: nowrap;
+    line-height: 1;
+}
+
+/* body: controls in a row */
+.tcp-card-body {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
+}
+
+/* ── shared atoms ── */
+.tcp-sel {
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 12px;
+    color: #1e293b;
+    background: #fff;
+    cursor: pointer;
+    outline: none;
+    height: 26px;
+    -webkit-appearance: auto;
+}
+
+.tcp-sel:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+}
+
+.tcp-sel:disabled,
+.tcp-num:disabled {
+    background: #f1f5f9;
+    color: #94a3b8;
+    cursor: not-allowed;
+    border-color: #e2e8f0;
+}
+
+.tcp-num {
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 3px 4px;
+    font-size: 12px;
+    color: #1e293b;
+    background: #fff;
+    height: 26px;
+    width: 55px;
+    outline: none;
+    text-align: center;
+}
+
+.tcp-num:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+}
+
+.tcp-num.tcp-err {
+    border-color: #ef4444;
+    background: #fef2f2;
+}
+
+.tcp-xy-lbl {
+    font-size: 10px;
+    font-weight: 800;
+    color: #94a3b8;
+    margin: 0 1px;
+}
+
+/* specific widths */
+.tcp-lot-sel {
+    width: 78px;
+}
+
+.tcp-tf-sel {
+    width: 70px;
+}
+
+.tcp-strat-sel {
+    min-width: 120px;
+}
+
+.tcp-expiry-sel {
+    min-width: 122px;
+}
+
+.tcp-unit-sel {
+    min-width: 102px;
+}
+
+.tcp-mode-sel {
+    min-width: 158px;
+}
+
+/* pause button */
+.tcp-pause-btn {
+    height: 26px;
+    padding: 0 11px;
+    border-radius: 4px;
+    border: none;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    background: #3b82f6;
+    color: #fff;
+    letter-spacing: 0.3px;
+    transition: background .15s;
+}
+
+.tcp-pause-btn.is-paused {
+    background: #22c55e;
+}
+
+/* validation error tooltip */
+.tcp-val-tip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 5px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #ef4444;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    z-index: 200;
+    pointer-events: none;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .15);
+}
+
+.tcp-val-tip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: #ef4444;
+}
+
+.tcp-val-tip.show {
+    display: block;
+}
+
+/* iOS-style toggle */
+.tcp-tog {
+    position: relative;
+    display: inline-block;
+    width: 32px;
+    height: 17px;
+    margin: 0;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.tcp-tog input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+
+.tcp-tog-track {
+    position: absolute;
+    inset: 0;
+    background: #cbd5e1;
+    border-radius: 17px;
+    transition: background .2s;
+}
+
+.tcp-tog-track::before {
+    content: '';
+    position: absolute;
+    width: 11px;
+    height: 11px;
+    left: 3px;
+    top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform .2s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+}
+
+.tcp-tog input:checked+.tcp-tog-track {
+    background: #3b82f6;
+}
+
+.tcp-tog input:checked+.tcp-tog-track::before {
+    transform: translateX(15px);
+}
+
+/* ── time pickers ── */
+.tcp-time {
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 3px 5px;
+    font-size: 12px;
+    color: #1e293b;
+    background: #fff;
+    height: 26px;
+    outline: none;
+    cursor: pointer;
+}
+
+.tcp-time:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, .12);
+}
+
+.tcp-time:disabled {
+    background: #f1f5f9;
+    color: #94a3b8;
+    cursor: not-allowed;
+    border-color: #e2e8f0;
+}
+
+.tcp-time-lbl {
+    font-size: 10px;
+    font-weight: 700;
+    color: #64748b;
+    white-space: nowrap;
+    margin-right: 2px;
+}
+
+/* ── strike-type selector ── */
+.tcp-strike-mode-sel {
+    min-width: 140px;
+}
+
+.tcp-strike-val {
+    width: 72px;
+}
+
+.tcp-strike-drop {
+    min-width: 110px;
+}
+
+/* styled strike dropdown — trading platform strike picker */
+.tcp-strike-drop {
+    font-size: 12px;
+}
+
+.tcp-strike-drop option[value="ATM"] {
+    font-weight: 800;
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.tcp-strike-drop option[data-dir="otm"] {
+    color: #16a34a;
+}
+
+.tcp-strike-drop option[data-dir="itm"] {
+    color: #dc2626;
+}

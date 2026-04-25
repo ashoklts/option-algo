@@ -43,6 +43,9 @@
     }
 
     function resolveLiveFlag() {
+        if (typeof window.resolveAppEnvLive === 'function') {
+            return window.resolveAppEnvLive();
+        }
         if (typeof window.APP_ENV_LIVE === 'boolean') {
             return window.APP_ENV_LIVE;
         }
@@ -54,17 +57,21 @@
         var pageProtocol = (window.location && window.location.protocol) || '';
         var isLive = resolveLiveFlag();
         var socketProtocol = isLive ? 'wss://' : 'ws://';
-        var configuredApiBase = '';
-        if (isLive) {
-            configuredApiBase = (window.APP_LIVE_ALGO_API_BASE_URL
-                || (window.APP_CONFIG && window.APP_CONFIG.liveAlgoApiBaseUrl)
-                || (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
-                || window.APP_ALGO_API_BASE_URL
-                || '');
-        } else {
-            configuredApiBase = (window.APP_LOCAL_ALGO_API_BASE_URL
-                || (window.APP_CONFIG && window.APP_CONFIG.localAlgoApiBaseUrl)
-                || '');
+        var configuredApiBase = (typeof window.getBackendUrl === 'function'
+            ? window.getBackendUrl()
+            : '');
+        if (!configuredApiBase) {
+            if (isLive) {
+                configuredApiBase = (window.APP_LIVE_ALGO_API_BASE_URL
+                    || (window.APP_CONFIG && window.APP_CONFIG.liveAlgoApiBaseUrl)
+                    || (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+                    || window.APP_ALGO_API_BASE_URL
+                    || '');
+            } else {
+                configuredApiBase = (window.APP_LOCAL_ALGO_API_BASE_URL
+                    || (window.APP_CONFIG && window.APP_CONFIG.localAlgoApiBaseUrl)
+                    || '');
+            }
         }
 
         if (configuredApiBase) {
@@ -76,7 +83,7 @@
         }
 
         if (!isLive || pageProtocol === 'file:') {
-            return 'ws://' + (((window.APP_LOCAL_ALGO_API_BASE_URL || '').replace(/^https?:\/\//i, '') || 'localhost:8000/algo').replace(/\/+$/, '')) + '/ws';
+            return 'ws://' + (((configuredApiBase || window.APP_LOCAL_ALGO_API_BASE_URL || '').replace(/^https?:\/\//i, '') || 'localhost:8000/algo').replace(/\/+$/, '')) + '/ws';
         }
 
         var origin = window.location.origin || '';

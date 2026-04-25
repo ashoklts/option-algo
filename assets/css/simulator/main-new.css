@@ -1,0 +1,132 @@
+img {
+    width: 100%;
+}
+
+.navbar-brand {
+    padding: 0!important;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+}
+
+.navbar-brand img {
+    width: 120px;
+    /* height: 38px; */
+    object-fit: contain;
+    pointer-events: none;
+}
+
+.__buy__alerts th {
+    min-width: unset;
+}
+
+.__buy__alerts table.__source__open {
+    margin: 0;
+}
+
+.__open__source {
+    color: #333!important;
+    transition: 0.3s;
+    cursor: pointer;
+}
+
+.__open__oc {
+    transform: rotate(-180deg);
+}
+
+.__buy__alert__datepicker {
+    width: 200px;
+    /* margin: 20px 0 -30px 40px; */
+}
+
+.__no__data {
+    text-align: center;
+}
+
+.__range__input {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.__decrement__sign {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 20%;
+    height: 100%;
+    color: #fff;
+    background: #65c2db;
+    font-size: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.__increment__sign {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 20%;
+    height: 100%;
+    color: #fff;
+    background: #65c2db;
+    font-size: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+.__last__updated {
+    height: 20px;
+    color: gray;
+    font-size: 13px;
+    text-align: right;
+}
+
+@media (max-width: 767px) {
+    .row .__container {
+        padding: 0;
+    }
+    .__buy__alert__datepicker .mithril-date-picker .editor.active {
+        left: -100px!important;
+    }
+}
+
+@media (min-width: 768px) {
+    .__famous__strategies ul {
+        height: calc(100vh - 180px);
+        margin: 0!important;
+    }
+    /* width */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 6px;
+    }
+    /* Track */
+    ::-webkit-scrollbar-track {
+        background: transparent;
+        border-radius: 3px;
+    }
+    ::-webkit-scrollbar-track:hover {
+        /* background: #33333347; */
+        background: #33333347;
+    }
+    /* Handle */
+    ::-webkit-scrollbar-thumb {
+        background: #c3c3c3c3;
+        /* background: #828282; */
+        border-radius: 3px;
+    }
+    /* Handle on hover */
+    ::-webkit-scrollbar-thumb:hover {
+        background: #000;
+    }
+}
+
+.container {
+    min-width: 100%!important;
+    padding: 0;
+}

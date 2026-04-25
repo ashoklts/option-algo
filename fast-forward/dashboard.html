@@ -4,6 +4,7 @@
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+    <script src="../assets/js/app-env.js"></script>
     <link rel="preload" as="font" type="font/woff2"
         href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&amp;display=swap"
         crossorigin="">
@@ -16,7 +17,11 @@
                 return;
             }
 
-            var forcedBaseUrl = 'http://localhost:8000/algo';
+            var forcedBaseUrl = (typeof window.getBackendUrl === 'function'
+                ? window.getBackendUrl()
+                : (typeof window.getLocalAlgoApiBaseUrl === 'function'
+                    ? window.getLocalAlgoApiBaseUrl()
+                    : (window.APP_LOCAL_ALGO_API_BASE_URL || '')));
             window.APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || forcedBaseUrl;
             window.APP_ALGO_API_BASE_URL = window.APP_ALGO_API_BASE_URL || forcedBaseUrl;
 
@@ -4828,9 +4833,10 @@
                 return window.buildAlgoApiUrl(path);
             }
             var baseUrl = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+                || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
                 || window.APP_ALGO_API_BASE_URL
                 || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')
-                || (window.location && window.location.protocol === 'file:' ? 'http://localhost:8000/algo' : ''));
+                || '');
             return String(baseUrl || '').replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
         }
 
@@ -5369,7 +5375,6 @@
         });
     }());
 </script>
-<script src="../assets/js/app-env.js"></script>
 <script src="../assets/js/app-header.js"></script>
 <script src="../assets/js/script.js"></script>
 

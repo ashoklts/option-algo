@@ -3,6 +3,7 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
         return window.buildNamedApiUrl(routeName, suffix);
     }
     var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+        || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
         || window.APP_ALGO_API_BASE_URL
         || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '');
     var routeMap = window.APP_API_ROUTES || {};

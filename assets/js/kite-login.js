@@ -12,6 +12,7 @@
  */
 
 function resolveKiteAlgoApiBaseUrl() {
+  if (typeof window.getBackendUrl === "function") return window.getBackendUrl();
   if (window.APP_ALGO_API_BASE_URL) return window.APP_ALGO_API_BASE_URL;
   if (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) return window.APP_CONFIG.algoApiBaseUrl;
   var liveFlag = window.APP_ENV_LIVE;
@@ -24,7 +25,9 @@ function resolveKiteAlgoApiBaseUrl() {
     : (window.APP_LOCAL_ALGO_API_BASE_URL || "");
 }
 
-const KITE_BACKEND = resolveKiteAlgoApiBaseUrl().replace(/\/algo.*$/, "");
+const KITE_BACKEND = (typeof window.getBackendOriginUrl === "function"
+  ? window.getBackendOriginUrl()
+  : resolveKiteAlgoApiBaseUrl().replace(/\/algo.*$/, ""));
 
 function kiteLogin({ brokerDocId = "", onSuccess = null, onError = null } = {}) {
   return new Promise(async (resolve, reject) => {

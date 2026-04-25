@@ -3,7 +3,10 @@
         if (typeof window.buildNamedApiUrl === 'function') {
             return window.buildNamedApiUrl(routeName, suffix);
         }
-        var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || '';
+        var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+            || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
+            || window.APP_ALGO_API_BASE_URL
+            || '';
         var routeMap = window.APP_API_ROUTES || {};
         var routePath = routeMap[routeName] || routeName || '';
         var normalizedRoute = String(routePath).replace(/\/+$/, '');

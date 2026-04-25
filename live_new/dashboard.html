@@ -4,6 +4,7 @@
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+    <script src="../assets/js/app-env.js"></script>
     <link rel="preload" as="font" type="font/woff2"
         href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&amp;display=swap"
         crossorigin="">
@@ -4756,7 +4757,10 @@
             if (window.location && /^https?:/i.test(window.location.protocol || '')) {
                 return window.location.origin.replace(/\/+$/, '') + '/' + normalizedPath;
             }
-            var backendBase = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/algo\/?$/, '');
+            var backendBase = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+                || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
+                || window.APP_ALGO_API_BASE_URL
+                || '').replace(/\/algo\/?$/, '');
             return backendBase.replace(/\/+$/, '') + '/' + normalizedPath;
         }
 
@@ -5004,7 +5008,10 @@
             if (typeof window.buildAlgoApiUrl === 'function') {
                 return window.buildAlgoApiUrl(path);
             }
-            return ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || 'http://localhost:8000/algo').replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
+            return ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+                || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
+                || window.APP_ALGO_API_BASE_URL
+                || '').replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
         }
 
         function getNumericValue(id) {
@@ -5490,7 +5497,6 @@
     }());
 </script>
 <script src="../assets/js/script.js"></script>
-<script src="../assets/js/app-env.js"></script>
 <script src="../assets/js/app-header.js"></script>
 
 </html>

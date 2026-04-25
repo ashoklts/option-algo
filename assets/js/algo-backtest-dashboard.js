@@ -18,8 +18,11 @@
             return window.buildAlgoApiUrl(path);
         }
         var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+            || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
             || window.APP_ALGO_API_BASE_URL
-            || '';
+            || ((window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin)
+                ? window.location.origin.replace(/\/+$/, '') + '/algo'
+                : '');
         return baseUrl.replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
     }
 
@@ -77,6 +80,64 @@
             return window.buildAppUrl(routePath) + (suffix || '');
         }
         return './' + String(routePath || '').replace(/^\/+/, '') + (suffix || '');
+    }
+
+    function buildStrategyTradeHistoryUrl(strategyId) {
+        var query = '?strategy_id=' + encodeURIComponent(strategyId || '') + '&status=algo-backtest';
+        if (typeof window.buildAppUrl === 'function') {
+            return window.buildAppUrl('strategy-trade-history.html') + query;
+        }
+        return './strategy-trade-history.html' + query;
+    }
+
+    function buildStrategyHoverTools(itemId) {
+        var safeItemId = escapeHtml(itemId || '');
+        return '' +
+            '<div class="ff-strategy-hover-tools" aria-label="Strategy quick actions">' +
+            '    <span class="ff-strategy-hover-tool is-static" title="MTM line" aria-hidden="true">' +
+            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '            <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>' +
+            '            <path d="m19 9-5 5-4-4-3 3"></path>' +
+            '        </svg>' +
+            '    </span>' +
+            '    <button type="button" class="ff-strategy-hover-tool is-button" title="Strategy builder" data-open-strategy-builder="' + safeItemId + '">' +
+            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '            <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>' +
+            '            <path d="M7 11.207a.5.5 0 0 1 .146-.353l2-2a.5.5 0 0 1 .708 0l3.292 3.292a.5.5 0 0 0 .708 0l4.292-4.292a.5.5 0 0 1 .854.353V16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"></path>' +
+            '        </svg>' +
+            '    </button>' +
+            '    <span class="ff-strategy-hover-tool is-static" title="Replay trade" aria-hidden="true">' +
+            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>' +
+            '            <path d="M3 3v5h5"></path>' +
+            '        </svg>' +
+            '    </span>' +
+            '</div>';
+    }
+
+    function buildDeployedHoverTools(itemId) {
+        var safeItemId = escapeHtml(itemId || '');
+        return '' +
+            '<div class="ff-deployed-hover-tools" aria-label="Strategy quick actions">' +
+            '    <span class="ff-deployed-hover-tool is-static" title="MTM line" aria-hidden="true">' +
+            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '            <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>' +
+            '            <path d="m19 9-5 5-4-4-3 3"></path>' +
+            '        </svg>' +
+            '    </span>' +
+            '    <button type="button" class="ff-deployed-hover-tool is-button" title="Strategy builder" data-open-strategy-builder="' + safeItemId + '">' +
+            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '            <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>' +
+            '            <path d="M7 11.207a.5.5 0 0 1 .146-.353l2-2a.5.5 0 0 1 .708 0l3.292 3.292a.5.5 0 0 0 .708 0l4.292-4.292a.5.5 0 0 1 .854.353V16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"></path>' +
+            '        </svg>' +
+            '    </button>' +
+            '    <span class="ff-deployed-hover-tool is-static" title="Replay trade" aria-hidden="true">' +
+            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>' +
+            '            <path d="M3 3v5h5"></path>' +
+            '        </svg>' +
+            '    </span>' +
+            '</div>';
     }
 
     var table = document.querySelector('.ff-strategy-table');
@@ -322,7 +383,7 @@
         var existingPendingFeatureLegs = Array.isArray(existingRecord && existingRecord.pending_feature_legs)
             ? existingRecord.pending_feature_legs
             : [];
-        if ((!nextPendingFeatureLegs || !nextPendingFeatureLegs.length) && existingPendingFeatureLegs.length && !isClosedRecord) {
+        if (nextPendingFeatureLegs === null && existingPendingFeatureLegs.length && !isClosedRecord) {
             mergedRecord.pending_feature_legs = existingPendingFeatureLegs;
         }
 
@@ -1731,6 +1792,19 @@
             var metaSecondary = activeTab === 'portfolios'
                 ? ((item.strategy_ids && item.strategy_ids.length) ? item.strategy_ids.length + ' Strategies' : '0 Strategies')
                 : 'INTRADAY';
+            var mtmBlock = activeTab === 'portfolios'
+                ? ''
+                : '' +
+                '<div class="ff-strategy-mtm-row">' +
+                '    <div class="ff-strategy-mtm-value">' +
+                '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+                '            <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>' +
+                '            <path d="m19 9-5 5-4-4-3 3"></path>' +
+                '        </svg>' +
+                '        <span>MTM ₹ 0.00</span>' +
+                '    </div>' +
+                buildStrategyHoverTools(item._id || '') +
+                '</div>';
             return '' +
                 '<div class="ff-strategy-row">' +
                 '    <div class="ff-strategy-info">' +
@@ -1745,6 +1819,7 @@
                 '            <span>&bull;</span>' +
                 '            <span>' + escapeHtml(metaSecondary) + '</span>' +
                 '        </div>' +
+                mtmBlock +
                 '    </div>' +
                 '    <div><div class="ff-status-pill">Ready to deploy</div></div>' +
                 '    <div><div class="ff-instance-chip">0 Deployed</div></div>' +
@@ -2624,8 +2699,8 @@
                 var isDetailExpanded = !!deployedStrategyDetailExpandedState[recordId];
                 // Hide entry countdown for cancelled (active_on_server=false) strategies
                 var entryTarget = childIsActive ? escapeHtml(record.entry_time || '') : '';
-                var childOpenUrl = group.portfolio_id
-                    ? buildNamedPageUrl('portfolioActivation', '?strategy_id=' + encodeURIComponent(group.portfolio_id) + '&status=' + encodeURIComponent(listeningModeKey))
+                var childOpenUrl = recordId
+                    ? buildStrategyTradeHistoryUrl(recordId)
                     : '#';
                 return '' +
                     '<div class="ff-deployed-child-row" data-record-id="' + escapeHtml(recordId) + '" data-details-expanded="' + (isDetailExpanded ? 'true' : 'false') + '">' +
@@ -2643,11 +2718,14 @@
                     '    </div>' +
                     '    ' + buildBrokerDisplayHtml(record) +
                     '    <div><span class="ff-deployed-status ' + statusMeta.className + '">' + statusMeta.text + '</span></div>' +
-                    '    <div class="ff-deployed-mtm" data-record-id="' + escapeHtml(record._id || '') + '" data-entry-target="' + entryTarget + '" data-leg-count="' + legCount + '">₹ 0</div>' +
+                    '    <div class="ff-deployed-mtm-wrap">' +
+                    '        <div class="ff-deployed-mtm" data-record-id="' + escapeHtml(record._id || '') + '" data-entry-target="' + entryTarget + '" data-leg-count="' + legCount + '">₹ 0</div>' +
+                    buildDeployedHoverTools(record._id || '') +
+                    '    </div>' +
                     '    <div class="ff-deployed-actions">' +
                     '        <button type="button" class="ff-deployed-btn ff-deployed-btn-outline" data-strategy-details-toggle="' + escapeHtml(recordId) + '">' + (isDetailExpanded ? 'Hide Details' : 'Show Details') + '</button>' +
                     (childIsActive ? '        ' + buildDeploymentActionButton(legCount, record._id || '', group.group_id) : '') +
-                    '        <a class="ff-deployed-btn ff-deployed-btn-solid" href="' + childOpenUrl + '">View</a>' +
+                    '        <a class="ff-deployed-btn ff-deployed-btn-solid" href="' + childOpenUrl + '" target="_blank" rel="noopener noreferrer">View</a>' +
                     '    </div>' +
                     '    <div class="ff-deployed-strategy-details">' + buildStrategyDetailHtml(record) + '</div>' +
                     '</div>';
@@ -2670,7 +2748,10 @@
                 '        </div>' +
                 '        ' + buildBrokerDisplayHtml(primaryRecord) +
                 '        <div><span class="ff-deployed-status ' + primaryStatus.className + '">' + primaryStatus.text + ' ' + activeCount + '/' + items.length + '</span></div>' +
-                '        <div class="ff-deployed-mtm" data-group-mtm="' + escapeHtml(group.group_id) + '">₹ 0</div>' +
+                '        <div class="ff-deployed-mtm-wrap">' +
+                '            <div class="ff-deployed-mtm" data-group-mtm="' + escapeHtml(group.group_id) + '">₹ 0</div>' +
+                buildDeployedHoverTools(primaryRecord._id || '') +
+                '        </div>' +
                 '        <div class="ff-deployed-actions">' +
                 (activeCount > 0 ? '            ' + buildDeploymentActionButton(primaryOpenPositions, '', group.group_id) : '') +
                 '            <a class="ff-deployed-btn ff-deployed-btn-solid" href="' + openUrl + '">View</a>' +
@@ -3552,6 +3633,14 @@
     });
 
     rowsHost.addEventListener('click', function (event) {
+        var builderButton = event.target.closest('[data-open-strategy-builder]');
+        if (builderButton) {
+            var strategyId = builderButton.getAttribute('data-open-strategy-builder');
+            if (strategyId) {
+                window.open(buildNamedPageUrl('strategyBuilder', '?strategy_id=' + encodeURIComponent(strategyId)), '_blank');
+            }
+            return;
+        }
         var editIcon = event.target.closest('[data-edit-icon="portfolio"]');
         if (editIcon) {
             var portfolioId = editIcon.getAttribute('data-item-id');

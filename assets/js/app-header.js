@@ -17,13 +17,16 @@
     }
 
     function getDefaultLocalAlgoApiBaseUrl() {
-        if (window.location && window.location.protocol === 'file:') {
-            return 'http://localhost:8000/algo';
+        if (typeof window.getLocalAlgoApiBaseUrl === 'function') {
+            return window.getLocalAlgoApiBaseUrl();
+        }
+        if (window.APP_LOCAL_ALGO_API_BASE_URL) {
+            return String(window.APP_LOCAL_ALGO_API_BASE_URL).replace(/\/+$/, '');
         }
         if (window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin) {
             return window.location.origin.replace(/\/+$/, '') + '/algo';
         }
-        return 'http://localhost:8000/algo';
+        return '';
     }
 
     var APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || getDefaultLocalAlgoApiBaseUrl();
@@ -47,6 +50,9 @@
     }
 
     function detectLiveEnvironment() {
+        if (typeof window.resolveAppEnvLive === 'function') {
+            return window.resolveAppEnvLive();
+        }
         var configuredLiveFlag = parseBooleanFlag(window.APP_ENV_LIVE);
         if (configuredLiveFlag !== null) {
             return configuredLiveFlag;
@@ -73,7 +79,9 @@
     }
 
     var APP_ALGO_API_BASE_URL = normalizeAlgoApiBaseUrl(
-        APP_ENV_LIVE ? APP_LIVE_ALGO_API_BASE_URL : APP_LOCAL_ALGO_API_BASE_URL,
+        window.APP_ALGO_API_BASE_URL || (typeof window.getBackendUrl === 'function'
+            ? window.getBackendUrl()
+            : (APP_ENV_LIVE ? APP_LIVE_ALGO_API_BASE_URL : APP_LOCAL_ALGO_API_BASE_URL)),
         APP_ENV_LIVE
     );
     var APP_LISTENING_STORAGE_PREFIX = window.APP_LISTENING_STORAGE_PREFIX || 'option_algo_listening';

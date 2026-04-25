@@ -2,6 +2,7 @@
 (function () {
     function getAlgoBaseUrl() {
         const configuredBaseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+            || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
             || window.APP_ALGO_API_BASE_URL
             || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '');
         return configuredBaseUrl;

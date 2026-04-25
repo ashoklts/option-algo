@@ -12,6 +12,7 @@
  */
 
 function resolveFlatTradeAlgoApiBaseUrl() {
+  if (typeof window.getBackendUrl === "function") return window.getBackendUrl();
   if (window.APP_ALGO_API_BASE_URL) return window.APP_ALGO_API_BASE_URL;
   if (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) return window.APP_CONFIG.algoApiBaseUrl;
   var liveFlag = window.APP_ENV_LIVE;
@@ -24,7 +25,9 @@ function resolveFlatTradeAlgoApiBaseUrl() {
     : (window.APP_LOCAL_ALGO_API_BASE_URL || "");
 }
 
-const FLATTRADE_BACKEND = resolveFlatTradeAlgoApiBaseUrl().replace(/\/algo.*$/, "");
+const FLATTRADE_BACKEND = (typeof window.getBackendOriginUrl === "function"
+  ? window.getBackendOriginUrl()
+  : resolveFlatTradeAlgoApiBaseUrl().replace(/\/algo.*$/, ""));
 
 function flattradeLogin({ brokerDocId = "", onSuccess = null, onError = null } = {}) {
   return new Promise(function (resolve, reject) {
