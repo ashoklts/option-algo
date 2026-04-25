@@ -2426,6 +2426,136 @@ async def list_algo_executions(environment: str = "algo-backtest", is_signal: bo
     )
 
 
+@router.get("/strategy-trade-history/{strategy_id}")
+async def get_strategy_trade_history(strategy_id: str, status: str = "algo-backtest"):
+    db = MongoData()
+    try:
+        normalized_strategy_id = str(strategy_id or "").strip()
+        normalized_status = str(status or "").strip() or "algo-backtest"
+        if not normalized_strategy_id:
+            raise HTTPException(status_code=400, detail="strategy_id is required")
+
+        algo_trades_col = db._db["algo_trades"]
+        raw_trade = algo_trades_col.find_one({
+            "_id": normalized_strategy_id,
+            "activation_mode": normalized_status,
+        })
+        if not raw_trade:
+            raw_trade = algo_trades_col.find_one({"_id": normalized_strategy_id})
+        if not raw_trade:
+            raise HTTPException(status_code=404, detail="Strategy trade history not found")
+
+        trade_record = {
+            "_id": str(raw_trade.get("_id") or ""),
+            "strategy_id": str(raw_trade.get("strategy_id") or ""),
+            "source_strategy_id": str(raw_trade.get("source_strategy_id") or ""),
+            "name": raw_trade.get("name") or "",
+            "status": raw_trade.get("status") or "",
+            "trade_status": raw_trade.get("trade_status"),
+            "active_on_server": bool(raw_trade.get("active_on_server")),
+            "activation_mode": raw_trade.get("activation_mode") or normalized_status,
+            "broker": raw_trade.get("broker") or "",
+            "user_id": raw_trade.get("user_id") or "",
+            "ticker": raw_trade.get("ticker") or "",
+            "creation_ts": raw_trade.get("creation_ts") or "",
+            "last_activation_ts": raw_trade.get("last_activation_ts") or "",
+            "entry_time": raw_trade.get("entry_time") or "",
+            "exit_time": raw_trade.get("exit_time") or "",
+            "portfolio": raw_trade.get("portfolio") if isinstance(raw_trade.get("portfolio"), dict) else {},
+            "strategy": raw_trade.get("strategy") if isinstance(raw_trade.get("strategy"), dict) else {},
+        }
+
+        populated_records = _populate_history_legs(db._db, [trade_record])
+        populated_records = _attach_leg_feature_statuses(db._db, populated_records)
+        populated_records = _attach_broker_configuration_details(db._db, populated_records)
+        detailed_trade = _enrich_execution_record_with_pnl((populated_records or [trade_record])[0])
+
+        legs = detailed_trade.get("legs") if isinstance(detailed_trade.get("legs"), list) else []
+        pending_feature_legs = detailed_trade.get("pending_feature_legs") if isinstance(detailed_trade.get("pending_feature_legs"), list) else []
+
+        trade_mtm = round(sum(float((leg or {}).get("pnl") or 0) for leg in legs if isinstance(leg, dict)), 2)
+        open_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 1]
+        closed_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 2]
+        pending_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 0]
+
+        orders = []
+        for doc in (
+            db._db["broker_orders"]
+            .find({"trade_id": normalized_strategy_id})
+            .sort("placed_at", -1)
+            .limit(1000)
+        ):
+            doc["_id"] = str(doc.get("_id") or "")
+            orders.append(doc)
+
+        notifications = []
+        feature_filters = [{"trade_id": normalized_strategy_id}]
+        related_strategy_ids = {
+            str(detailed_trade.get("strategy_id") or "").strip(),
+            str(detailed_trade.get("source_strategy_id") or "").strip(),
+        }
+        related_strategy_ids.discard("")
+        for related_id in related_strategy_ids:
+            feature_filters.append({"strategy_id": related_id})
+
+        for doc in (
+            db._db["algo_leg_feature_status"]
+            .find({"$or": feature_filters})
+            .sort("created_at", -1)
+            .limit(1000)
+        ):
+            normalized_doc = dict(doc)
+            normalized_doc["_id"] = str(doc.get("_id") or "")
+            normalized_doc["type"] = str(doc.get("feature") or "").strip() or "feature_status"
+            normalized_doc["event_type"] = normalized_doc["type"]
+            normalized_doc["timestamp"] = (
+                doc.get("triggered_at")
+                or doc.get("updated_at")
+                or doc.get("created_at")
+                or ""
+            )
+            notifications.append(normalized_doc)
+
+        notification_status = {}
+        for item in notifications:
+            event_type = str(item.get("event_type") or item.get("type") or "unknown").strip() or "unknown"
+            notification_status[event_type] = notification_status.get(event_type, 0) + 1
+
+        return {
+            "success": True,
+            "strategy_id": normalized_strategy_id,
+            "activation_mode": str(detailed_trade.get("activation_mode") or normalized_status),
+            "trade": detailed_trade,
+            "summary": {
+                "mtm": trade_mtm,
+                "open_positions": len(open_legs),
+                "closed_positions": len(closed_legs),
+                "pending_positions": len(pending_legs),
+                "broker_orders_count": len(orders),
+                "notifications_count": len(notifications),
+            },
+            "legs": {
+                "all": legs,
+                "open": open_legs,
+                "closed": closed_legs,
+                "pending": pending_legs,
+                "pending_feature_legs": pending_feature_legs,
+            },
+            "broker_orders": orders,
+            "open_orders": [
+                order for order in orders
+                if str(order.get("status") or "").strip().upper() in {"OPEN", "PENDING", "TRIGGER PENDING"}
+            ],
+            "notifications": notifications,
+            "notification_status": notification_status,
+        }
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 @router.post("/portfolio/backtest/start")
 async def portfolio_backtest_start(request: dict):
     """

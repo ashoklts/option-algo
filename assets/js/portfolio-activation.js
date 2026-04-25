@@ -1,16 +1,33 @@
+function getResolvedPortfolioActivationApiBaseUrl() {
+    if (typeof window.resolveAlgoApiBaseUrl === 'function') {
+        return window.resolveAlgoApiBaseUrl();
+    }
+    var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+        || window.APP_ALGO_API_BASE_URL
+        || window.APP_LOCAL_ALGO_API_BASE_URL
+        || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '');
+    var normalizedBaseUrl = String(baseUrl || '').trim().replace(/\/+$/, '');
+    if (normalizedBaseUrl) {
+        return normalizedBaseUrl;
+    }
+    if (window.location && window.location.protocol === 'file:') {
+        return 'http://localhost:8000/algo';
+    }
+    if (window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin) {
+        return window.location.origin.replace(/\/+$/, '') + '/algo';
+    }
+    return 'http://localhost:8000/algo';
+}
+
 function getPortfolioActivationApiUrl(routeName, suffix) {
     if (typeof window.buildNamedApiUrl === 'function') {
         return window.buildNamedApiUrl(routeName, suffix);
     }
-    var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
-        || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
-        || window.APP_ALGO_API_BASE_URL
-        || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '');
     var routeMap = window.APP_API_ROUTES || {};
     var routePath = routeMap[routeName] || routeName || '';
     var normalizedRoute = String(routePath).replace(/\/+$/, '');
     var normalizedSuffix = String(suffix || '').replace(/^\/+/, '');
-    return baseUrl.replace(/\/+$/, '') + '/' + (normalizedSuffix ? normalizedRoute + '/' + normalizedSuffix : normalizedRoute);
+    return getResolvedPortfolioActivationApiBaseUrl() + '/' + (normalizedSuffix ? normalizedRoute + '/' + normalizedSuffix : normalizedRoute);
 }
 
 (function () {

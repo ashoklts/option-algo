@@ -29,8 +29,10 @@
         return '';
     }
 
+    var APP_LIVE_SITE_ORIGIN = window.APP_LIVE_SITE_ORIGIN || '';
     var APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || getDefaultLocalAlgoApiBaseUrl();
-    var APP_LIVE_ALGO_API_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL || 'https://finedgealgo.com/algo';
+    var APP_LIVE_ALGO_API_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL
+        || (String(APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '') ? (String(APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '') + '/algo') : '');
 
     function parseBooleanFlag(value) {
         if (typeof value === 'boolean') {
@@ -50,8 +52,8 @@
     }
 
     function detectLiveEnvironment() {
-        if (typeof window.resolveAppEnvLive === 'function') {
-            return window.resolveAppEnvLive();
+        if (typeof window.isAlgoApiLiveEnvironment === 'function') {
+            return window.isAlgoApiLiveEnvironment();
         }
         var configuredLiveFlag = parseBooleanFlag(window.APP_ENV_LIVE);
         if (configuredLiveFlag !== null) {
@@ -61,8 +63,9 @@
         if (configuredEnv !== null) {
             return configuredEnv;
         }
+        var liveHost = String(APP_LIVE_SITE_ORIGIN || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '').toLowerCase();
         var hostname = (window.location && window.location.hostname || '').toLowerCase();
-        return hostname === 'finedgealgo.com' || hostname === 'www.finedgealgo.com';
+        return hostname === liveHost || hostname === ('www.' + liveHost).replace(/^www\.www\./, 'www.');
     }
 
     var APP_ENV_LIVE = detectLiveEnvironment();
@@ -71,11 +74,16 @@
             ? detectFileRootPath()
             : (APP_ENV_LIVE ? '' : '/' + APP_ROOT_FOLDER_NAME));
     function normalizeAlgoApiBaseUrl(baseUrl, isLive) {
-        var normalized = String(baseUrl || '').trim();
+        var preferredBaseUrl = isLive
+            ? (window.APP_LIVE_ALGO_API_BASE_URL || baseUrl)
+            : (window.APP_LOCAL_ALGO_API_BASE_URL || baseUrl);
+        var normalized = String(preferredBaseUrl || '').trim();
         if (normalized) {
             return normalized.replace(/\/+$/, '');
         }
-        return isLive ? 'https://finedgealgo.com/algo' : getDefaultLocalAlgoApiBaseUrl();
+        return isLive
+            ? (String(APP_LIVE_ALGO_API_BASE_URL || '').replace(/\/+$/, '') || (String(APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '') + '/algo'))
+            : getDefaultLocalAlgoApiBaseUrl();
     }
 
     var APP_ALGO_API_BASE_URL = normalizeAlgoApiBaseUrl(
@@ -293,6 +301,7 @@
     window.APP_ROOT_FOLDER_NAME = APP_ROOT_FOLDER_NAME;
     window.APP_HEADER_ROOT_PATH = APP_HEADER_ROOT_PATH;
     window.APP_ENV_LIVE = APP_ENV_LIVE;
+    window.APP_LIVE_SITE_ORIGIN = APP_LIVE_SITE_ORIGIN;
     window.APP_LOCAL_ALGO_API_BASE_URL = APP_LOCAL_ALGO_API_BASE_URL;
     window.APP_LIVE_ALGO_API_BASE_URL = APP_LIVE_ALGO_API_BASE_URL;
     window.APP_ALGO_API_BASE_URL = APP_ALGO_API_BASE_URL;

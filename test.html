@@ -8,6 +8,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&amp;display=swap"
       crossorigin="">
    <link rel="stylesheet" href="./assets/css/style.css   " data-n-g="">
+   <script src="./assets/js/app-env.js"></script>
    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
@@ -4307,7 +4308,14 @@
             btn.addEventListener('click', function (event) {
                event.preventDefault();
                var config = buildConfig();
-               var BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '');
+               var LIVE_SITE_ORIGIN = String(window.APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '');
+               var LIVE_ALGO_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL
+                  || (LIVE_SITE_ORIGIN ? (LIVE_SITE_ORIGIN + '/algo') : '');
+               var BASE_URL = typeof window.getAlgoApiBaseUrl === 'function'
+                  ? window.getAlgoApiBaseUrl()
+                  : ((window.APP_ENV_LIVE === true || String(window.APP_ENV_LIVE || '').trim().toLowerCase() === 'true')
+                     ? LIVE_ALGO_BASE_URL
+                     : (window.APP_LOCAL_ALGO_API_BASE_URL || 'http://localhost:8000/algo'));
                var originalText = btn.textContent;
                btn.disabled = true;
                btn.textContent = 'Starting...';
@@ -4843,7 +4851,14 @@
 
    <script>
       (function () {
-         const JSON_PATH = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '') + '/backtest/sample-result';
+         const LIVE_SITE_ORIGIN = String(window.APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '');
+         const LIVE_ALGO_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL
+            || (LIVE_SITE_ORIGIN ? (LIVE_SITE_ORIGIN + '/algo') : '');
+         const JSON_PATH = ((typeof window.getAlgoApiBaseUrl === 'function'
+            ? window.getAlgoApiBaseUrl()
+            : ((window.APP_ENV_LIVE === true || String(window.APP_ENV_LIVE || '').trim().toLowerCase() === 'true')
+               ? LIVE_ALGO_BASE_URL
+               : (window.APP_LOCAL_ALGO_API_BASE_URL || 'http://localhost:8000/algo'))).replace(/\/+$/, '')) + '/backtest/sample-result';
          const TD = 'border-r border-r-primaryBlack-350 bg-primaryBlack-50 px-2 py-1 text-left text-xs font-light md:border-none md:px-4 md:py-3 !p-0 border-r border-r-primaryBlack-350';
 
          function fmt(n) {
@@ -5868,7 +5883,14 @@
 
    <script>
       (function () {
-         var API_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '') + '/backtest/sample-result';
+         var LIVE_SITE_ORIGIN = String(window.APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '');
+         var LIVE_ALGO_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL
+            || (LIVE_SITE_ORIGIN ? (LIVE_SITE_ORIGIN + '/algo') : '');
+         var API_URL = ((typeof window.getAlgoApiBaseUrl === 'function'
+            ? window.getAlgoApiBaseUrl()
+            : ((window.APP_ENV_LIVE === true || String(window.APP_ENV_LIVE || '').trim().toLowerCase() === 'true')
+               ? LIVE_ALGO_BASE_URL
+               : (window.APP_LOCAL_ALGO_API_BASE_URL || 'http://localhost:8000/algo'))).replace(/\/+$/, '')) + '/backtest/sample-result';
          var pnlChart = null;
          var ddChart = null;
 
@@ -6197,7 +6219,14 @@
 
    <script>
       (function () {
-         var BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '');
+         var LIVE_SITE_ORIGIN = String(window.APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '');
+         var LIVE_ALGO_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL
+            || (LIVE_SITE_ORIGIN ? (LIVE_SITE_ORIGIN + '/algo') : '');
+         var BASE_URL = typeof window.getAlgoApiBaseUrl === 'function'
+            ? window.getAlgoApiBaseUrl()
+            : ((window.APP_ENV_LIVE === true || String(window.APP_ENV_LIVE || '').trim().toLowerCase() === 'true')
+               ? LIVE_ALGO_BASE_URL
+               : (window.APP_LOCAL_ALGO_API_BASE_URL || 'http://localhost:8000/algo'));
          var modal = document.getElementById('save-strategy-modal');
          var nameInput = document.getElementById('save-strategy-name');
          var alertEl = document.getElementById('save-strategy-alert');
@@ -6285,7 +6314,14 @@
    <!-- ── Load Strategy from URL (?strategy_id=...) ─────────────────────────── -->
    <script>
       (function () {
-         var BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '');
+         var LIVE_SITE_ORIGIN = String(window.APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '');
+         var LIVE_ALGO_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL
+            || (LIVE_SITE_ORIGIN ? (LIVE_SITE_ORIGIN + '/algo') : '');
+         var BASE_URL = typeof window.getAlgoApiBaseUrl === 'function'
+            ? window.getAlgoApiBaseUrl()
+            : ((window.APP_ENV_LIVE === true || String(window.APP_ENV_LIVE || '').trim().toLowerCase() === 'true')
+               ? LIVE_ALGO_BASE_URL
+               : (window.APP_LOCAL_ALGO_API_BASE_URL || 'http://localhost:8000/algo'));
 
          /* ── helpers ─────────────────────────────────────────────────── */
          function setSwitchEnabled(btn, enabled) {
@@ -6479,12 +6515,49 @@
          }
 
          function applyOverallSettings(s) {
+            var stopLossBtns = document.querySelectorAll('[data-test-id="toggle-handle_Overall Stop Loss_overall-stoploss"]');
+            var slBtn = stopLossBtns[0] || null;
+            var tgtBtn = stopLossBtns[1] || null;
+            var trailingBtn = document.querySelector('[data-test-id="toggle-handle_Trailing Options_trailing-options"]');
+            var reentryBtns = document.querySelectorAll('[data-test-id="toggle-handle_rentry_undefined_Overall Re-entry on SL"]');
+            var reSLBtn = reentryBtns[0] || null;
+            var reTgtBtn = reentryBtns[1] || null;
+            var momBtn = document.querySelector('[data-test-id="toggle-handle_Overall Momentum_OverallMomentum_None"]');
+            var hasOverallSL = !!(s.OverallSL && s.OverallSL.Type && s.OverallSL.Type !== 'None');
+            var hasOverallTgt = !!(s.OverallTgt && s.OverallTgt.Type && s.OverallTgt.Type !== 'None');
+            var hasLockAndTrail = !!(s.LockAndTrail && s.LockAndTrail.Type && s.LockAndTrail.Type !== 'None');
+            var hasOverallTrailSL = !!(s.OverallTrailSL && s.OverallTrailSL.Type && s.OverallTrailSL.Type !== 'None');
+            var hasTrailing = hasLockAndTrail || hasOverallTrailSL;
+            var hasOverallReentrySL = !!(s.OverallReentrySL && s.OverallReentrySL.Type && s.OverallReentrySL.Type !== 'None');
+            var hasOverallReentryTgt = !!(s.OverallReentryTgt && s.OverallReentryTgt.Type && s.OverallReentryTgt.Type !== 'None');
+            var hasOverallMomentum = !!(s.OverallMomentum && s.OverallMomentum.Type && s.OverallMomentum.Type !== 'None');
+
+            // Make the overall section deterministic: only switches backed by config stay enabled.
+            setSwitchEnabled(slBtn, hasOverallSL);
+            setSwitchEnabled(tgtBtn, hasOverallTgt);
+            setSwitchEnabled(trailingBtn, hasTrailing);
+            setSwitchEnabled(reSLBtn, hasOverallReentrySL);
+            setSwitchEnabled(reTgtBtn, hasOverallReentryTgt);
+            setSwitchEnabled(momBtn, hasOverallMomentum);
+
+            if (trailingBtn) {
+               var trailContainer = trailingBtn.closest('[id^="TrailingOptions"]');
+               var trailSelect = trailContainer ? trailContainer.querySelector('select') : null;
+               if (trailSelect) {
+                  if (hasOverallTrailSL) {
+                     trailSelect.value = 'TrailingOption.OverallTrailSL';
+                  } else if (hasLockAndTrail) {
+                     trailSelect.value = s.LockAndTrail.Type;
+                  }
+                  trailSelect.dispatchEvent(new Event('change'));
+               }
+            }
+
             // helper: find button by data-test-id, get its closest container, apply type+value
             function applyOverallBlock(testId, cfg, getContainer) {
                if (!cfg || cfg.Type === 'None') return;
                var btn = document.querySelector('[data-test-id="' + testId + '"]');
                if (!btn) return;
-               setSwitchEnabled(btn, true);
                var container = getContainer ? getContainer(btn) : btn.closest('.flex.w-fit.flex-col.gap-2');
                if (!container) return;
                var sel = container.querySelector('select');
@@ -6501,132 +6574,109 @@
             );
 
             // Overall Target (second button with same test-id)
-            if (s.OverallTgt && s.OverallTgt.Type !== 'None') {
-               var tgtBtns = document.querySelectorAll('[data-test-id="toggle-handle_Overall Stop Loss_overall-stoploss"]');
-               var tgtBtn = tgtBtns[1];
-               if (tgtBtn) {
-                  setSwitchEnabled(tgtBtn, true);
-                  var tgtEl = tgtBtn.closest('[id^="OverallStop"]');
-                  if (tgtEl) {
-                     var tgtSel = tgtEl.querySelector('select');
-                     if (tgtSel) tgtSel.value = s.OverallTgt.Type;
-                     var tgtInp = tgtEl.querySelector('input[type="number"]');
-                     if (tgtInp) tgtInp.value = s.OverallTgt.Value || 0;
-                  }
+            if (hasOverallTgt && tgtBtn) {
+               var tgtEl = tgtBtn.closest('[id^="OverallStop"]');
+               if (tgtEl) {
+                  var tgtSel = tgtEl.querySelector('select');
+                  if (tgtSel) tgtSel.value = s.OverallTgt.Type;
+                  var tgtInp = tgtEl.querySelector('input[type="number"]');
+                  if (tgtInp) tgtInp.value = s.OverallTgt.Value || 0;
                }
             }
 
             // Trailing Options (Lock / LockAndTrail)
-            if (s.LockAndTrail && s.LockAndTrail.Type !== 'None') {
-               var trailBtn = document.querySelector('[data-test-id="toggle-handle_Trailing Options_trailing-options"]');
-               if (trailBtn) {
-                  setSwitchEnabled(trailBtn, true);
-                  var trailEl = trailBtn.closest('[id^="TrailingOptions"]');
-                  if (trailEl) {
-                     var trailSel = trailEl.querySelector('select');
-                     if (trailSel) trailSel.value = s.LockAndTrail.Type;
-                  }
-                  var tv = s.LockAndTrail.Value || {};
-                  var pr = document.getElementById('trailing-profit-reaches');
-                  var lp = document.getElementById('trailing-lock-profit');
-                  var ib = document.getElementById('trailing-increase-by');
-                  var tb = document.getElementById('trailing-trail-by');
-                  if (pr) pr.value = tv.ProfitReaches || 0;
-                  if (lp) lp.value = tv.LockProfit || 0;
-                  if (ib) ib.value = s.LockAndTrail.Type === 'TrailingOption.LockAndTrail' ? (tv.IncreaseInProfitBy || 0) : 0;
-                  if (tb) tb.value = s.LockAndTrail.Type === 'TrailingOption.LockAndTrail' ? (tv.TrailProfitBy || 0) : 0;
-                  if (trailEl) { var ts = trailEl.querySelector('select'); if (ts) ts.dispatchEvent(new Event('change')); }
+            if (hasLockAndTrail && trailingBtn) {
+               var trailEl = trailingBtn.closest('[id^="TrailingOptions"]');
+               if (trailEl) {
+                  var trailSel = trailEl.querySelector('select');
+                  if (trailSel) trailSel.value = s.LockAndTrail.Type;
+               }
+               var tv = s.LockAndTrail.Value || {};
+               var pr = document.getElementById('trailing-profit-reaches');
+               var lp = document.getElementById('trailing-lock-profit');
+               var ib = document.getElementById('trailing-increase-by');
+               var tb = document.getElementById('trailing-trail-by');
+               if (pr) pr.value = tv.ProfitReaches || 0;
+               if (lp) lp.value = tv.LockProfit || 0;
+               if (ib) ib.value = s.LockAndTrail.Type === 'TrailingOption.LockAndTrail' ? (tv.IncreaseInProfitBy || 0) : 0;
+               if (tb) tb.value = s.LockAndTrail.Type === 'TrailingOption.LockAndTrail' ? (tv.TrailProfitBy || 0) : 0;
+               if (trailEl) {
+                  var ts = trailEl.querySelector('select');
+                  if (ts) ts.dispatchEvent(new Event('change'));
                }
             }
 
             // Trailing Options — OverallTrailSL
-            if (s.OverallTrailSL && s.OverallTrailSL.Type !== 'None') {
-               var trailBtn2 = document.querySelector('[data-test-id="toggle-handle_Trailing Options_trailing-options"]');
-               if (trailBtn2) {
-                  setSwitchEnabled(trailBtn2, true);
-                  var trailEl2 = trailBtn2.closest('[id^="TrailingOptions"]');
-                  if (trailEl2) {
-                     var trailSel2 = trailEl2.querySelector('select');
-                     if (trailSel2) {
-                        trailSel2.value = 'TrailingOption.OverallTrailSL';
-                        trailSel2.dispatchEvent(new Event('change')); // show overall-trail-sl-section
-                     }
+            if (hasOverallTrailSL && trailingBtn) {
+               var trailEl2 = trailingBtn.closest('[id^="TrailingOptions"]');
+               if (trailEl2) {
+                  var trailSel2 = trailEl2.querySelector('select');
+                  if (trailSel2) {
+                     trailSel2.value = 'TrailingOption.OverallTrailSL';
+                     trailSel2.dispatchEvent(new Event('change'));
                   }
-                  var typeSel = document.getElementById('overall-trail-sl-type');
-                  var inp1 = document.getElementById('overall-trail-sl-input1');
-                  var inp2 = document.getElementById('overall-trail-sl-input2');
-                  var tv2 = s.OverallTrailSL.Value || {};
-                  if (typeSel) typeSel.value = s.OverallTrailSL.Type;
-                  if (inp1) inp1.value = tv2.InstrumentMove || 0;
-                  if (inp2) inp2.value = tv2.StopLossMove || 0;
                }
+               var typeSel = document.getElementById('overall-trail-sl-type');
+               var inp1 = document.getElementById('overall-trail-sl-input1');
+               var inp2 = document.getElementById('overall-trail-sl-input2');
+               var tv2 = s.OverallTrailSL.Value || {};
+               if (typeSel) typeSel.value = s.OverallTrailSL.Type;
+               if (inp1) inp1.value = tv2.InstrumentMove || 0;
+               if (inp2) inp2.value = tv2.StopLossMove || 0;
             }
 
             // Overall Re-entry on SL
-            if (s.OverallReentrySL && s.OverallReentrySL.Type !== 'None') {
-               var reSLBtn = document.querySelector('[data-test-id="toggle-handle_rentry_undefined_Overall Re-entry on SL"]');
-               if (reSLBtn) {
-                  setSwitchEnabled(reSLBtn, true);
-                  var c = reSLBtn.closest('.flex.w-fit.flex-col.gap-2');
-                  if (c) {
-                     var sels = c.querySelectorAll('select');
-                     if (sels[0]) sels[0].value = s.OverallReentrySL.Type;
-                     if (sels[1] && s.OverallReentrySL.Value && s.OverallReentrySL.Value.ReentryCount) {
-                        var overallSlReentryCount = String(s.OverallReentrySL.Value.ReentryCount);
-                        for (var slCount = 1; slCount <= Math.max(parseInt(overallSlReentryCount, 10) || 1, 10); slCount += 1) {
-                           var slCountValue = String(slCount);
-                           if (!Array.from(sels[1].options || []).some(function (opt) { return opt.value === slCountValue; })) {
-                              var slOption = document.createElement('option');
-                              slOption.value = slCountValue;
-                              slOption.textContent = slCountValue;
-                              sels[1].appendChild(slOption);
-                           }
+            if (hasOverallReentrySL && reSLBtn) {
+               var c = reSLBtn.closest('.flex.w-fit.flex-col.gap-2');
+               if (c) {
+                  var sels = c.querySelectorAll('select');
+                  if (sels[0]) sels[0].value = s.OverallReentrySL.Type;
+                  if (sels[1] && s.OverallReentrySL.Value && s.OverallReentrySL.Value.ReentryCount) {
+                     var overallSlReentryCount = String(s.OverallReentrySL.Value.ReentryCount);
+                     for (var slCount = 1; slCount <= Math.max(parseInt(overallSlReentryCount, 10) || 1, 10); slCount += 1) {
+                        var slCountValue = String(slCount);
+                        if (!Array.from(sels[1].options || []).some(function (opt) { return opt.value === slCountValue; })) {
+                           var slOption = document.createElement('option');
+                           slOption.value = slCountValue;
+                           slOption.textContent = slCountValue;
+                           sels[1].appendChild(slOption);
                         }
-                        sels[1].value = overallSlReentryCount;
                      }
+                     sels[1].value = overallSlReentryCount;
                   }
                }
             }
 
-            // Overall Re-entry on Tgt (second button)
-            if (s.OverallReentryTgt && s.OverallReentryTgt.Type !== 'None') {
-               var reTgtBtns = document.querySelectorAll('[data-test-id="toggle-handle_rentry_undefined_Overall Re-entry on SL"]');
-               var reTgtBtn = reTgtBtns[1];
-               if (reTgtBtn) {
-                  setSwitchEnabled(reTgtBtn, true);
-                  var c2 = reTgtBtn.closest('.flex.w-fit.flex-col.gap-2');
-                  if (c2) {
-                     var sels2 = c2.querySelectorAll('select');
-                     if (sels2[0]) sels2[0].value = s.OverallReentryTgt.Type;
-                     if (sels2[1] && s.OverallReentryTgt.Value && s.OverallReentryTgt.Value.ReentryCount) {
-                        var overallTgtReentryCount = String(s.OverallReentryTgt.Value.ReentryCount);
-                        for (var tgtCount = 1; tgtCount <= Math.max(parseInt(overallTgtReentryCount, 10) || 1, 10); tgtCount += 1) {
-                           var tgtCountValue = String(tgtCount);
-                           if (!Array.from(sels2[1].options || []).some(function (opt) { return opt.value === tgtCountValue; })) {
-                              var tgtOption = document.createElement('option');
-                              tgtOption.value = tgtCountValue;
-                              tgtOption.textContent = tgtCountValue;
-                              sels2[1].appendChild(tgtOption);
-                           }
+            // Overall Re-entry on Tgt
+            if (hasOverallReentryTgt && reTgtBtn) {
+               var c2 = reTgtBtn.closest('.flex.w-fit.flex-col.gap-2');
+               if (c2) {
+                  var sels2 = c2.querySelectorAll('select');
+                  if (sels2[0]) sels2[0].value = s.OverallReentryTgt.Type;
+                  if (sels2[1] && s.OverallReentryTgt.Value && s.OverallReentryTgt.Value.ReentryCount) {
+                     var overallTgtReentryCount = String(s.OverallReentryTgt.Value.ReentryCount);
+                     for (var tgtCount = 1; tgtCount <= Math.max(parseInt(overallTgtReentryCount, 10) || 1, 10); tgtCount += 1) {
+                        var tgtCountValue = String(tgtCount);
+                        if (!Array.from(sels2[1].options || []).some(function (opt) { return opt.value === tgtCountValue; })) {
+                           var tgtOption = document.createElement('option');
+                           tgtOption.value = tgtCountValue;
+                           tgtOption.textContent = tgtCountValue;
+                           sels2[1].appendChild(tgtOption);
                         }
-                        sels2[1].value = overallTgtReentryCount;
                      }
+                     sels2[1].value = overallTgtReentryCount;
                   }
                }
             }
 
             // Overall Momentum
-            if (s.OverallMomentum && s.OverallMomentum.Type !== 'None') {
-               var momBtn = document.querySelector('[data-test-id="toggle-handle_Overall Momentum_OverallMomentum_None"]');
-               if (momBtn) {
-                  setSwitchEnabled(momBtn, true);
-                  var momEl = momBtn.closest('[id^="OverallMomentum"]');
-                  if (momEl) {
-                     var momSel = momEl.querySelector('select');
-                     if (momSel) momSel.value = s.OverallMomentum.Type;
-                     var momInp = momEl.querySelector('input[type="number"]');
-                     if (momInp) momInp.value = s.OverallMomentum.Value || 0;
-                  }
+            if (hasOverallMomentum && momBtn) {
+               var momEl = momBtn.closest('[id^="OverallMomentum"]');
+               if (momEl) {
+                  var momSel = momEl.querySelector('select');
+                  if (momSel) momSel.value = s.OverallMomentum.Type;
+                  var momInp = momEl.querySelector('input[type="number"]');
+                  if (momInp) momInp.value = s.OverallMomentum.Value || 0;
                }
             }
          }
@@ -6832,7 +6882,14 @@
 
    <script>
       (function () {
-         var BASE_URL = ((window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) || window.APP_ALGO_API_BASE_URL || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '')).replace(/\/+$/, '');
+         var LIVE_SITE_ORIGIN = String(window.APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '');
+         var LIVE_ALGO_BASE_URL = window.APP_LIVE_ALGO_API_BASE_URL
+            || (LIVE_SITE_ORIGIN ? (LIVE_SITE_ORIGIN + '/algo') : '');
+         var BASE_URL = typeof window.getAlgoApiBaseUrl === 'function'
+            ? window.getAlgoApiBaseUrl()
+            : ((window.APP_ENV_LIVE === true || String(window.APP_ENV_LIVE || '').trim().toLowerCase() === 'true')
+               ? LIVE_ALGO_BASE_URL
+               : (window.APP_LOCAL_ALGO_API_BASE_URL || 'http://localhost:8000/algo'));
          var importBtn = document.getElementById('import-algtst-btn');
          var modal = document.getElementById('import-algtst-modal');
          var closeBtn = document.getElementById('import-algtst-close');

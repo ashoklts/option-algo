@@ -15,13 +15,15 @@ function resolveFlatTradeAlgoApiBaseUrl() {
   if (typeof window.getBackendUrl === "function") return window.getBackendUrl();
   if (window.APP_ALGO_API_BASE_URL) return window.APP_ALGO_API_BASE_URL;
   if (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl) return window.APP_CONFIG.algoApiBaseUrl;
+  var liveOrigin = String(window.APP_LIVE_SITE_ORIGIN || "").replace(/\/+$/, "");
+  var liveHost = liveOrigin.replace(/^https?:\/\//i, "").toLowerCase();
   var liveFlag = window.APP_ENV_LIVE;
   var hasLiveFlag = typeof liveFlag !== "undefined" && liveFlag !== null && String(liveFlag).trim() !== "";
   var isLive = hasLiveFlag
     ? ["1", "true", "yes", "live", "production", "prod"].indexOf(String(liveFlag).trim().toLowerCase()) !== -1
-    : ["finedgealgo.com", "www.finedgealgo.com"].indexOf((window.location && window.location.hostname || "").toLowerCase()) !== -1;
+    : [liveHost, "www." + liveHost].indexOf((window.location && window.location.hostname || "").toLowerCase()) !== -1;
   return isLive
-    ? (window.APP_LIVE_ALGO_API_BASE_URL || window.APP_LOCAL_ALGO_API_BASE_URL || "")
+    ? (window.APP_LIVE_ALGO_API_BASE_URL || (liveOrigin + "/algo") || window.APP_LOCAL_ALGO_API_BASE_URL || "")
     : (window.APP_LOCAL_ALGO_API_BASE_URL || "");
 }
 

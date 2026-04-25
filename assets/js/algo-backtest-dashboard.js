@@ -10,6 +10,27 @@
         portfolioActivation: 'portfolio-activation.html'
     };
 
+    function getResolvedAlgoApiBaseUrl() {
+        if (typeof window.resolveAlgoApiBaseUrl === 'function') {
+            return window.resolveAlgoApiBaseUrl();
+        }
+        var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+            || window.APP_ALGO_API_BASE_URL
+            || window.APP_LOCAL_ALGO_API_BASE_URL
+            || '';
+        var normalizedBaseUrl = String(baseUrl || '').trim().replace(/\/+$/, '');
+        if (normalizedBaseUrl) {
+            return normalizedBaseUrl;
+        }
+        if (window.location && window.location.protocol === 'file:') {
+            return 'http://localhost:8000/algo';
+        }
+        if (window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin) {
+            return window.location.origin.replace(/\/+$/, '') + '/algo';
+        }
+        return 'http://localhost:8000/algo';
+    }
+
     function buildAlgoApiUrl(path) {
         if (window.APP_CONFIG && typeof window.APP_CONFIG.buildAlgoApiUrl === 'function') {
             return window.APP_CONFIG.buildAlgoApiUrl(path);
@@ -17,13 +38,7 @@
         if (typeof window.buildAlgoApiUrl === 'function') {
             return window.buildAlgoApiUrl(path);
         }
-        var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
-            || (typeof window.getBackendUrl === 'function' ? window.getBackendUrl() : '')
-            || window.APP_ALGO_API_BASE_URL
-            || ((window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin)
-                ? window.location.origin.replace(/\/+$/, '') + '/algo'
-                : '');
-        return baseUrl.replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
+        return getResolvedAlgoApiBaseUrl() + '/' + String(path || '').replace(/^\/+/, '');
     }
 
     function resolveCurrentUserId() {
@@ -2083,7 +2098,7 @@
         entries.forEach(function (entry) {
             var mtmColor = (parseFloat(entry.mtm) || 0) >= 0 ? '#16a34a' : '#ef4444';
             var strategyCount = parseInt(entry.strategyCount || 0, 10) || 0;
-            var openLegCount  = parseInt(entry.openLegCount  || 0, 10) || 0;
+            var openLegCount = parseInt(entry.openLegCount || 0, 10) || 0;
             var bid = escapeHtml(entry.brokerId || '');
 
             var card = headerBrokerListHost.querySelector('.ff-header-broker-card[data-broker-id="' + bid + '"]');
@@ -2111,7 +2126,7 @@
                 headerBrokerListHost.insertAdjacentHTML('beforeend', cardHtml);
             } else {
                 // Card exists — patch only MTM and meta text; icon stays untouched
-                var mtmEl  = card.querySelector('[data-broker-mtm="' + bid + '"]');
+                var mtmEl = card.querySelector('[data-broker-mtm="' + bid + '"]');
                 var metaEl = card.querySelector('[data-broker-meta="' + bid + '"]');
                 if (mtmEl) {
                     mtmEl.textContent = formatBrokerMtm(entry.mtm);

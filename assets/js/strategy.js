@@ -1,14 +1,34 @@
-/**
- * strategy.js — Option Chain Strategy Execution
- *
- * Manages all strategy logic for the position simulator.
- * Currently implements: Mini Strangle
- *
- * Reads globals from index.html:
- *   option_chain_data, optionLegs, calcCurrentPnL,
- *   renderLegs, renderPositionTable, updateSummaryStats, updateChart,
- *   window.reloadOptionChain, window._ocGetTimestamp
- */
+function getResolvedStrategyApiBaseUrl() {
+    if (typeof window.resolveAlgoApiBaseUrl === 'function') {
+        return window.resolveAlgoApiBaseUrl();
+    }
+    var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+        || window.APP_ALGO_API_BASE_URL
+        || window.APP_LOCAL_ALGO_API_BASE_URL
+        || '';
+    var normalizedBaseUrl = String(baseUrl || '').trim().replace(/\/+$/, '');
+    if (normalizedBaseUrl) {
+        return normalizedBaseUrl;
+    }
+    if (window.location && window.location.protocol === 'file:') {
+        return 'http://localhost:8000/algo';
+    }
+    if (window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin) {
+        return window.location.origin.replace(/\/+$/, '') + '/algo';
+    }
+    return 'http://localhost:8000/algo';
+}
+
+function getStrategyApiUrl(routeName, suffix) {
+    if (typeof window.buildNamedApiUrl === 'function') {
+        return window.buildNamedApiUrl(routeName, suffix);
+    }
+    var routeMap = window.APP_API_ROUTES || {};
+    var routePath = routeMap[routeName] || routeName || '';
+    var normalizedRoute = String(routePath).replace(/\/+$/, '');
+    var normalizedSuffix = String(suffix || '').replace(/^\/+/, '');
+    return getResolvedStrategyApiBaseUrl() + '/' + (normalizedSuffix ? normalizedRoute + '/' + normalizedSuffix : normalizedRoute);
+}
 
 (function (global) {
     'use strict';
@@ -174,18 +194,18 @@
     function alreadySold(expiry, strike, optionType) {
         if (typeof optionLegs === 'undefined') return false;
         return optionLegs.some(function (leg) {
-            return leg.expiry     === expiry  &&
-                   leg.strike     === strike  &&
-                   leg.optionType === optionType &&
-                   leg.type       === 'Sell';
+            return leg.expiry === expiry &&
+                leg.strike === strike &&
+                leg.optionType === optionType &&
+                leg.type === 'Sell';
         });
     }
 
     function refreshUI() {
-        if (typeof renderLegs          === 'function') renderLegs();
+        if (typeof renderLegs === 'function') renderLegs();
         if (typeof renderPositionTable === 'function') renderPositionTable();
-        if (typeof updateSummaryStats  === 'function') updateSummaryStats();
-        if (typeof updateChart         === 'function') updateChart();
+        if (typeof updateSummaryStats === 'function') updateSummaryStats();
+        if (typeof updateChart === 'function') updateChart();
         // re-render option chain to reflect active Sell button states
         if (typeof global.reloadOptionChain === 'function') global.reloadOptionChain();
     }
@@ -214,8 +234,8 @@
         var map = {};
         rows.forEach(function (r) {
             if (!map[r.strike]) map[r.strike] = { call: null, put: null };
-            if      (r.type === 'CE') map[r.strike].call = r;
-            else if (r.type === 'PE') map[r.strike].put  = r;
+            if (r.type === 'CE') map[r.strike].call = r;
+            else if (r.type === 'PE') map[r.strike].put = r;
         });
         var strikes = Object.keys(map).map(Number).sort(function (a, b) { return a - b; });
 
@@ -232,13 +252,13 @@
             console.warn('[Strategy] Not enough OTM CE strikes (need at least 5 above ATM).');
             return;
         }
-        var row5th       = map[strikes[idx5th]];
+        var row5th = map[strikes[idx5th]];
         var fifthPremium = (row5th && row5th.call) ? row5th.call.close : 0;
 
         // ── 6. resolve which OTM index to sell ──────────────────────────
         var targetN = resolveTargetOtmIndex(fifthPremium);
-        var ceIdx   = atmIdx + targetN;
-        var peIdx   = atmIdx - targetN;
+        var ceIdx = atmIdx + targetN;
+        var peIdx = atmIdx - targetN;
 
         if (ceIdx >= strikes.length) {
             console.warn('[Strategy] CE target strike out of range (index ' + ceIdx + ').');
@@ -249,10 +269,10 @@
             return;
         }
 
-        var ceStrike  = strikes[ceIdx];
-        var peStrike  = strikes[peIdx];
+        var ceStrike = strikes[ceIdx];
+        var peStrike = strikes[peIdx];
         var cePremium = (map[ceStrike].call) ? map[ceStrike].call.close : 0;
-        var pePremium = (map[peStrike].put)  ? map[peStrike].put.close  : 0;
+        var pePremium = (map[peStrike].put) ? map[peStrike].put.close : 0;
 
         console.info(
             '[Strategy] Mini Strangle → expiry:', expiry,
@@ -270,17 +290,17 @@
         }
 
         var chainTs = option_chain_data[0].timestamp;
-        var added   = false;
+        var added = false;
 
         if (!alreadySold(expiry, ceStrike, 'Call')) {
             optionLegs.push({
-                type:       'Sell',
+                type: 'Sell',
                 optionType: 'Call',
-                strike:     ceStrike,
-                premium:    cePremium,
-                quantity:   65,
-                expiry:     expiry,
-                entryDate:  chainTs
+                strike: ceStrike,
+                premium: cePremium,
+                quantity: 65,
+                expiry: expiry,
+                entryDate: chainTs
             });
             added = true;
         } else {
@@ -289,13 +309,13 @@
 
         if (!alreadySold(expiry, peStrike, 'Put')) {
             optionLegs.push({
-                type:       'Sell',
+                type: 'Sell',
                 optionType: 'Put',
-                strike:     peStrike,
-                premium:    pePremium,
-                quantity:   65,
-                expiry:     expiry,
-                entryDate:  chainTs
+                strike: peStrike,
+                premium: pePremium,
+                quantity: 65,
+                expiry: expiry,
+                entryDate: chainTs
             });
             added = true;
         } else {
@@ -317,10 +337,10 @@
     // ─── strategy dispatcher ──────────────────────────────────────────────
 
     function runStrategy() {
-        var stratEl  = document.getElementById('strategySelector');
+        var stratEl = document.getElementById('strategySelector');
         var expiryEl = document.getElementById('strategyExpirySelector');
-        var strategy = stratEl  ? stratEl.value  : 'mini_strangle';
-        var expiry   = expiryEl ? expiryEl.value : 'CURRENT_WEEK';
+        var strategy = stratEl ? stratEl.value : 'mini_strangle';
+        var expiry = expiryEl ? expiryEl.value : 'CURRENT_WEEK';
 
         switch (strategy) {
             case 'mini_strangle':
@@ -367,13 +387,13 @@
 
         } else if (data.event_triggered) {
             var evtColors = {
-                upper_adjustment_hit: ['#1d4ed8','#eff6ff'],
-                lower_adjustment_hit: ['#7c3aed','#f5f3ff'],
-                stoploss_hit:         ['#dc2626','#fef2f2'],
-                target_hit:           ['#16a34a','#f0fdf4'],
-                trailing_sl_hit:      ['#d97706','#fffbeb'],
+                upper_adjustment_hit: ['#1d4ed8', '#eff6ff'],
+                lower_adjustment_hit: ['#7c3aed', '#f5f3ff'],
+                stoploss_hit: ['#dc2626', '#fef2f2'],
+                target_hit: ['#16a34a', '#f0fdf4'],
+                trailing_sl_hit: ['#d97706', '#fffbeb'],
             };
-            var ec = evtColors[data.event_type] || ['#374151','#f9fafb'];
+            var ec = evtColors[data.event_type] || ['#374151', '#f9fafb'];
             badge = inlineBadge(data.event_type || 'event', ec[0], ec[1]);
             if (data.trigger_timestamp) {
                 info += inlineLabel('Triggered', data.trigger_timestamp);
@@ -416,17 +436,17 @@
     /** Inline colored badge chip. */
     function inlineBadge(text, color, bg) {
         return '<span style="flex-shrink:0; padding:3px 8px; border-radius:4px; font-size:11px; '
-             + 'font-weight:700; background:' + bg + '; color:' + color + '; border:1px solid '
-             + color + '33; white-space:nowrap;">' + text + '</span>';
+            + 'font-weight:700; background:' + bg + '; color:' + color + '; border:1px solid '
+            + color + '33; white-space:nowrap;">' + text + '</span>';
     }
 
     /** Inline label + value pair. */
     function inlineLabel(label, value) {
         return '<span style="flex-shrink:0; font-size:11px; color:#64748b; white-space:nowrap;">'
-             + '<span style="font-weight:700; text-transform:uppercase; letter-spacing:.4px;">'
-             + label + '</span>'
-             + '<span style="margin-left:4px; color:#1e293b; font-weight:600;">' + value + '</span>'
-             + '</span>';
+            + '<span style="font-weight:700; text-transform:uppercase; letter-spacing:.4px;">'
+            + label + '</span>'
+            + '<span style="margin-left:4px; color:#1e293b; font-weight:600;">' + value + '</span>'
+            + '</span>';
     }
 
     /**
@@ -434,16 +454,16 @@
      * and fires POST /next-adjustment-deduct.
      */
     function runNextAdjDeduct() {
-        var settings   = typeof global.tcpGetSettings   === 'function' ? global.tcpGetSettings()   : {};
-        var slAdjPts   = typeof global._getSlAdjPoints  === 'function' ? global._getSlAdjPoints()  : null;
-        var ts         = typeof global._ocGetTimestamp  === 'function' ? global._ocGetTimestamp()  : new Date().toISOString();
+        var settings = typeof global.tcpGetSettings === 'function' ? global.tcpGetSettings() : {};
+        var slAdjPts = typeof global._getSlAdjPoints === 'function' ? global._getSlAdjPoints() : null;
+        var ts = typeof global._ocGetTimestamp === 'function' ? global._ocGetTimestamp() : new Date().toISOString();
 
-        var sl  = settings.stopLoss   || {};
-        var tgt = settings.target     || {};
-        var tsl = settings.trailSL    || {};
-        var tc  = settings.timeControl || {};
+        var sl = settings.stopLoss || {};
+        var tgt = settings.target || {};
+        var tsl = settings.trailSL || {};
+        var tc = settings.timeControl || {};
 
-        var stratEl  = document.getElementById('strategySelector');
+        var stratEl = document.getElementById('strategySelector');
         var expiryEl = document.getElementById('strategyExpirySelector');
 
         // Serialise open positions (convert 'Call'/'Put' → 'CE'/'PE' for the backend)
@@ -451,12 +471,12 @@
             .filter(function (leg) { return !leg.exited; })
             .map(function (leg) {
                 return {
-                    leg_type:      leg.type,
-                    option_type:   leg.optionType === 'Call' ? 'CE' : 'PE',
-                    strike:        leg.strike,
-                    expiry:        leg.expiry,
+                    leg_type: leg.type,
+                    option_type: leg.optionType === 'Call' ? 'CE' : 'PE',
+                    strike: leg.strike,
+                    expiry: leg.expiry,
                     entry_premium: leg.premium,
-                    quantity:      leg.quantity
+                    quantity: leg.quantity
                 };
             });
 
@@ -465,28 +485,28 @@
             : 0;
 
         var payload = {
-            timestamp:              ts,
+            timestamp: ts,
             upper_adjustment_point: slAdjPts ? slAdjPts.upper : null,
             lower_adjustment_point: slAdjPts ? slAdjPts.lower : null,
-            lot:                    settings.lots || 2,
-            lot_size:               65,
-            timeframe:              settings.timeframe || '1m',
-            strategy_type:          stratEl  ? stratEl.value  : 'mini_strangle',
-            expiry_type:            mapExpiry(expiryEl ? expiryEl.value : 'CURRENT_WEEK'),
-            stoploss_status:        sl.enabled  ? 1 : 0,
-            stoploss_type:          unitToType(sl.unit),
-            stoploss_value:         sl.value  || 0,
-            target_status:          tgt.enabled ? 1 : 0,
-            target_type:            unitToType(tgt.unit),
-            target_value:           tgt.value || 0,
-            trailing_sl_status:     tsl.enabled ? 1 : 0,
-            trailing_sl_type:       unitToType(tsl.unit),
-            trailing_sl_x:          tsl.x || 0,
-            trailing_sl_y:          tsl.y || 0,
-            position_end_time:      tc.exitTime || '15:26',
-            open_positions:         openPositions,
-            closed_positions_pnl:   closedPnl,
-            lookback_minutes:       settings.lookbackMinutes || 0
+            lot: settings.lots || 2,
+            lot_size: 65,
+            timeframe: settings.timeframe || '1m',
+            strategy_type: stratEl ? stratEl.value : 'mini_strangle',
+            expiry_type: mapExpiry(expiryEl ? expiryEl.value : 'CURRENT_WEEK'),
+            stoploss_status: sl.enabled ? 1 : 0,
+            stoploss_type: unitToType(sl.unit),
+            stoploss_value: sl.value || 0,
+            target_status: tgt.enabled ? 1 : 0,
+            target_type: unitToType(tgt.unit),
+            target_value: tgt.value || 0,
+            trailing_sl_status: tsl.enabled ? 1 : 0,
+            trailing_sl_type: unitToType(tsl.unit),
+            trailing_sl_x: tsl.x || 0,
+            trailing_sl_y: tsl.y || 0,
+            position_end_time: tc.exitTime || '15:26',
+            open_positions: openPositions,
+            closed_positions_pnl: closedPnl,
+            lookback_minutes: settings.lookbackMinutes || 0
         };
 
         console.info('[NextAdjDeduct] Payload:', payload);
@@ -495,25 +515,25 @@
         if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
 
         fetch('http://0.0.0.0:8000/next-adjustment-deduct', {
-            method:  'POST',
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(payload)
+            body: JSON.stringify(payload)
         })
-        .then(function (res) {
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            return res.json();
-        })
-        .then(function (data) {
-            showAdjDeductResult(data);
-        })
-        .catch(function (err) {
-            console.error('[NextAdjDeduct] Request failed:', err);
-            showAdjDeductResult({ error: err.message });
-        })
-        .then(function () {
-            // always re-enable button (acts as .finally for older engines)
-            if (btn) { btn.disabled = false; btn.textContent = 'Next Adjustment Deduct'; }
-        });
+            .then(function (res) {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            })
+            .then(function (data) {
+                showAdjDeductResult(data);
+            })
+            .catch(function (err) {
+                console.error('[NextAdjDeduct] Request failed:', err);
+                showAdjDeductResult({ error: err.message });
+            })
+            .then(function () {
+                // always re-enable button (acts as .finally for older engines)
+                if (btn) { btn.disabled = false; btn.textContent = 'Next Adjustment Deduct'; }
+            });
     }
 
     // ─── DOM wiring ───────────────────────────────────────────────────────
