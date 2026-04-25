@@ -198,6 +198,7 @@ class FlatTradeAdapter:
         if payload_data.get("tsym"):
             payload_data["tsym"] = quote(str(payload_data["tsym"]), safe="")
         body = f"jData={json.dumps(payload_data, separators=(',', ':'))}&jKey={self.jkey}"
+        print(f'[FLATTRADE RAW REQUEST] endpoint={endpoint} jData={json.dumps(payload_data, indent=2)}')
         resp = requests.post(
             url,
             data=body,

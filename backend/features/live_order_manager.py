@@ -39,6 +39,8 @@ This module provides place_live_exit_order() for SL/TP/exit_time → limit order
 from __future__ import annotations
 
 import logging
+import os
+import re
 import threading
 from datetime import datetime
 from typing import Any
@@ -82,6 +84,76 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 def _is_sell(position_str: str) -> bool:
     return 'sell' in str(position_str or '').lower()
+
+
+def _env_flag_enabled(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, '')).strip().lower()
+    if not raw:
+        return default
+    return raw in {'1', 'true', 'yes', 'on'}
+
+
+def _is_live_order_punch_enabled() -> bool:
+    return _env_flag_enabled('LIVE_ORDER_STATUS', default=False)
+
+
+def _extract_option_type_from_symbol(symbol: str) -> str:
+    text = str(symbol or '').strip().upper()
+    if not text:
+        return ''
+    match = re.search(r'(CE|PE)(?![A-Z])', text)
+    return str(match.group(1) if match else '')
+
+
+def _expected_leg_option_type(leg: dict | None = None, leg_cfg: dict | None = None) -> str:
+    contract = (leg_cfg or {}).get('ContractType') or {}
+    option = str(contract.get('Option') or '').strip().upper()
+    if option in {'CE', 'PE'}:
+        return option
+
+    instrument = str((leg_cfg or {}).get('InstrumentKind') or '').strip().upper()
+    if instrument:
+        instrument = instrument.split('.')[-1]
+    if instrument in {'CE', 'PE'}:
+        return instrument
+
+    leg_option = str((leg or {}).get('option') or '').strip().upper()
+    if leg_option:
+        leg_option = leg_option.split('.')[-1]
+    return leg_option if leg_option in {'CE', 'PE'} else ''
+
+
+def _find_existing_trade_option_conflicts(db, trade_id: str, leg_id: str, option_type: str) -> list[str]:
+    conflicts: list[str] = []
+    if not trade_id or not leg_id or option_type not in {'CE', 'PE'}:
+        return conflicts
+    try:
+        history_rows = db._db['algo_trade_positions_history'].find(
+            {'trade_id': trade_id},
+            {'leg_id': 1, 'symbol': 1, 'option': 1},
+        )
+        for row in history_rows:
+            other_leg_id = str(row.get('leg_id') or '').strip()
+            if not other_leg_id or other_leg_id == leg_id:
+                continue
+            other_option = str(row.get('option') or '').strip().upper()
+            if not other_option:
+                other_option = _extract_option_type_from_symbol(str(row.get('symbol') or ''))
+            else:
+                other_option = other_option.split('.')[-1]
+            if other_option == option_type:
+                conflicts.append(other_leg_id)
+    except Exception:
+        return conflicts
+    return conflicts
+
+
+def _build_simulated_live_order_id(trade_id: str, leg_id: str, side: str) -> str:
+    trade_part = str(trade_id or '').strip() or 'trade'
+    leg_part = str(leg_id or '').strip() or 'leg'
+    side_part = str(side or 'entry').strip() or 'entry'
+    now_part = datetime.now().strftime('%Y%m%d%H%M%S')
+    return f'sim-{side_part}-{trade_part}-{leg_part}-{now_part}'
 
 
 _MIN_OPTION_PRICE = 0.05   # NSE minimum option tick / floor price
@@ -593,6 +665,24 @@ def place_live_entry_order(
         return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'limit_price': ltp,
                 'trigger_price': 0.0, 'order_status': 'FAILED', 'error': 'no_symbol'}
 
+    expected_option_type = _expected_leg_option_type(leg, leg_cfg)
+    resolved_option_type = _extract_option_type_from_symbol(symbol)
+    if expected_option_type and resolved_option_type and expected_option_type != resolved_option_type:
+        print(
+            f'[LIVE ORDER BLOCKED] trade={trade_id} leg={leg_id} '
+            f'symbol={symbol} expected_option={expected_option_type} '
+            f'resolved_option={resolved_option_type} '
+            f'reason=option_type_mismatch_before_order'
+        )
+        return {
+            'order_id': '',
+            'order_type': _ORDER_TYPE_MARKET,
+            'limit_price': ltp,
+            'trigger_price': 0.0,
+            'order_status': 'BLOCKED',
+            'error': f'option_type_mismatch:{expected_option_type}!={resolved_option_type}',
+        }
+
     qty = 65
 
     kite = get_broker_for_trade(db, trade)
@@ -665,6 +755,50 @@ def place_live_entry_order(
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
             order_params['trigger_price'] = trigger_price
+
+        same_option_legs = _find_existing_trade_option_conflicts(
+            db,
+            trade_id,
+            leg_id,
+            expected_option_type or resolved_option_type,
+        )
+        if same_option_legs:
+            print(
+                f'[LIVE ORDER BLOCKED] trade={trade_id} leg={leg_id} '
+                f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
+                f'order_type={kite_order_type} limit_price={limit_price} '
+                f'trigger_price={trigger_price} expected_option={expected_option_type or "-"} '
+                f'resolved_option={resolved_option_type or "-"} '
+                f'conflicting_legs={",".join(same_option_legs)} '
+                f'reason=duplicate_option_type_before_order'
+            )
+            return {
+                'order_id': '', 'order_type': kite_order_type,
+                'exchange': exchange, 'limit_price': limit_price,
+                'trigger_price': trigger_price, 'order_status': 'BLOCKED',
+                'error': 'duplicate_option_type_before_order',
+            }
+
+        if not _is_live_order_punch_enabled():
+            simulated_order_id = _build_simulated_live_order_id(trade_id, leg_id, 'entry')
+            print(
+                f'[LIVE ORDER SIMULATED] trade={trade_id} leg={leg_id} '
+                f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
+                f'order_type={kite_order_type} limit_price={limit_price} '
+                f'trigger_price={trigger_price} expected_option={expected_option_type or "-"} '
+                f'resolved_option={resolved_option_type or "-"} '
+                f'env=LIVE_ORDER_STATUS:false simulated_order_id={simulated_order_id}'
+            )
+            return {
+                'order_id': simulated_order_id,
+                'order_type': kite_order_type,
+                'exchange': exchange,
+                'limit_price': limit_price,
+                'trigger_price': trigger_price,
+                'order_status': _ORDER_STATUS_COMPLETE,
+                'convert_after': 0,
+                'error': '',
+            }
 
         order_id = kite.place_order(**order_params)
         order_id = str(order_id or '').strip()
@@ -812,6 +946,25 @@ def place_live_exit_order(
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
             order_params['trigger_price'] = trigger_price
+
+        if not _is_live_order_punch_enabled():
+            simulated_order_id = _build_simulated_live_order_id(trade_id, leg_id, 'exit')
+            print(
+                f'[LIVE EXIT ORDER SIMULATED] trade={trade_id} leg={leg_id} '
+                f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
+                f'reason={exit_reason} order_type={kite_order_type} '
+                f'limit_price={limit_price} trigger_price={trigger_price} '
+                f'env=LIVE_ORDER_STATUS:false simulated_order_id={simulated_order_id}'
+            )
+            return {
+                'order_id': simulated_order_id,
+                'order_type': kite_order_type,
+                'exchange': exchange,
+                'limit_price': limit_price,
+                'trigger_price': trigger_price,
+                'order_status': _ORDER_STATUS_COMPLETE,
+                'error': '',
+            }
 
         order_id = kite.place_order(**order_params)
         order_id = str(order_id or '').strip()
