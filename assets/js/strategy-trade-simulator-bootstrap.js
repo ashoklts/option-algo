@@ -3,6 +3,9 @@
     var _liveTradeId = '';
     var _liveLtpMap = {};
     var _liveRefreshTimer = null;
+    var _tradeHistoryRequestToken = 0;
+    var _tradeHistoryRefreshTimer = null;
+    var _tradeHistorySocketKey = '';
 
     function normalizeBaseUrl(value) {
         return String(value || '').replace(/\/+$/, '');
@@ -280,11 +283,14 @@
             var records = Array.isArray(message.data)
                 ? message.data
                 : (message.data && Array.isArray(message.data.records) ? message.data.records : []);
+            var matchedCurrentTrade = false;
+            var query = getTradeQuery();
             records.forEach(function (record) {
                 var rid = String(record && (record._id || record.trade_id) || '').trim();
                 if (rid !== _liveTradeId) {
                     return;
                 }
+                matchedCurrentTrade = true;
 
                 if (Array.isArray(record.legs) && _livePayload.legs) {
                     var incomingLegs = record.legs;
@@ -309,6 +315,12 @@
                 }
             });
             scheduleSimulatorRefresh();
+            if (matchedCurrentTrade || (query.strategyId && records.some(function (record) {
+                var rid = String(record && (record._id || record.trade_id) || '').trim();
+                return rid === query.strategyId;
+            }))) {
+                scheduleTradeHistoryReload();
+            }
         }
     }
 
@@ -321,7 +333,11 @@
         }
 
         var channels = ['execute-orders', 'update'];
+        var nextSocketKey = [userId, activationMode].join('::');
         var existingSockets = window.StrategyTradeSimulatorSockets || {};
+        if (_tradeHistorySocketKey === nextSocketKey && Object.keys(existingSockets).length) {
+            return;
+        }
         Object.keys(existingSockets).forEach(function (key) {
             var existing = existingSockets[key];
             if (existing && typeof existing.close === 'function') {
@@ -362,9 +378,11 @@
         });
 
         window.StrategyTradeSimulatorSockets = socketRegistry;
+        _tradeHistorySocketKey = nextSocketKey;
     }
 
-    function fetchTradeHistory() {
+    function fetchTradeHistory(options) {
+        var config = options || {};
         ensureAlgoApiBase();
 
         var query = getTradeQuery();
@@ -382,6 +400,7 @@
             url: requestUrl
         };
 
+        var requestToken = ++_tradeHistoryRequestToken;
         fetch(requestUrl)
             .then(function (response) {
                 if (!response.ok) {
@@ -390,6 +409,9 @@
                 return response.json();
             })
             .then(function (payload) {
+                if (requestToken !== _tradeHistoryRequestToken) {
+                    return;
+                }
                 window.strategyTradeSimulatorPayload = payload || {};
                 _livePayload = payload || {};
                 _liveTradeId = String(((payload || {}).trade || {})._id || (payload || {}).strategy_id || '').trim();
@@ -404,6 +426,9 @@
                 }));
             })
             .catch(function (error) {
+                if (requestToken !== _tradeHistoryRequestToken) {
+                    return;
+                }
                 window.strategyTradeSimulatorError = error;
                 window.dispatchEvent(new CustomEvent('strategy-trade-simulator:data-error', {
                     detail: {
@@ -414,6 +439,16 @@
                 }));
                 console.error('[strategy-trade-simulator]', error);
             });
+    }
+
+    function scheduleTradeHistoryReload() {
+        if (_tradeHistoryRefreshTimer) {
+            return;
+        }
+        _tradeHistoryRefreshTimer = window.setTimeout(function () {
+            _tradeHistoryRefreshTimer = null;
+            fetchTradeHistory({ silent: true });
+        }, 120);
     }
 
     if (document.readyState === 'loading') {
@@ -432,5 +467,6 @@
                 channelSocket.close();
             }
         });
+        _tradeHistorySocketKey = '';
     });
 }());

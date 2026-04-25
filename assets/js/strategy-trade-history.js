@@ -4,6 +4,9 @@
     var _liveLtpMap = {};
     var _liveRefreshTimer = null;
     var _liveSyncCosts = null;
+    var _tradeHistoryRequestToken = 0;
+    var _tradeHistoryRefreshTimer = null;
+    var _tradeHistorySocketKey = '';
 
     function getApiBaseUrl() {
         return (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
@@ -26,6 +29,14 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function getTradeHistoryQuery() {
+        var params = new URLSearchParams(window.location.search || '');
+        return {
+            strategyId: String(params.get('strategy_id') || '').trim(),
+            status: String(params.get('status') || 'algo-backtest').trim() || 'algo-backtest'
+        };
     }
 
     function formatMoney(value) {
@@ -598,11 +609,14 @@
             var records = Array.isArray(message.data)
                 ? message.data
                 : (message.data && Array.isArray(message.data.records) ? message.data.records : []);
+            var matchedCurrentTrade = false;
+            var query = getTradeHistoryQuery();
             records.forEach(function (record) {
                 var rid = String(record && (record._id || record.trade_id) || '').trim();
                 if (rid !== _liveTradeId) {
                     return;
                 }
+                matchedCurrentTrade = true;
                 var incomingLegs = Array.isArray(record.legs) ? record.legs : [];
                 var openLegs = Array.isArray(_livePayload.legs && _livePayload.legs.open) ? _livePayload.legs.open : [];
                 openLegs.forEach(function (leg) {
@@ -625,6 +639,12 @@
                 }
                 scheduleRefreshLiveMtm();
             });
+            if (matchedCurrentTrade || (query.strategyId && records.some(function (record) {
+                var rid = String(record && (record._id || record.trade_id) || '').trim();
+                return rid === query.strategyId;
+            }))) {
+                scheduleTradeHistoryReload();
+            }
         }
 
         if (type === 'update') {
@@ -891,7 +911,11 @@
         }
 
         var channels = ['execute-orders', 'update'];
+        var nextSocketKey = [userId, activationMode].join('::');
         var existingSockets = window.StrategyTradeHistorySockets || {};
+        if (_tradeHistorySocketKey === nextSocketKey && Object.keys(existingSockets).length) {
+            return;
+        }
         Object.keys(existingSockets).forEach(function (key) {
             var existing = existingSockets[key];
             if (existing && typeof existing.close === 'function') {
@@ -941,6 +965,7 @@
 
         window.__strategyTradeHistorySocketMessages = socketMessages;
         window.StrategyTradeHistorySockets = socketRegistry;
+        _tradeHistorySocketKey = nextSocketKey;
     }
 
     function renderPage(payload) {
@@ -1086,18 +1111,31 @@
         host.innerHTML = '<section class="px-4 py-10 md:px-6"><div class="mx-auto max-w-[900px] rounded border border-primaryBlack-350 bg-primaryBlack-0 px-6 py-10 text-center text-sm text-primaryBlack-700">' + escapeHtml(message) + '</div></section>';
     }
 
-    function init() {
-        var params = new URLSearchParams(window.location.search || '');
-        var strategyId = String(params.get('strategy_id') || '').trim();
-        var status = String(params.get('status') || 'algo-backtest').trim() || 'algo-backtest';
+    function fetchTradeHistory(options) {
+        var config = options || {};
+        var query = getTradeHistoryQuery();
+        var strategyId = query.strategyId;
+        var status = query.status;
 
         if (!strategyId) {
             renderState('strategy_id is missing in the URL.');
             return;
         }
 
-        renderState('Loading strategy trade history...');
-        fetch(buildApiUrl('strategy-trade-history/' + encodeURIComponent(strategyId) + '?status=' + encodeURIComponent(status)))
+        if (!config.silent) {
+            renderState('Loading strategy trade history...');
+        }
+
+        var requestToken = ++_tradeHistoryRequestToken;
+        var requestUrl = buildApiUrl('strategy-trade-history/' + encodeURIComponent(strategyId) + '?status=' + encodeURIComponent(status));
+
+        window.strategyTradeHistoryRequest = {
+            strategy_id: strategyId,
+            status: status,
+            url: requestUrl
+        };
+
+        fetch(requestUrl)
             .then(function (response) {
                 if (!response.ok) {
                     throw new Error('Failed to load strategy trade history');
@@ -1105,11 +1143,38 @@
                 return response.json();
             })
             .then(function (payload) {
+                if (requestToken !== _tradeHistoryRequestToken) {
+                    return;
+                }
+                window.strategyTradeHistoryPayload = payload || {};
                 renderPage(payload || {});
             })
             .catch(function (error) {
+                if (requestToken !== _tradeHistoryRequestToken) {
+                    return;
+                }
+                window.strategyTradeHistoryError = error;
                 renderState(error && error.message ? error.message : 'Failed to load strategy trade history.');
             });
+    }
+
+    function scheduleTradeHistoryReload() {
+        if (_tradeHistoryRefreshTimer) {
+            return;
+        }
+        _tradeHistoryRefreshTimer = window.setTimeout(function () {
+            _tradeHistoryRefreshTimer = null;
+            fetchTradeHistory({ silent: true });
+        }, 120);
+    }
+
+    function init() {
+        var query = getTradeHistoryQuery();
+        if (!query.strategyId) {
+            renderState('strategy_id is missing in the URL.');
+            return;
+        }
+        fetchTradeHistory();
     }
 
     if (document.readyState === 'loading') {
@@ -1126,5 +1191,6 @@
                 channelSocket.close();
             }
         });
+        _tradeHistorySocketKey = '';
     });
 }());
