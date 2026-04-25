@@ -6777,6 +6777,16 @@ def _process_broker_level_events(
                 upsert_broker_feature_status(db._db, trade=(_group[0] if _group else {}), user_id=_uid, broker=_bkr, activation_mode=_mode, feature=_feat, trigger_value=_safe_float(_effective_sl_val if _feat == 'broker_sl' else _btgt_val), current_mtm=_group_mtm, timestamp=now_ts)
             except Exception as _bfe:
                 log.warning('[BROKER %s] feature status upsert error: %s', reason, _bfe)
+            try:
+                _broker_trade_ids = [str(_t.get('_id') or '') for _t in _all_broker_trades if _t.get('_id')]
+                if _broker_trade_ids:
+                    _fs_result = db._db['algo_leg_feature_status'].update_many(
+                        {'trade_id': {'$in': _broker_trade_ids}, 'enabled': True},
+                        {'$set': {'enabled': False, 'status': 'disabled'}},
+                    )
+                    print(f'  [BROKER {reason} - {_bkr}] disabled feature status rows matched={_fs_result.matched_count}')
+            except Exception as _fse:
+                log.warning('[BROKER %s] disable feature status error: %s', reason, _fse)
             actions_taken.append(f'broker_{reason.lower().replace(" ","_")} broker={_bkr} mtm={round(_group_mtm,2)}')
             for _t in _group:
                 _tid = str(_t.get('_id') or '').strip()
