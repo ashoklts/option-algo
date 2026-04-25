@@ -9,6 +9,7 @@
         crossorigin="">
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <script src="../assets/js/app-env.js"></script>
     <script>
         (function () {
             var protocol = window.location && window.location.protocol;
@@ -16,9 +17,15 @@
                 return;
             }
 
-            var forcedBaseUrl = 'http://localhost:8000/algo';
-            window.APP_LOCAL_ALGO_API_BASE_URL = window.APP_LOCAL_ALGO_API_BASE_URL || forcedBaseUrl;
-            window.APP_ALGO_API_BASE_URL = window.APP_ALGO_API_BASE_URL || forcedBaseUrl;
+            var liveSiteOrigin = String(window.APP_LIVE_SITE_ORIGIN || '').replace(/\/+$/, '');
+            var liveAlgoBaseUrl = window.APP_LIVE_ALGO_API_BASE_URL
+                || (liveSiteOrigin ? (liveSiteOrigin + '/algo') : '');
+            var forcedBaseUrl = typeof window.getAlgoApiBaseUrl === 'function'
+                ? window.getAlgoApiBaseUrl()
+                : ((window.APP_ENV_LIVE === true || String(window.APP_ENV_LIVE || '').trim().toLowerCase() === 'true')
+                    ? liveAlgoBaseUrl
+                    : (window.APP_LOCAL_ALGO_API_BASE_URL || 'http://localhost:8000/algo'));
+            window.APP_ALGO_API_BASE_URL = forcedBaseUrl;
 
             var originalFetch = window.fetch;
             if (typeof originalFetch !== 'function' || window.__ffFetchRewriteBound) {

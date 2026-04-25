@@ -1,10 +1,24 @@
 
 (function () {
     function getAlgoBaseUrl() {
+        if (typeof window.resolveAlgoApiBaseUrl === 'function') {
+            return window.resolveAlgoApiBaseUrl();
+        }
         const configuredBaseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
             || window.APP_ALGO_API_BASE_URL
+            || window.APP_LOCAL_ALGO_API_BASE_URL
             || (typeof window.getAlgoApiBaseUrl === 'function' ? window.getAlgoApiBaseUrl() : '');
-        return configuredBaseUrl;
+        const normalizedBaseUrl = String(configuredBaseUrl || '').trim().replace(/\/+$/, '');
+        if (normalizedBaseUrl) {
+            return normalizedBaseUrl;
+        }
+        if (window.location && window.location.protocol === 'file:') {
+            return 'http://localhost:8000/algo';
+        }
+        if (window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin) {
+            return window.location.origin.replace(/\/+$/, '') + '/algo';
+        }
+        return 'http://localhost:8000/algo';
     }
 
     function getPortfolioListApiUrl(routeName, suffix) {

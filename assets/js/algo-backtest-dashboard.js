@@ -10,6 +10,27 @@
         portfolioActivation: 'portfolio-activation.html'
     };
 
+    function getResolvedAlgoApiBaseUrl() {
+        if (typeof window.resolveAlgoApiBaseUrl === 'function') {
+            return window.resolveAlgoApiBaseUrl();
+        }
+        var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+            || window.APP_ALGO_API_BASE_URL
+            || window.APP_LOCAL_ALGO_API_BASE_URL
+            || '';
+        var normalizedBaseUrl = String(baseUrl || '').trim().replace(/\/+$/, '');
+        if (normalizedBaseUrl) {
+            return normalizedBaseUrl;
+        }
+        if (window.location && window.location.protocol === 'file:') {
+            return 'http://localhost:8000/algo';
+        }
+        if (window.location && /^https?:$/i.test(window.location.protocol || '') && window.location.origin) {
+            return window.location.origin.replace(/\/+$/, '') + '/algo';
+        }
+        return 'http://localhost:8000/algo';
+    }
+
     function buildAlgoApiUrl(path) {
         if (window.APP_CONFIG && typeof window.APP_CONFIG.buildAlgoApiUrl === 'function') {
             return window.APP_CONFIG.buildAlgoApiUrl(path);
@@ -17,10 +38,7 @@
         if (typeof window.buildAlgoApiUrl === 'function') {
             return window.buildAlgoApiUrl(path);
         }
-        var baseUrl = (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
-            || window.APP_ALGO_API_BASE_URL
-            || '';
-        return baseUrl.replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
+        return getResolvedAlgoApiBaseUrl() + '/' + String(path || '').replace(/^\/+/, '');
     }
 
     function resolveCurrentUserId() {
