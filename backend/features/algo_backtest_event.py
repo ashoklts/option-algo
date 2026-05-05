@@ -197,6 +197,18 @@ def get_spot_doc_at_time(
                 )
                 if doc:
                     break
+
+        # Algo-backtest: market open at 09:15 but first DB record may be 09:16.
+        # If $lte found nothing, fetch the nearest future record ($gte).
+        if not doc:
+            for ts in variants:
+                doc = index_spot_col.find_one(
+                    {'underlying': underlying, 'timestamp': {'$gte': ts}},
+                    sort=[('timestamp', 1)],
+                )
+                if doc:
+                    break
+
         return doc or {}
     except Exception as exc:
         import logging
@@ -276,6 +288,64 @@ def get_open_legs_ltp_array(
             'option_type': option_type,
         })
     return result
+
+
+def get_spot_price_from_chain_col(
+    chain_col,
+    underlying: str,
+    snapshot_ts: str,
+) -> float:
+    """
+    Fallback for algo-backtest: read spot_price embedded in option_chain_historical_data.
+    Used when option_chain_index_spot has no data for the backtest date.
+    Only called for algo-backtest mode — never for live or fast-forward.
+    """
+    import logging
+    _log = logging.getLogger(__name__)
+    norm_ts = str(snapshot_ts or '').strip()
+    variants: list[str] = []
+    for candidate in [
+        norm_ts,
+        norm_ts.replace('T', ' ').rstrip('Z'),
+        norm_ts.replace(' ', 'T').rstrip('Z'),
+    ]:
+        c = str(candidate or '').strip()
+        if c and c not in variants:
+            variants.append(c)
+    try:
+        for ts in variants:
+            doc = chain_col.find_one(
+                {'underlying': underlying, 'timestamp': ts, 'spot_price': {'$gt': 0}},
+            )
+            if doc:
+                price = _safe_float(doc.get('spot_price'))
+                if price > 0:
+                    return price
+
+        for ts in variants:
+            doc = chain_col.find_one(
+                {'underlying': underlying, 'timestamp': {'$lte': ts}, 'spot_price': {'$gt': 0}},
+                sort=[('timestamp', DESCENDING)],
+            )
+            if doc:
+                price = _safe_float(doc.get('spot_price'))
+                if price > 0:
+                    return price
+
+        for ts in variants:
+            prefix = ts[:16]
+            if prefix:
+                doc = chain_col.find_one(
+                    {'underlying': underlying, 'timestamp': {'$regex': '^' + re.escape(prefix)}, 'spot_price': {'$gt': 0}},
+                    sort=[('timestamp', DESCENDING)],
+                )
+                if doc:
+                    price = _safe_float(doc.get('spot_price'))
+                    if price > 0:
+                        return price
+    except Exception as exc:
+        _log.warning('get_spot_price_from_chain_col error underlying=%s ts=%s: %s', underlying, snapshot_ts, exc)
+    return 0.0
 
 
 # ─── internal ─────────────────────────────────────────────────────────────────

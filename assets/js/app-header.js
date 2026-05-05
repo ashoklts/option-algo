@@ -115,6 +115,8 @@
         strategyBuilder: 'test.html',
         portfolio: 'portfolio.html',
         portfolioActivation: 'portfolio-activation.html',
+        'strategy-trade-history': 'strategy-trade-history.html',
+        analyse: 'analyse',
         algoBacktestDashboard: 'algo-backtest/dashboard.html',
         forwardTestDashboard: 'fast-forward/dashboard.html',
         liveDashboard: 'fast-forward-clone.html'

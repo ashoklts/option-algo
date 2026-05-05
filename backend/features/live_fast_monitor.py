@@ -177,21 +177,15 @@ class _LiveFastMonitorSupervisor:
                 )
                 self.last_tick_at = now_ts
                 try:
-                    live_count = 0
-                    ff_count = 0
-                    if records_by_mode.get('live'):
+                    if records_by_mode.get('live') or records_by_mode.get('fast-forward'):
                         from features.live_event import sync_live_open_position_subscriptions
-                        live_count = sync_live_open_position_subscriptions(self.trade_date)
-                    if records_by_mode.get('fast-forward'):
-                        from features.fast_forward_event import sync_fast_forward_open_position_subscriptions
-                        ff_count = sync_fast_forward_open_position_subscriptions(self.trade_date)
-                    if live_count or ff_count:
-                        print(
-                            '[LIVE+FF TOKEN SYNC] '
-                            f'trade_date={self.trade_date} '
-                            f'live={live_count} '
-                            f'fast_forward={ff_count}'
-                        )
+                        synced = sync_live_open_position_subscriptions(self.trade_date)
+                        if synced:
+                            print(
+                                '[LIVE+FF TOKEN SYNC] '
+                                f'trade_date={self.trade_date} '
+                                f'synced={synced}'
+                            )
                 except Exception as exc:
                     log.warning('[LIVE+FF TOKEN SYNC] error: %s', exc)
                 print(
@@ -203,14 +197,27 @@ class _LiveFastMonitorSupervisor:
                 )
                 for activation_mode in SUPPORTED_MODES:
                     for record in (records_by_mode.get(activation_mode) or []):
+                        _raw_et = str(record.get('entry_time') or '').strip()
+                        _et_hhmm = _raw_et[11:16] if len(_raw_et) >= 16 else _raw_et[:5]
+                        _open = int(record.get('open_legs') or 0)
+                        _total = int(record.get('total_legs') or 0)
+                        if _open > 0:
+                            _entry_status = 'entered'
+                        elif _et_hhmm and current_hhmm and current_hhmm < _et_hhmm:
+                            _entry_status = f'waiting — entry_at={_et_hhmm} now={current_hhmm}'
+                        elif _et_hhmm:
+                            _entry_status = f'ready_to_enter — entry_at={_et_hhmm} now={current_hhmm}'
+                        else:
+                            _entry_status = 'no_entry_time'
                         print(
                             '[LIVE+FF CHECK] '
                             f'mode={activation_mode} '
                             f'group={str(record.get("group_name") or "-")} '
                             f'strategy={str(record.get("name") or "-")} '
-                            f'entry_time={str(record.get("entry_time") or "--:--")} '
+                            f'entry_time={_et_hhmm or "--:--"} '
                             f'current_time={current_hhmm or "--:--"} '
-                            f'open_legs={int(record.get("open_legs") or 0)}/{int(record.get("total_legs") or 0)}'
+                            f'legs={_open}/{_total} '
+                            f'status={_entry_status}'
                         )
                 try:
                     live_records = records_by_mode.get('live') or []
@@ -309,6 +316,15 @@ class _LiveFastMonitorSupervisor:
                         for tok, ltp in _tm.ltp_map.items()
                         if tok not in _spot_token_set and ltp and float(ltp) > 0
                     ]
+                    from features.kite_ticker import INDIA_VIX_TOKEN_ID as _VIX_TOKEN_ID
+                    _vix_ltp = float(_tm.ltp_map.get(str(_VIX_TOKEN_ID), 0) or 0)
+                    _vix_ltp_list = [{
+                        'token': 'NSE_00',
+                        'underlying': 'INDIA VIX',
+                        'option_type': 'SPOT',
+                        'ltp': _vix_ltp,
+                        'timestamp': now_ts,
+                    }] if _vix_ltp > 0 else []
                     await broadcast_to_channel('update', _ltp_build_message(
                         'ltp_update',
                         'Live LTP tick',
@@ -316,7 +332,7 @@ class _LiveFastMonitorSupervisor:
                             'trade_date': now_ts[:10],
                             'listen_time': current_hhmm,
                             'listen_timestamp': now_ts,
-                            'ltp': _spot_ltp_list + _option_ltp_list,
+                            'ltp': _spot_ltp_list + _option_ltp_list + _vix_ltp_list,
                             'spot_map': dict(_tm.spot_map),
                             'broker_status': _tm.status,
                             'mode': 'fast-forward',
@@ -329,11 +345,12 @@ class _LiveFastMonitorSupervisor:
                         f'[FF LTP EMIT]  {now_ts}'
                         f'  |  spot: {_spot_parts}'
                         f'  |  option tokens: {len(_option_ltp_list)}'
+                        f'  |  vix: {_vix_ltp:.2f}' if _vix_ltp > 0 else ''
                     )
                 except Exception as _ltp_exc:
                     log.debug('[FF LTP EMIT] error: %s', _ltp_exc)
 
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.25)
         except asyncio.CancelledError:
             pass
         except Exception as exc:

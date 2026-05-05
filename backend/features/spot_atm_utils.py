@@ -27,6 +27,7 @@ def _trace_stdout(message: str) -> None:
 
 OPTION_CHAIN_COLLECTION = 'option_chain_historical_data'
 INDEX_SPOT_COLLECTION = 'option_chain_index_spot'
+INDIA_VIX_COLLECTION = 'india_vix'
 MARKET_DATA_CACHE: dict[str, dict] = {}
 
 # ─── Kite instruments daily cache ─────────────────────────────────────────────
@@ -163,10 +164,14 @@ def get_kite_chain_doc(
         except Exception:
             pass
 
+    spot = _get_live_spot_for_underlying(key[0])
+    iv   = _calculate_live_iv(spot, key[2], key[1], ltp, key[3])
+
     _trace_stdout(
         f'[LIVE OPTION CHAIN] underlying={key[0]} expiry={key[1]} '
         f'strike={key[2]} type={key[3]} token={token_str} '
-        f'symbol={inst["symbol"]} ltp={ltp if ltp > 0 else "UNAVAILABLE"}'
+        f'symbol={inst["symbol"]} ltp={ltp if ltp > 0 else "UNAVAILABLE"} '
+        f'iv={round(iv * 100, 2) if iv else "N/A"}'
     )
 
     return {
@@ -182,6 +187,7 @@ def get_kite_chain_doc(
         'current_price': ltp,
         'price':      ltp,
         'last_price': ltp,
+        'iv':         iv or None,
     }
 
 
@@ -341,7 +347,37 @@ KITE_INDEX_TOKENS: dict[str, int] = {
     'SENSEX':     265,
     'FINNIFTY':   257801,
     'MIDCPNIFTY': 288009,
+    'INDIA_VIX':  264969,
 }
+INDIA_VIX_KITE_TOKEN = 264969
+
+
+def _get_live_spot_for_underlying(underlying: str) -> float:
+    """Get real-time spot price for an underlying from Kite WebSocket LTP map."""
+    token = KITE_INDEX_TOKENS.get(str(underlying or '').strip().upper(), 0)
+    if not token:
+        return 0.0
+    try:
+        from features.kite_broker_ws import get_ltp_map  # type: ignore
+        return float(get_ltp_map().get(str(token), 0.0))
+    except Exception:
+        return 0.0
+
+
+def _calculate_live_iv(spot: float, strike: float, expiry: str, ltp: float, option_type: str) -> float:
+    """Calculate IV using Black-Scholes Newton-Raphson for live/fast-forward mode."""
+    if not (spot > 0 and strike > 0 and ltp > 0):
+        return 0.0
+    try:
+        from datetime import date as _date
+        expiry_date = _date.fromisoformat(str(expiry or '')[:10])
+        T = max((expiry_date - _date.today()).days, 0) / 365.0
+        if T <= 0:
+            return 0.0
+        from features.span_margin import implied_vol, RISK_FREE_RATE  # type: ignore
+        return implied_vol(spot, strike, T, RISK_FREE_RATE, ltp, option_type)
+    except Exception:
+        return 0.0
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -474,6 +510,21 @@ def preload_market_data_cache(
         spot_timestamps.setdefault(underlying, []).append(timestamp)
         latest_spot_docs[underlying] = item
 
+    # Load India VIX for the trade date (used for entry_vix in blue line calculation)
+    vix_docs: list[dict] = []
+    vix_timestamps: list[str] = []
+    try:
+        for item in db._db[INDIA_VIX_COLLECTION].find(
+            {'timestamp': {'$regex': f'^{normalized_date}'}},
+            {'_id': 0, 'timestamp': 1, 'close': 1},
+        ).sort([('timestamp', 1)]):
+            ts = str(item.get('timestamp') or '').strip()
+            if ts:
+                vix_docs.append(item)
+                vix_timestamps.append(ts)
+    except Exception:
+        pass
+
     cache = {
         'cache_key': cache_key,
         'trade_date': normalized_date,
@@ -484,6 +535,8 @@ def preload_market_data_cache(
         'spot_docs': spot_docs,
         'spot_timestamps': spot_timestamps,
         'latest_spot_docs': latest_spot_docs,
+        'vix_docs': vix_docs,
+        'vix_timestamps': vix_timestamps,
         'expiries_by_underlying': {
             underlying: sorted(values)
             for underlying, values in expiries_by_underlying.items()
@@ -579,11 +632,14 @@ def _active_option_token_doc(
     except Exception:
         pass
 
+    spot = _get_live_spot_for_underlying(underlying_norm)
+    iv   = _calculate_live_iv(spot, strike_val, expiry_norm, ltp, opt_norm)
+
     _trace_stdout(
         f'[ACTIVE OPTION TOKEN] instrument={underlying_norm} expiry={expiry_norm} '
         f'strike={strike_val} type={opt_norm} token={token_str} '
         f'symbol={str(doc.get("symbol") or "").strip() or "-"} '
-        f'ltp={ltp if ltp > 0 else "UNAVAILABLE"}'
+        f'ltp={ltp if ltp > 0 else "UNAVAILABLE"} iv={round(iv * 100, 2) if iv else "N/A"}'
     )
 
     return {
@@ -600,6 +656,7 @@ def _active_option_token_doc(
         'price': ltp,
         'last_price': ltp,
         'timestamp': ts or '',
+        'iv': iv or None,
     }
 
 

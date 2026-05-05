@@ -948,6 +948,421 @@ def _build_trail_step_reference_text(
     )
 
 
+def _parse_strike_type_offset(sp_raw) -> tuple[int, str]:
+    """Parse 'StrikeType.OTM2' → (+2, 'OTM2'), 'StrikeType.ITM3' → (-3, 'ITM3'), ATM → (0, 'ATM')."""
+    import re as _re
+    s = str(sp_raw or '')
+    m = _re.search(r'OTM(\d+)', s)
+    if m:
+        n = int(m.group(1))
+        return n, f'OTM{n}'
+    m = _re.search(r'ITM(\d+)', s)
+    if m:
+        n = int(m.group(1))
+        return -n, f'ITM{n}'
+    return 0, 'ATM'
+
+
+def _fetch_atm_ce_pe_prices(db, underlying: str, expiry: str, atm_strike, entry_ts: str) -> tuple:
+    """Query option_chain_historical_data for ATM CE and PE close prices at entry time.
+
+    Query strategy (tries each in order until a doc is found):
+      1. Exact timestamp match
+      2. $lte ISO timestamp on same calendar date as entry_ts
+      3. Date-prefix regex on entry_ts date
+      4. $lte expiry date (fallback for backtests where entry_ts is the run-date
+         but chain data lives on the historical simulation date)
+    """
+    try:
+        col        = db['option_chain_historical_data']
+        strike_val = float(atm_strike)
+        trade_date = str(entry_ts)[:10]
+        base       = {'underlying': underlying, 'expiry': expiry, 'strike': strike_val}
+
+        def _fetch(option_type: str):
+            q = {**base, 'type': option_type}
+            # 1. exact match
+            doc = col.find_one({**q, 'timestamp': entry_ts})
+            if doc:
+                return doc
+            # 2. $lte ISO timestamp (T-format, same day)
+            iso_ts = entry_ts.replace(' ', 'T').rstrip('Z')
+            doc = col.find_one(
+                {**q, 'timestamp': {'$lte': iso_ts, '$gte': trade_date}},
+                sort=[('timestamp', -1)],
+            )
+            if doc:
+                return doc
+            # 3. date-prefix regex on entry day
+            doc = col.find_one(
+                {**q, 'timestamp': {'$regex': f'^{trade_date}'}},
+                sort=[('timestamp', -1)],
+            )
+            if doc:
+                return doc
+            # 4. any data up to and including expiry date (handles backtest
+            #    where entry_ts is today but chain data is on the sim date)
+            return col.find_one(
+                {**q, 'timestamp': {'$lte': expiry}},
+                sort=[('timestamp', -1)],
+            )
+
+        ce_doc = _fetch('CE')
+        pe_doc = _fetch('PE')
+        ce_p   = _safe_float((ce_doc or {}).get('close')) or None
+        pe_p   = _safe_float((pe_doc or {}).get('close')) or None
+        return ce_p, pe_p
+    except Exception:
+        return None, None
+
+
+def _build_leg_entry_description(
+    leg: dict,
+    leg_cfg: dict,
+    entry_trade: dict,
+    entry_price: float,
+    is_sell: bool,
+    underlying: str = '',
+    db=None,
+    now: str = '',
+) -> str:
+    """Build a step-by-step trigger_description for the leg_entry audit row."""
+    import ast as _ast
+
+    position_str = 'Sell' if is_sell else 'Buy'
+    strike       = entry_trade.get('strike') or leg.get('strike') or '?'
+    option_type  = str(leg.get('option') or entry_trade.get('option_type') or '').strip()
+    spot         = _safe_float(
+        entry_trade.get('spot_price')
+        or entry_trade.get('underlying_at_trade')
+        or entry_trade.get('underlying_trigger_price')
+        or leg.get('spot_at_queue')
+    )
+    expiry       = str(entry_trade.get('expiry') or leg.get('expiry_date') or '')[:10]
+    # sl_op: SL moves against position → sell SL goes UP (+), buy SL goes DOWN (−)
+    sl_op        = '+' if is_sell else '−'
+    # trail_op: favorable move direction → sell price drops (−), buy price rises (+)
+    trail_op     = '−' if is_sell else '+'
+
+    lines = [
+        f"New leg entered: {position_str} {strike} {option_type} @ {entry_price}"
+        f" (spot: {spot}, expiry: {expiry})."
+    ]
+
+    # ── Strike selection ──────────────────────────────────────────────────────
+    entry_kind = str(leg_cfg.get('EntryType') or leg.get('entry_kind') or '').strip()
+    sp_raw     = leg_cfg.get('StrikeParameter') or leg.get('strike_parameter') or ''
+
+    def _parse(raw) -> dict:
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and '{' in raw:
+            try:
+                return _ast.literal_eval(raw)
+            except Exception:
+                pass
+        return {}
+
+    # ATM step to approximate ATM strike from spot
+    atm_step   = 50 if underlying.upper() == 'NIFTY' else 100
+    atm_strike = int(round(spot / atm_step) * atm_step) if spot else '?'
+
+    if 'PremiumCloseToStraddle' in entry_kind:
+        sp         = _parse(sp_raw)
+        multiplier = _safe_float(sp.get('Multiplier') or 0.5)
+        smeta      = entry_trade.get('strike_meta') or {}
+        ce_p       = smeta.get('ce_atm_price')
+        pe_p       = smeta.get('pe_atm_price')
+        atm_s      = smeta.get('atm_strike') or atm_strike
+
+        # Fallback: query DB when strike_meta wasn't stored in entry_trade
+        if (ce_p is None or pe_p is None) and db is not None:
+            entry_ts = str(
+                entry_trade.get('traded_timestamp')
+                or entry_trade.get('trigger_timestamp')
+                or now
+            )
+            _expiry = str(entry_trade.get('expiry') or leg.get('expiry_date') or '')[:10]
+            ce_p, pe_p = _fetch_atm_ce_pe_prices(db, underlying, _expiry, atm_s, entry_ts)
+
+        if ce_p is not None and pe_p is not None:
+            straddle_v = round(ce_p + pe_p, 2)
+            target_v   = round(straddle_v * multiplier, 2)
+            lines += [
+                f"Strike selection: Straddle % (multiplier: {multiplier}) → closest premium to straddle target.",
+                f"  Step 1 → ATM strike from spot {spot} = {atm_s} (nearest {atm_step}-pt step)",
+                f"  Step 2 → Straddle = {atm_s} CE @ {ce_p} + {atm_s} PE @ {pe_p} = {straddle_v}",
+                f"  Step 3 → Target premium = {straddle_v} × {multiplier} = {target_v}",
+                f"  Step 4 → Find strike with premium closest to {target_v} → {strike} {option_type} @ {entry_price}",
+            ]
+        else:
+            lines += [
+                f"Strike selection: Straddle % (multiplier: {multiplier}) → closest premium to straddle target.",
+                f"  Step 1 → ATM strike from spot {spot} = {atm_s} (nearest {atm_step}-pt step)",
+                f"  Step 2 → Straddle = CE close ({atm_s} CE) + PE close ({atm_s} PE)",
+                f"  Step 3 → Target premium = Straddle × {multiplier}",
+                f"  Step 4 → Find strike with premium closest to target → {strike} {option_type} @ {entry_price}",
+            ]
+
+    elif 'AtmMultiplier' in entry_kind:
+        multiplier  = _safe_float(sp_raw) if not isinstance(sp_raw, dict) else 1.0
+        pct_change  = round((multiplier - 1) * 100, 4)
+        pct_display = f'{pct_change:+.4g}%'.replace('+', '+').replace('-', '−')
+        adj_sym     = '+' if pct_change >= 0 else '−'
+        abs_pct     = abs(pct_change)
+        pct_of_atm  = round(abs_pct / 100 * atm_strike, 2)
+        raw_strike  = round(atm_strike * multiplier, 2)
+        final_str   = int(round(raw_strike / atm_step) * atm_step)
+        lines += [
+            f"Strike selection: % of ATM ({pct_display}, multiplier: {multiplier}).",
+            f"  Step 1 → ATM strike from spot {spot} = {atm_strike} (nearest {atm_step}-pt step)",
+            f"  Step 2 → {abs_pct}% of ATM = {abs_pct}/100 × {atm_strike} = {pct_of_atm}",
+            f"  Step 3 → Strike = ATM {adj_sym} {pct_of_atm} = {atm_strike} {adj_sym} {pct_of_atm} = {raw_strike}",
+            f"           (OR: ATM × multiplier = {atm_strike} × {multiplier} = {raw_strike})",
+            f"  Step 4 → Rounded to nearest {atm_step}-pt step → {final_str}",
+            f"  Result → {strike} {option_type} entered @ {entry_price}",
+        ]
+
+    elif 'StraddlePrice' in entry_kind:
+        sp         = _parse(sp_raw)
+        multiplier = _safe_float(sp.get('Multiplier') or 0.5)
+        adjustment = str(sp.get('Adjustment') or 'AdjustmentType.Plus')
+        is_plus    = 'Minus' not in adjustment
+        adj_sym    = '+' if is_plus else '−'
+
+        # Get CE/PE prices from meta or DB fallback
+        smeta  = entry_trade.get('strike_meta') or {}
+        ce_p   = smeta.get('ce_atm_price')
+        pe_p   = smeta.get('pe_atm_price')
+        if (ce_p is None or pe_p is None) and db is not None:
+            entry_ts = str(
+                entry_trade.get('traded_timestamp')
+                or entry_trade.get('trigger_timestamp')
+                or now
+            )
+            _expiry = str(entry_trade.get('expiry') or leg.get('expiry_date') or '')[:10]
+            ce_p, pe_p = _fetch_atm_ce_pe_prices(db, underlying, _expiry, atm_strike, entry_ts)
+
+        if ce_p is not None and pe_p is not None:
+            straddle_v  = round(ce_p + pe_p, 2)
+            offset_v    = round(multiplier * straddle_v, 2)
+            raw_strike  = round(atm_strike + offset_v if is_plus else atm_strike - offset_v, 2)
+            final_str   = int(round(raw_strike / atm_step) * atm_step)
+            lines += [
+                f"Strike selection: Straddle Width (multiplier: {multiplier}, adjustment: {adj_sym}).",
+                f"  Step 1 → ATM strike from spot {spot} = {atm_strike} (nearest {atm_step}-pt step)",
+                f"  Step 2 → Straddle = {atm_strike} CE @ {ce_p} + {atm_strike} PE @ {pe_p} = {straddle_v}",
+                f"  Step 3 → Offset = Straddle × Multiplier = {straddle_v} × {multiplier} = {offset_v}",
+                f"  Step 4 → Strike = ATM {adj_sym} Offset = {atm_strike} {adj_sym} {offset_v} = {raw_strike}"
+                f"  → rounded to {final_str} (nearest {atm_step}-pt step)",
+                f"  Result → {strike} {option_type} entered @ {entry_price}",
+            ]
+        else:
+            lines += [
+                f"Strike selection: Straddle Width (multiplier: {multiplier}, adjustment: {adj_sym}).",
+                f"  Step 1 → ATM strike from spot {spot} = {atm_strike} (nearest {atm_step}-pt step)",
+                f"  Step 2 → Straddle = ATM CE close + ATM PE close",
+                f"  Step 3 → Offset = Straddle × {multiplier}",
+                f"  Step 4 → Strike = ATM {adj_sym} Offset → rounded to nearest {atm_step}-pt step",
+                f"  Result → {strike} {option_type} entered @ {entry_price}",
+            ]
+
+    elif 'SyntheticFuture' in entry_kind:
+        offset, offset_label = _parse_strike_type_offset(sp_raw)
+        # Fetch ATM CE/PE prices to compute synthetic future
+        ce_p, pe_p = None, None
+        smeta = entry_trade.get('strike_meta') or {}
+        ce_p  = smeta.get('ce_atm_price')
+        pe_p  = smeta.get('pe_atm_price')
+        if (ce_p is None or pe_p is None) and db is not None:
+            entry_ts = str(
+                entry_trade.get('traded_timestamp')
+                or entry_trade.get('trigger_timestamp')
+                or now
+            )
+            _expiry = str(entry_trade.get('expiry') or leg.get('expiry_date') or '')[:10]
+            ce_p, pe_p = _fetch_atm_ce_pe_prices(db, underlying, _expiry, atm_strike, entry_ts)
+
+        if ce_p is not None and pe_p is not None:
+            syn_future = round(atm_strike - pe_p + ce_p, 2)
+            syn_atm    = int(round(syn_future / atm_step) * atm_step)
+            # PE: OTM is below syn_atm, ITM is above → reverse offset direction
+            _is_pe       = option_type.upper() == 'PE'
+            actual_offset = -offset if _is_pe else offset
+            if offset == 0:
+                final_strike = syn_atm
+                step4        = f"  Step 4 → ATM of Synthetic Future {syn_future} = {syn_atm} (nearest {atm_step}-pt step) → Strike {final_strike}"
+            else:
+                final_strike = syn_atm + actual_offset * atm_step
+                _dir         = '+' if actual_offset > 0 else '−'
+                step4        = f"  Step 4 → {offset_label} of Synthetic Future: {syn_atm} {_dir} {abs(offset)}×{atm_step} = {final_strike}"
+            lines += [
+                f"Strike selection: Synthetic Future ({offset_label}).",
+                f"  Step 1 → Spot {spot} → ATM strike = {atm_strike} (nearest {atm_step}-pt step)",
+                f"  Step 2 → ATM CE @ {atm_strike} = {ce_p}   |   ATM PE @ {atm_strike} = {pe_p}",
+                f"  Step 3 → Synthetic Future = {atm_strike} − {pe_p} + {ce_p} = {syn_future}",
+                f"           Formula: ATM Strike − ATM PE + ATM CE",
+                step4,
+                f"  Result → {strike} {option_type} entered @ {entry_price}",
+            ]
+        else:
+            lines += [
+                f"Strike selection: Synthetic Future ({offset_label}).",
+                f"  Step 1 → Spot {spot} → ATM strike = {atm_strike} (nearest {atm_step}-pt step)",
+                f"  Step 2 → ATM CE + ATM PE prices at entry time",
+                f"  Step 3 → Synthetic Future = ATM Strike − ATM PE + ATM CE",
+                f"  Step 4 → {offset_label} of Synthetic Future → Strike {strike}",
+                f"  Result → {strike} {option_type} entered @ {entry_price}",
+            ]
+
+    elif 'DeltaRange' in entry_kind:
+        sp        = _parse(sp_raw)
+        lower_pct = _safe_float(sp.get('LowerRange') or 0)
+        upper_pct = _safe_float(sp.get('UpperRange') or 0)
+        smeta     = entry_trade.get('strike_meta') or {}
+        sel_delta = smeta.get('selected_delta')
+        pos_side  = smeta.get('position_side') or ('sell' if is_sell else 'buy')
+        pick_rule = 'highest delta (least OTM, closest to ATM)' if pos_side == 'sell' else 'lowest delta (most OTM)'
+        lines += [
+            f"Strike selection: Delta Range ({lower_pct}% ≤ delta ≤ {upper_pct}%).",
+            f"  Range   → {lower_pct}/100 = {lower_pct/100:.2f}  to  {upper_pct}/100 = {upper_pct/100:.2f}",
+            f"  Rule    → {'Sell' if pos_side == 'sell' else 'Buy'} position → pick {pick_rule}.",
+            f"  Result  → {strike} {option_type} @ {entry_price}"
+            + (f"  |  delta = {sel_delta}" if sel_delta is not None else ''),
+        ]
+
+    elif 'Delta' in entry_kind:
+        target_pct = _safe_float(sp_raw) if not isinstance(sp_raw, dict) else 0.0
+        smeta      = entry_trade.get('strike_meta') or {}
+        sel_delta  = smeta.get('selected_delta')
+        lines += [
+            f"Strike selection: Closest Delta (target: {target_pct}).",
+            f"  Target  → {target_pct}/100 = {target_pct/100:.2f} delta.",
+            f"  Method  → Scan all {option_type} strikes, find one whose delta is nearest to {target_pct/100:.2f}.",
+            f"  Result  → {strike} {option_type} @ {entry_price}"
+            + (f"  |  delta = {sel_delta}  (closest to {target_pct/100:.2f})" if sel_delta is not None else ''),
+        ]
+
+    elif 'PremiumRange' in entry_kind:
+        sp    = _parse(sp_raw)
+        lower = _safe_float(sp.get('LowerRange') or sp.get('lower') or 0)
+        upper = _safe_float(sp.get('UpperRange') or sp.get('upper') or 0)
+        mid   = round((lower + upper) / 2, 2) if lower and upper else '?'
+        lines += [
+            f"Strike selection: Premium Range ({lower} ≤ premium ≤ {upper}).",
+            f"  Method → Find all strikes where option close is between {lower} and {upper}.",
+            f"  Target  → Pick strike closest to midpoint = ({lower} + {upper}) / 2 = {mid}.",
+            f"  Result  → {strike} {option_type} @ {entry_price}  (condition: {lower} ≤ {entry_price} ≤ {upper} ✓)",
+        ]
+
+    elif 'Premium' in entry_kind:
+        ek_lower   = entry_kind.lower()
+        is_geq     = 'geq' in ek_lower
+        is_lte     = 'lte' in ek_lower or 'leq' in ek_lower
+        is_closest = not is_geq and not is_lte
+        target_val = _safe_float(sp_raw) if not isinstance(sp_raw, dict) else 0.0
+        if is_closest:
+            diff = round(abs(entry_price - target_val), 2)
+            lines += [
+                f"Strike selection: Closest Premium to {target_val}.",
+                f"  Method → Find strike whose premium is nearest to {target_val} (checks both above & below).",
+                f"  Result → {strike} {option_type} @ {entry_price}  (diff = {diff} from target {target_val})",
+            ]
+        else:
+            direction = '≥' if is_geq else '≤'
+            sort_word = 'closest above' if is_geq else 'closest below'
+            lines += [
+                f"Strike selection: Premium {direction} {target_val}.",
+                f"  Method → Find strike where option close {direction} {target_val} → pick {sort_word} target.",
+                f"  Result → {strike} {option_type} @ {entry_price}  (condition: {entry_price} {direction} {target_val} ✓)",
+            ]
+
+    else:
+        import re as _re2
+        _sp_str    = str(sp_raw or '')
+        _m_otm     = _re2.search(r'OTM(\d+)', _sp_str)
+        _m_itm     = _re2.search(r'ITM(\d+)', _sp_str)
+        _raw_off   = int(_m_otm.group(1)) if _m_otm else (-int(_m_itm.group(1)) if _m_itm else 0)
+        # PE: OTM is below ATM, ITM is above ATM
+        _offset_n  = -_raw_off if option_type.upper() == 'PE' else _raw_off
+        _label     = f'OTM{abs(_raw_off)}' if _raw_off > 0 else (f'ITM{abs(_raw_off)}' if _raw_off < 0 else 'ATM')
+
+        if _raw_off == 0:
+            lines += [
+                f"Strike selection: ATM.",
+                f"  Method → Nearest 50-pt rounded strike to spot {spot} = {atm_strike}.",
+                f"  Result → {strike} {option_type} | Entry premium = {entry_price}",
+            ]
+        else:
+            _direction = '+' if _offset_n > 0 else '−'
+            _abs_n     = abs(_raw_off)
+            _computed  = atm_strike + _offset_n * atm_step
+            lines += [
+                f"Strike selection: {_label}.",
+                f"  Method → ATM ({atm_strike}) {_direction} {_abs_n} step × {atm_step} pts = {_computed}.",
+                f"  Result → {strike} {option_type} | Entry premium = {entry_price}",
+            ]
+
+    # ── SL formula ────────────────────────────────────────────────────────────
+    sl_cfg           = leg_cfg.get('LegStopLoss') or {}
+    sl_type          = str(sl_cfg.get('Type') or '')
+    sl_val           = _safe_float(sl_cfg.get('Value'))
+    sl_trigger_price = None
+    if 'None' not in sl_type and sl_type and sl_val > 0:
+        from features.position_manager import calc_sl_price
+        sl_trigger_price = calc_sl_price(entry_price, is_sell, sl_cfg)
+        sl_kind          = 'Percentage' if 'Percentage' in sl_type else 'Points'
+        rise_fall        = 'rises' if is_sell else 'falls'
+        if sl_kind == 'Percentage':
+            factor = round(1 + sl_val / 100 if is_sell else 1 - sl_val / 100, 6)
+            lines += [
+                f"SL @ {sl_trigger_price} ({sl_kind} {sl_val}%)",
+                f"  Formula → {entry_price} × {factor}  =  {sl_trigger_price}",
+                f"  Trigger → SL fires when price {rise_fall} to {sl_trigger_price}",
+            ]
+        else:
+            lines += [
+                f"SL @ {sl_trigger_price} (Points {sl_val})",
+                f"  Formula → {entry_price} {sl_op} {sl_val}  =  {sl_trigger_price}",
+                f"  Trigger → SL fires when price {rise_fall} to {sl_trigger_price}",
+            ]
+
+    # ── Trail SL formula ──────────────────────────────────────────────────────
+    trail_cfg  = leg_cfg.get('LegTrailSL') or {}
+    trail_type = str(trail_cfg.get('Type') or '')
+    trail_val  = trail_cfg.get('Value') or {}
+    instr_move = _safe_float(trail_val.get('InstrumentMove') if isinstance(trail_val, dict) else 0)
+    sl_move    = _safe_float(trail_val.get('StopLossMove') if isinstance(trail_val, dict) else 0)
+    if 'None' not in trail_type and trail_type and instr_move > 0:
+        move_word = 'drops' if is_sell else 'rises'
+        if is_sell:
+            step1_ltp = round(entry_price - instr_move, 2)
+            step2_ltp = round(entry_price - 2 * instr_move, 2)
+        else:
+            step1_ltp = round(entry_price + instr_move, 2)
+            step2_ltp = round(entry_price + 2 * instr_move, 2)
+
+        if sl_trigger_price is not None:
+            step1_sl = round(sl_trigger_price - sl_move if is_sell else sl_trigger_price + sl_move, 2)
+            step2_sl = round(sl_trigger_price - 2 * sl_move if is_sell else sl_trigger_price + 2 * sl_move, 2)
+            sl_ref   = str(sl_trigger_price)
+        else:
+            step1_sl = '?'
+            step2_sl = '?'
+            sl_ref   = '?'
+
+        lines += [
+            f"Trail SL: every {instr_move} pts favorable move → SL shifts {sl_move} pts.",
+            f"  How it works → price {move_word} {instr_move} pts from entry → SL moves {sl_move} pts in your favor.",
+            f"  Step 1 → LTP {move_word} to {step1_ltp}  ({entry_price} {trail_op} {instr_move})"
+            f"  →  SL: {sl_ref} {trail_op} {sl_move} = {step1_sl}",
+            f"  Step 2 → LTP {move_word} to {step2_ltp}"
+            f"  →  SL: {step1_sl} {trail_op} {sl_move} = {step2_sl}  (repeats every {instr_move} pts)",
+        ]
+
+    return '\n'.join(lines)
+
+
 def record_leg_features_at_entry(
     db,
     trade: dict,
@@ -966,6 +1381,7 @@ def record_leg_features_at_entry(
 
     Inserts into algo_leg_feature_status with status='pending'.
     Skips features that are disabled (Type=None or value=0).
+    Also inserts a leg_entry audit row (status='disabled') with full entry details.
     """
     col = db[LEG_FEATURE_STATUS_COLLECTION]
 
@@ -1132,6 +1548,44 @@ def record_leg_features_at_entry(
             col.insert_many(docs)
         except Exception as exc:
             log.error('record_leg_features_at_entry error leg=%s: %s', leg_id, exc)
+
+    # ── Leg entry audit row (always inserted, status=disabled) ───────────────
+    try:
+        entry_description = _build_leg_entry_description(
+            leg=leg, leg_cfg=leg_cfg, entry_trade=entry_trade,
+            entry_price=entry_price, is_sell=is_sell,
+            underlying=str(meta.get('ticker') or ''),
+            db=db,
+            now=now,
+        )
+        col.insert_one({
+            'strategy_id':         meta['strategy_id'],
+            'strategy_name':       meta['strategy_name'],
+            'ticker':              meta['ticker'],
+            'trade_id':            trade_id,
+            'leg_id':              leg_id,
+            'trade_date':          today,
+            'feature':             'leg_entry',
+            'enabled':             False,
+            'status':              'disabled',
+            'entry_price':         entry_price,
+            'trigger_price':       None,
+            'trigger_type':        None,
+            'trigger_value':       None,
+            'trigger_description': entry_description,
+            'trail_config':        None,
+            'current_sl_price':    None,
+            'initial_sl_price':    None,
+            'position_side':       'sell' if is_sell else 'buy',
+            'created_at':          now,
+            'updated_at':          now,
+            'triggered_at':        None,
+            'triggered_price':     None,
+            'disabled_at':         now,
+            'disabled_reason':     'entry_audit',
+        })
+    except Exception as exc:
+        log.error('leg_entry audit row error leg=%s: %s', leg_id, exc)
 
 
 def trigger_leg_feature(

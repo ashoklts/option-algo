@@ -143,6 +143,7 @@ COL_NOTIFICATIONS   = 'algo_trade_notification'
 COL_OPTION_CHAIN    = 'option_chain_historical_data'
 COL_SPOT            = 'option_chain_index_spot'
 COL_BROKER_SL       = 'algo_borker_stoploss_settings'
+COL_INDIA_VIX       = 'india_vix'
 
 #: Synthetic leg_id used for trade-level (overall) feature records
 OVERALL_LEG_ID = '__overall__'
@@ -418,6 +419,51 @@ def get_spot_at_time(
         return 0.0
 
 
+def get_vix_at_time(
+    db: MongoData,
+    now_ts: str,
+    market_cache: dict | None = None,
+) -> float:
+    """
+    Return India VIX value at the given timestamp.
+
+    Backtest:      binary-search in market_cache['vix_docs'] (pre-loaded from india_vix).
+    Live/fast-fwd: Kite WebSocket LTP (token 264969) → fallback to india_vix DB query.
+    Returns 0.0 if not found.
+    """
+    try:
+        # Backtest: use pre-loaded cache
+        if market_cache:
+            from features.spot_atm_utils import _find_latest_snapshot  # type: ignore
+            doc = _find_latest_snapshot(
+                market_cache.get('vix_docs') or [],
+                market_cache.get('vix_timestamps') or [],
+                now_ts,
+            )
+            return safe_float((doc or {}).get('close'))
+
+        # Live / fast-forward: Kite WebSocket LTP first (same method as spot price)
+        try:
+            from features.spot_atm_utils import INDIA_VIX_KITE_TOKEN  # type: ignore
+            from features.kite_broker_ws import get_ltp_map             # type: ignore
+            ltp_map = get_ltp_map() or {}
+            vix_ltp = safe_float(ltp_map.get(str(INDIA_VIX_KITE_TOKEN)))
+            if vix_ltp > 0:
+                return vix_ltp
+        except Exception:
+            pass
+
+        # Fallback: DB query
+        query: dict = {}
+        if now_ts:
+            query['timestamp'] = {'$lte': now_ts}
+        doc = db._db[COL_INDIA_VIX].find_one(query, sort=[('timestamp', -1)])
+        return safe_float((doc or {}).get('close'))
+    except Exception as exc:
+        log.warning('get_vix_at_time error: %s', exc)
+        return 0.0
+
+
 def resolve_chain_price(chain_doc: dict | None) -> float:
     """
     Extract the best available price from a chain document.
@@ -627,6 +673,8 @@ def build_exit_trade_payload(
     exit_price: float,
     exit_reason: str,
     now_ts: str,
+    exit_iv: float | None = None,
+    exit_vix: float | None = None,
 ) -> dict:
     """
     Build the exit_trade dict stored inside algo_trades.legs[].exit_trade
@@ -640,7 +688,7 @@ def build_exit_trade_payload(
       'exit_time'  – time-based forced exit
       'squared_off'– manual or broker-level square-off
     """
-    return {
+    payload = {
         'trigger_timestamp':  now_ts,
         'trigger_price':      exit_price,
         'price':              exit_price,
@@ -648,6 +696,11 @@ def build_exit_trade_payload(
         'exchange_timestamp': now_ts,
         'exit_reason':        exit_reason,
     }
+    if exit_iv is not None:
+        payload['exit_iv'] = exit_iv
+    if exit_vix is not None:
+        payload['exit_vix'] = exit_vix
+    return payload
 
 
 def close_leg_in_db(
@@ -658,6 +711,8 @@ def close_leg_in_db(
     exit_reason: str,
     now_ts: str,
     leg_id: str = '',
+    exit_iv: float | None = None,
+    exit_vix: float | None = None,
 ) -> None:
     """
     Mark a leg as CLOSED in algo_trades and update its position history record.
@@ -669,7 +724,7 @@ def close_leg_in_db(
 
     Called by every exit path: SL hit, TP hit, exit_time, square-off.
     """
-    exit_payload = build_exit_trade_payload(exit_price, exit_reason, now_ts)
+    exit_payload = build_exit_trade_payload(exit_price, exit_reason, now_ts, exit_iv=exit_iv, exit_vix=exit_vix)
     try:
         db._db[COL_ALGO_TRADES].update_one(
             {'_id': trade_id},
@@ -682,7 +737,7 @@ def close_leg_in_db(
         )
     except Exception as exc:
         log.error('close_leg_in_db error trade=%s leg=%s: %s', trade_id, leg_index, exc)
-    update_position_history_exit(db, trade_id, leg_index, exit_price, exit_reason, now_ts, leg_id=leg_id)
+    update_position_history_exit(db, trade_id, leg_index, exit_price, exit_reason, now_ts, leg_id=leg_id, exit_iv=exit_iv, exit_vix=exit_vix)
 
 
 def update_position_history_exit(
@@ -693,6 +748,8 @@ def update_position_history_exit(
     exit_reason: str,
     now_ts: str,
     leg_id: str = '',
+    exit_iv: float | None = None,
+    exit_vix: float | None = None,
 ) -> None:
     """
     Write exit_trade data to algo_trade_positions_history.
@@ -702,7 +759,7 @@ def update_position_history_exit(
 
     Called exclusively from close_leg_in_db — not called directly.
     """
-    exit_payload = build_exit_trade_payload(exit_price, exit_reason, now_ts)
+    exit_payload = build_exit_trade_payload(exit_price, exit_reason, now_ts, exit_iv=exit_iv, exit_vix=exit_vix)
     try:
         if leg_id:
             db._db[COL_POSITIONS_HIST].update_one(
@@ -847,6 +904,8 @@ def build_pending_leg(
       id, status=OPEN, entry_trade=None, is_lazy=True,
       triggered_by, leg_type, ExpiryKind, StrikeParameter, etc.
     """
+    _instrument_raw = str(leg_cfg.get('InstrumentKind') or '')
+    _instrument_kind = _instrument_raw.split('.')[-1] if '.' in _instrument_raw else _instrument_raw
     return {
         'id':              leg_id,
         'status':          OPEN_LEG_STATUS,
@@ -855,7 +914,7 @@ def build_pending_leg(
         'is_lazy':         True,
         'triggered_by':    triggered_by,
         'leg_type':        leg_type or leg_id,
-        'option':          str(leg_cfg.get('OptionType') or leg_cfg.get('option') or 'CE'),
+        'option':          str(leg_cfg.get('OptionType') or leg_cfg.get('option') or _instrument_kind or 'CE'),
         'position':        str(leg_cfg.get('Position') or leg_cfg.get('position') or 'PositionType.Sell'),
         'quantity':        safe_int(leg_cfg.get('Quantity') or leg_cfg.get('quantity') or 1),
         'lot_size':        safe_int(leg_cfg.get('LotSize') or leg_cfg.get('lot_size') or 1),
@@ -874,12 +933,18 @@ def push_new_leg_in_db(db: MongoData, trade_id: str, leg: dict) -> bool:
     Returns True on success, False on error.
     Called by _handle_reentry (§13) and queue_original_legs (§14).
     """
+    leg_id = str((leg or {}).get('id') or '').strip()
+    if not leg_id:
+        return False
     try:
-        db._db[COL_ALGO_TRADES].update_one(
-            {'_id': trade_id},
+        result = db._db[COL_ALGO_TRADES].update_one(
+            {
+                '_id': trade_id,
+                'legs': {'$not': {'$elemMatch': {'id': leg_id}}},
+            },
             {'$push': {'legs': leg}},
         )
-        return True
+        return bool(result.modified_count)
     except Exception as exc:
         log.error('push_new_leg_in_db error trade=%s: %s', trade_id, exc)
         return False
@@ -2192,6 +2257,7 @@ def requeue_all_legs_for_overall_reentry(
                 'feature':         'momentum_pending',
                 'enabled':         True,
                 'status':          'active',
+                'underlying':      str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or '').strip().upper(),
                 'option':          option_type,
                 'expiry_kind':     str(cfg.get('ExpiryKind') or 'ExpiryType.Weekly'),
                 'strike_parameter': str(cfg.get('StrikeParameter') or 'StrikeType.ATM'),
@@ -2621,7 +2687,9 @@ def process_tick(
             if past_exit:
                 chain_doc  = get_chain_at_time(ctx.db, underlying, expiry, strike, option_type, ctx.now_ts, ctx.market_cache)
                 exit_price = resolve_chain_price(chain_doc) or entry_price
-                close_leg_in_db(ctx.db, trade_id, leg_index, exit_price, 'exit_time', ctx.now_ts, leg_id=leg_id)
+                _exit_iv  = safe_float((chain_doc or {}).get('iv')) or None
+                _exit_vix = get_vix_at_time(ctx.db, ctx.now_ts, ctx.market_cache) or None
+                close_leg_in_db(ctx.db, trade_id, leg_index, exit_price, 'exit_time', ctx.now_ts, leg_id=leg_id, exit_iv=_exit_iv, exit_vix=_exit_vix)
                 ctx.actions_taken.append(f'{trade_id}/{leg_id}: exit_time @ {exit_price}')
                 continue
 
@@ -2631,13 +2699,16 @@ def process_tick(
             if not current_price:
                 continue  # no data for this candle
 
+            _tick_iv  = safe_float((chain_doc or {}).get('iv')) or None
+            _tick_vix = get_vix_at_time(ctx.db, ctx.now_ts, ctx.market_cache) or None
+
             pnl = ((entry_price - current_price) if sell_pos else (current_price - entry_price)) * qty
 
             # ── SL check ─────────────────────────────────────────────────
             stored_sl = safe_float(leg.get('current_sl_price') or leg.get('sl_price') or 0) or None
             sl_hit, sl_price = check_leg_sl(leg_cfg, entry_price, current_price, stored_sl, sell_pos)
             if sl_hit:
-                close_leg_in_db(ctx.db, trade_id, leg_index, current_price, 'stoploss', ctx.now_ts, leg_id=leg_id)
+                close_leg_in_db(ctx.db, trade_id, leg_index, current_price, 'stoploss', ctx.now_ts, leg_id=leg_id, exit_iv=_tick_iv, exit_vix=_tick_vix)
                 ctx.actions_taken.append(f'{trade_id}/{leg_id}: SL hit @ {current_price}')
                 result = handle_leg_reentry(ctx.db, trade, leg, leg_cfg, 'stoploss', ctx.now_ts)
                 if result:
@@ -2648,7 +2719,7 @@ def process_tick(
             stored_tp = safe_float(leg.get('current_tp_price') or leg.get('tp_price') or 0) or None
             tp_hit, tp_price = check_leg_target(leg_cfg, entry_price, current_price, stored_tp, sell_pos)
             if tp_hit:
-                close_leg_in_db(ctx.db, trade_id, leg_index, current_price, 'target', ctx.now_ts, leg_id=leg_id)
+                close_leg_in_db(ctx.db, trade_id, leg_index, current_price, 'target', ctx.now_ts, leg_id=leg_id, exit_iv=_tick_iv, exit_vix=_tick_vix)
                 ctx.actions_taken.append(f'{trade_id}/{leg_id}: TP hit @ {current_price}')
                 result = handle_leg_reentry(ctx.db, trade, leg, leg_cfg, 'target', ctx.now_ts)
                 if result:
@@ -2995,7 +3066,12 @@ def resolve_pending_leg_entry(
     sell_pos    = is_sell(str(leg.get('position') or leg_cfg.get('Position') or ''))
 
     # 1. Entry time gate
-    entry_time = str((trade.get('config') or {}).get('entry_time') or '').strip()
+    _entry_time_raw = str(
+        (trade.get('config') or {}).get('entry_time')
+        or trade.get('entry_time')
+        or ''
+    ).strip()
+    entry_time = _entry_time_raw[11:16] if len(_entry_time_raw) >= 16 else _entry_time_raw[:5]
     if entry_time and ctx.now_ts[11:16] < entry_time:
         return None  # too early
 
@@ -3037,10 +3113,19 @@ def resolve_pending_leg_entry(
             return None  # waiting for momentum trigger
 
     # ── Entry approved — build entry_trade ───────────────────────────────
-    lot_size = safe_int(leg_cfg.get('LotSize') or leg.get('lot_size') or 1)
-    quantity = safe_int(leg_cfg.get('Quantity') or leg.get('quantity') or 1)
+    lot_size  = safe_int(leg_cfg.get('LotSize') or leg.get('lot_size') or 1)
+    quantity  = safe_int(leg_cfg.get('Quantity') or leg.get('quantity') or 1)
+    entry_iv  = safe_float((chain_doc or {}).get('iv')) or None
+    entry_vix = get_vix_at_time(ctx.db, ctx.now_ts, ctx.market_cache) or None
 
-    print(f'[STRIKE CALC] leg={leg_id} type={option_type} spot={spot} strike={strike} close={entry_price}')
+    print(f'[STRIKE CALC] leg={leg_id} type={option_type} spot={spot} strike={strike} close={entry_price} iv={entry_iv} vix={entry_vix}')
+    log.warning(
+        '[ENTRY IV/VIX] leg=%s mode=%s chain_doc_iv=%s entry_iv=%s entry_vix=%s chain_doc_keys=%s',
+        leg_id, ctx.activation_mode,
+        safe_float((chain_doc or {}).get('iv')),
+        entry_iv, entry_vix,
+        list((chain_doc or {}).keys()),
+    )
 
     return {
         'trigger_timestamp':  ctx.now_ts,
@@ -3054,6 +3139,8 @@ def resolve_pending_leg_entry(
         'option_type':        option_type,
         'quantity':           quantity,
         'lot_size':           lot_size,
+        'entry_iv':           entry_iv,
+        'entry_vix':          entry_vix,
     }
 
 
@@ -3183,8 +3270,9 @@ def process_pending_entries(
         trade_id    = str(trade.get('_id') or '')
         underlying  = str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or '')
 
-        # Bootstrap: queue original legs if legs array is empty
-        if not any(isinstance(l, dict) for l in (trade.get('legs') or [])):
+        # Bootstrap: queue original legs only when legs array is completely empty.
+        # String IDs (history refs) count as existing — do not re-bootstrap.
+        if not trade.get('legs'):
             queue_original_legs_if_needed(ctx.db, trade, ctx.now_ts)
             # Reload trade to get the newly pushed legs
             trade = ctx.db._db[COL_ALGO_TRADES].find_one({'_id': trade_id}) or trade

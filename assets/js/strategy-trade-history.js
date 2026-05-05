@@ -2,6 +2,7 @@
     var _livePayload = null;
     var _liveTradeId = '';
     var _liveLtpMap = {};
+    var _liveLtpInstrumentMap = {};
     var _liveRefreshTimer = null;
     var _liveSyncCosts = null;
     var _tradeHistoryRequestToken = 0;
@@ -35,6 +36,8 @@
         var params = new URLSearchParams(window.location.search || '');
         return {
             strategyId: String(params.get('strategy_id') || '').trim(),
+            groupId: String(params.get('group_id') || '').trim(),
+            portfolioId: String(params.get('portfolio') || '').trim(),
             status: String(params.get('status') || 'algo-backtest').trim() || 'algo-backtest'
         };
     }
@@ -120,6 +123,157 @@
         var strike = String(leg.strike || '').trim();
         var option = String(leg.option || leg.option_type || '').trim();
         return [ticker, expiry, strike, option].filter(Boolean).join(' ');
+    }
+
+    function getLegToken(leg) {
+        return String(
+            leg && (
+                leg.token
+                || leg.instrument_token
+                || leg.instrumentToken
+                || leg.symbol_token
+                || (((leg.entry_trade || {}).contract || {}).token)
+                || (((leg.exit_trade || {}).contract || {}).token)
+            )
+            || ''
+        ).trim();
+    }
+
+    function normalizeOptionKind(value) {
+        var normalized = String(value || '').trim().toUpperCase();
+        if (normalized.indexOf('.') !== -1) {
+            normalized = normalized.split('.').pop();
+        }
+        return normalized;
+    }
+
+    function buildInstrumentSignature(ticker, expiry, strike, optionType) {
+        return [
+            String(ticker || '').trim().toUpperCase(),
+            String(expiry || '').trim().slice(0, 10),
+            String(strike || '').trim(),
+            normalizeOptionKind(optionType)
+        ].join('|');
+    }
+
+    function getLegInstrumentSignature(leg) {
+        return buildInstrumentSignature(
+            leg && (leg.ticker || leg.underlying || ''),
+            leg && (leg.expiry_date || leg.expiry || ''),
+            leg && (leg.strike || ''),
+            leg && (leg.option || leg.option_type || '')
+        );
+    }
+
+    function getLegQuantity(leg) {
+        return Number(
+            leg && (
+                leg.effective_quantity
+                || leg.quantity
+                || (((leg.entry_trade || {}).quantity))
+                || (((leg.exit_trade || {}).quantity))
+                || 0
+            )
+        ) || 0;
+    }
+
+    function getLegSide(leg) {
+        var raw = String(
+            leg && (
+                leg.position_side
+                || leg.position
+                || leg.side
+                || ''
+            )
+            || ''
+        ).trim().toLowerCase();
+        if (raw.indexOf('buy') !== -1) {
+            return 'buy';
+        }
+        if (raw.indexOf('sell') !== -1) {
+            return 'sell';
+        }
+        return 'sell';
+    }
+
+    function getLiveTradeIds() {
+        var tradeIds = {};
+        var buckets = _livePayload && _livePayload.legs ? _livePayload.legs : {};
+        ['all', 'open', 'closed', 'pending'].forEach(function (bucketName) {
+            var items = Array.isArray(buckets[bucketName]) ? buckets[bucketName] : [];
+            items.forEach(function (leg) {
+                var tradeId = String(leg && leg.trade_id || '').trim();
+                if (tradeId) {
+                    tradeIds[tradeId] = true;
+                }
+            });
+        });
+        return tradeIds;
+    }
+
+    function recomputeSummaryForPayload(payload) {
+        if (!payload) {
+            return 0;
+        }
+        var openLegs = Array.isArray(payload.legs && payload.legs.open) ? payload.legs.open : [];
+        var closedLegs = Array.isArray(payload.legs && payload.legs.closed) ? payload.legs.closed : [];
+        var openPnl = openLegs.reduce(function (sum, leg) {
+            return sum + (Number(leg && leg.pnl || 0) || 0);
+        }, 0);
+        var closedPnl = closedLegs.reduce(function (sum, leg) {
+            return sum + (Number(leg && leg.pnl || 0) || 0);
+        }, 0);
+        payload.summary = payload.summary || {};
+        payload.summary.mtm = Number((openPnl + closedPnl).toFixed(2));
+        return payload.summary.mtm;
+    }
+
+    function recomputePayloadSummaryMtm() {
+        if (!_livePayload) {
+            return 0;
+        }
+        return recomputeSummaryForPayload(_livePayload);
+    }
+
+    function resolveLiveLtpForLeg(leg) {
+        var token = getLegToken(leg);
+        if (token && _liveLtpMap[token] != null) {
+            return Number(_liveLtpMap[token] || 0) || 0;
+        }
+        var signature = getLegInstrumentSignature(leg);
+        if (signature && signature !== '|||' && _liveLtpInstrumentMap[signature] != null) {
+            return Number(_liveLtpInstrumentMap[signature] || 0) || 0;
+        }
+        return null;
+    }
+
+    function applyLiveSnapshotToPayload(payload) {
+        if (!payload || !payload.legs) {
+            return payload;
+        }
+        var openLegs = Array.isArray(payload.legs.open) ? payload.legs.open : [];
+        openLegs.forEach(function (leg) {
+            var entryTrade = leg && typeof leg.entry_trade === 'object' ? leg.entry_trade : null;
+            if (!entryTrade) {
+                return;
+            }
+            var entryPrice = Number(entryTrade.price != null ? entryTrade.price : (entryTrade.trigger_price || 0)) || 0;
+            var qty = getLegQuantity(leg);
+            if (!entryPrice || !qty) {
+                return;
+            }
+            var ltp = resolveLiveLtpForLeg(leg);
+            if (ltp == null) {
+                return;
+            }
+            var isSell = getLegSide(leg) !== 'buy';
+            leg.last_saw_price = ltp;
+            leg.mark_price = ltp;
+            leg.ltp = ltp;
+            leg.pnl = Number((isSell ? (entryPrice - ltp) * qty : (ltp - entryPrice) * qty).toFixed(2));
+        });
+        recomputeSummaryForPayload(payload);
+        return payload;
     }
 
     function getExecutionPrice(trade) {
@@ -560,20 +714,40 @@
         if (type === 'ltp_update') {
             var ltpData = message.data || {};
             var ltpItems = Array.isArray(ltpData.ltp) ? ltpData.ltp : [];
+            var ltpByInstrument = {};
             ltpItems.forEach(function (item) {
                 var token = String(item && item.token || '').trim();
+                var signature = buildInstrumentSignature(
+                    item && (item.underlying || item.ticker || ''),
+                    item && (item.expiry || item.expiry_date || ''),
+                    item && (item.strike || ''),
+                    item && (item.option_type || item.option || '')
+                );
                 if (!token) {
+                    if (signature && signature !== '|||') {
+                        ltpByInstrument[signature] = Number(item && item.ltp || 0) || 0;
+                        _liveLtpInstrumentMap[signature] = ltpByInstrument[signature];
+                    }
                     return;
                 }
                 _liveLtpMap[token] = Number(item && item.ltp || 0) || 0;
+                if (signature && signature !== '|||') {
+                    ltpByInstrument[signature] = Number(item && item.ltp || 0) || 0;
+                    _liveLtpInstrumentMap[signature] = ltpByInstrument[signature];
+                }
             });
             var openLegs = Array.isArray(_livePayload.legs && _livePayload.legs.open) ? _livePayload.legs.open : [];
             openLegs.forEach(function (leg) {
-                var token = String(leg.token || '').trim();
-                if (!token || _liveLtpMap[token] == null) {
+                var token = getLegToken(leg);
+                var signature = getLegInstrumentSignature(leg);
+                var ltp = _liveLtpMap[token];
+                if (ltp == null && signature && signature !== '|||') {
+                    ltp = ltpByInstrument[signature];
+                }
+                if (ltp == null) {
                     return;
                 }
-                var ltp = Number(_liveLtpMap[token]);
+                ltp = Number(ltp || 0) || 0;
                 var entryTrade = leg.entry_trade && typeof leg.entry_trade === 'object' ? leg.entry_trade : null;
                 if (!entryTrade) {
                     return;
@@ -582,12 +756,12 @@
                 if (!entryPrice) {
                     return;
                 }
-                var qty = Number(leg.effective_quantity || leg.quantity || 0) || 0;
+                var qty = getLegQuantity(leg);
                 if (!qty) {
                     return;
                 }
-                var isSell = String(leg.position_side || leg.position || 'sell').toLowerCase() !== 'buy';
-                leg.pnl = isSell ? (entryPrice - ltp) * qty : (ltp - entryPrice) * qty;
+                var isSell = getLegSide(leg) !== 'buy';
+                leg.pnl = Number((isSell ? (entryPrice - ltp) * qty : (ltp - entryPrice) * qty).toFixed(2));
                 leg.last_saw_price = ltp;
             });
             var spotItem = ltpItems.find(function (item) {
@@ -597,10 +771,7 @@
                 _livePayload.summary = _livePayload.summary || {};
                 _livePayload.summary.spot_price = Number(spotItem.ltp || 0) || 0;
             }
-            var openPnl = openLegs.reduce(function (s, l) { return s + (Number(l.pnl) || 0); }, 0);
-            var closedLegs = Array.isArray(_livePayload.legs && _livePayload.legs.closed) ? _livePayload.legs.closed : [];
-            var closedPnl = closedLegs.reduce(function (s, l) { return s + (Number(l.pnl) || 0); }, 0);
-            _livePayload.summary.mtm = openPnl + closedPnl;
+            recomputePayloadSummaryMtm();
             scheduleRefreshLiveMtm();
             return;
         }
@@ -611,9 +782,12 @@
                 : (message.data && Array.isArray(message.data.records) ? message.data.records : []);
             var matchedCurrentTrade = false;
             var query = getTradeHistoryQuery();
+            var liveTradeIds = getLiveTradeIds();
             records.forEach(function (record) {
                 var rid = String(record && (record._id || record.trade_id) || '').trim();
-                if (rid !== _liveTradeId) {
+                var isGroupTradeMatch = !!(query.groupId && rid && liveTradeIds[rid]);
+                var isPortfolioTradeMatch = !!(query.portfolioId && rid && liveTradeIds[rid]);
+                if (rid !== _liveTradeId && !isGroupTradeMatch && !isPortfolioTradeMatch) {
                     return;
                 }
                 matchedCurrentTrade = true;
@@ -626,20 +800,24 @@
                     });
                     if (match) {
                         if (match.pnl != null) { leg.pnl = match.pnl; }
-                        if (match.last_saw_price != null) { leg.last_saw_price = match.last_saw_price; }
+                        if (match.last_saw_price != null) {
+                            leg.last_saw_price = match.last_saw_price;
+                            leg.mark_price = match.last_saw_price;
+                            leg.ltp = match.last_saw_price;
+                        }
                     }
                 });
-                if (record.summary && record.summary.mtm != null) {
-                    _livePayload.summary.mtm = record.summary.mtm;
-                } else {
-                    var openPnl = openLegs.reduce(function (s, l) { return s + (Number(l.pnl) || 0); }, 0);
-                    var closedLegs = Array.isArray(_livePayload.legs && _livePayload.legs.closed) ? _livePayload.legs.closed : [];
-                    var closedPnl = closedLegs.reduce(function (s, l) { return s + (Number(l.pnl) || 0); }, 0);
-                    _livePayload.summary.mtm = openPnl + closedPnl;
-                }
+                applyLiveSnapshotToPayload(_livePayload);
+                recomputePayloadSummaryMtm();
                 scheduleRefreshLiveMtm();
             });
-            if (matchedCurrentTrade || (query.strategyId && records.some(function (record) {
+            var matchedCurrentGroup = query.groupId && records.some(function (record) {
+                return String(record && record.portfolio && record.portfolio.group_id || '').trim() === query.groupId;
+            });
+            var matchedCurrentPortfolio = query.portfolioId && records.some(function (record) {
+                return String(record && record.portfolio && record.portfolio.portfolio || '').trim() === query.portfolioId;
+            });
+            if (matchedCurrentTrade || matchedCurrentGroup || matchedCurrentPortfolio || (query.strategyId && records.some(function (record) {
                 var rid = String(record && (record._id || record.trade_id) || '').trim();
                 return rid === query.strategyId;
             }))) {
@@ -652,9 +830,13 @@
             var openPositions = Array.isArray(d.open_positions) ? d.open_positions : [];
             var openLegs = Array.isArray(_livePayload.legs && _livePayload.legs.open) ? _livePayload.legs.open : [];
             var updated = false;
+            var query = getTradeHistoryQuery();
+            var liveTradeIds = getLiveTradeIds();
             openPositions.forEach(function (position) {
                 var tradeId = String(position && position.trade_id || '').trim();
-                if (tradeId !== _liveTradeId) {
+                var isGroupTradeMatch = !!(query.groupId && tradeId && liveTradeIds[tradeId]);
+                var isPortfolioTradeMatch = !!(query.portfolioId && tradeId && liveTradeIds[tradeId]);
+                if (tradeId !== _liveTradeId && !isGroupTradeMatch && !isPortfolioTradeMatch) {
                     return;
                 }
                 var legId = String(position && position.leg_id || '').trim();
@@ -665,20 +847,23 @@
                     }
                     if (position.pnl != null) { leg.pnl = position.pnl; }
                     var ltp = position.ltp != null ? position.ltp : position.last_saw_price;
-                    if (ltp != null) { leg.last_saw_price = ltp; }
+                    if (ltp != null) {
+                        leg.last_saw_price = ltp;
+                        leg.mark_price = ltp;
+                        leg.ltp = ltp;
+                    }
                     updated = true;
                 });
             });
             if (updated) {
-                if (d.mtm != null) {
-                    _livePayload.summary.mtm = d.mtm;
-                } else {
-                    var openPnl = openLegs.reduce(function (s, l) { return s + (Number(l.pnl) || 0); }, 0);
-                    var closedLegs = Array.isArray(_livePayload.legs && _livePayload.legs.closed) ? _livePayload.legs.closed : [];
-                    var closedPnl = closedLegs.reduce(function (s, l) { return s + (Number(l.pnl) || 0); }, 0);
-                    _livePayload.summary.mtm = openPnl + closedPnl;
-                }
+                recomputePayloadSummaryMtm();
                 scheduleRefreshLiveMtm();
+            }
+            if (updated || ((query.groupId || query.portfolioId) && openPositions.some(function (position) {
+                var tradeId = String(position && position.trade_id || '').trim();
+                return tradeId && liveTradeIds[tradeId];
+            }))) {
+                scheduleTradeHistoryReload();
             }
         }
     }
@@ -973,6 +1158,7 @@
         if (!host) {
             return;
         }
+        recomputeSummaryForPayload(payload);
         var trade = payload.trade || {};
         var summary = payload.summary || {};
         var legs = payload.legs || {};
@@ -1004,9 +1190,23 @@
         }) : '-';
         var underlyingChange = summary.spot_change_text || '';
         var marginAmount = summary.margin_blocked != null ? formatCompactMoney(summary.margin_blocked) : '₹ 0';
-        var strategyLink = './test.html?strategy_id=' + encodeURIComponent(payload.strategy_id || '');
+        var viewType = String(payload.view_type || '').trim();
+        var isGroupedView = viewType === 'group' || viewType === 'portfolio';
+        var strategyLink = !isGroupedView && payload.strategy_id
+            ? './test.html?strategy_id=' + encodeURIComponent(payload.strategy_id || '')
+            : '';
+        var titleFallback = viewType === 'portfolio'
+            ? 'Portfolio'
+            : (isGroupedView ? 'Strategy Group' : 'Strategy');
+        var titleText = trade.name || trade._id || titleFallback;
         _livePayload = payload;
-        _liveTradeId = String(payload.strategy_id || (trade && trade._id) || '').trim();
+        _liveTradeId = String(
+            (viewType === 'portfolio'
+                ? payload.portfolio_id
+                : (isGroupedView ? payload.group_id : payload.strategy_id))
+            || (trade && trade._id)
+            || ''
+        ).trim();
 
         host.innerHTML = '' +
             '<section class="px-4 py-8 pt-16 md:px-6 md:pt-20">' +
@@ -1025,12 +1225,12 @@
             '          <div class="flex flex-wrap items-center gap-3">' +
             '            <div class="flex items-center gap-3">' +
             '              <span class="text-2xl leading-none text-primaryBlack-700">&#8592;</span>' +
-            '              <span class="text-2xl font-semibold text-primaryBlack-800">' + escapeHtml(trade.name || trade._id || 'Strategy') + '</span>' +
+            '              <span class="text-2xl font-semibold text-primaryBlack-800">' + escapeHtml(titleText) + '</span>' +
             '            </div>' +
-            '            <a href="' + escapeHtml(strategyLink) + '" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 rounded border border-primaryBlack-350 px-3 py-2 text-xs font-medium text-primaryBlue-500">' +
+            (strategyLink ? '            <a href="' + escapeHtml(strategyLink) + '" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 rounded border border-primaryBlack-350 px-3 py-2 text-xs font-medium text-primaryBlue-500">' +
             '              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>' +
             '              <span>View Strategy</span>' +
-            '            </a>' +
+            '            </a>' : '') +
             '          </div>' +
             '          <div class="flex flex-wrap items-center gap-2">' +
             '            <button type="button" class="rounded border border-primaryBlack-350 px-3 py-2 text-xs font-medium text-primaryBlack-700">Screenshot</button>' +
@@ -1115,10 +1315,12 @@
         var config = options || {};
         var query = getTradeHistoryQuery();
         var strategyId = query.strategyId;
+        var groupId = query.groupId;
+        var portfolioId = query.portfolioId;
         var status = query.status;
 
-        if (!strategyId) {
-            renderState('strategy_id is missing in the URL.');
+        if (!strategyId && !groupId && !portfolioId) {
+            renderState('strategy_id, group_id, or portfolio is missing in the URL.');
             return;
         }
 
@@ -1127,10 +1329,16 @@
         }
 
         var requestToken = ++_tradeHistoryRequestToken;
-        var requestUrl = buildApiUrl('strategy-trade-history/' + encodeURIComponent(strategyId) + '?status=' + encodeURIComponent(status));
+        var requestUrl = portfolioId
+            ? buildApiUrl('strategy-trade-history/portfolio/' + encodeURIComponent(portfolioId) + '?status=' + encodeURIComponent(status))
+            : (groupId
+                ? buildApiUrl('strategy-trade-history/group/' + encodeURIComponent(groupId) + '?status=' + encodeURIComponent(status))
+                : buildApiUrl('strategy-trade-history/' + encodeURIComponent(strategyId) + '?status=' + encodeURIComponent(status)));
 
         window.strategyTradeHistoryRequest = {
             strategy_id: strategyId,
+            group_id: groupId,
+            portfolio_id: portfolioId,
             status: status,
             url: requestUrl
         };
@@ -1147,6 +1355,7 @@
                     return;
                 }
                 window.strategyTradeHistoryPayload = payload || {};
+                applyLiveSnapshotToPayload(window.strategyTradeHistoryPayload);
                 renderPage(payload || {});
             })
             .catch(function (error) {
@@ -1170,8 +1379,8 @@
 
     function init() {
         var query = getTradeHistoryQuery();
-        if (!query.strategyId) {
-            renderState('strategy_id is missing in the URL.');
+        if (!query.strategyId && !query.groupId && !query.portfolioId) {
+            renderState('strategy_id, group_id, or portfolio is missing in the URL.');
             return;
         }
         fetchTradeHistory();

@@ -918,7 +918,7 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
                 hours += 12;
             }
         }
-        if (isEntry) {
+        if (isEntry && activationMode !== 'algo-backtest') {
             if (minutes === 0) {
                 hours = hours - 1;
                 minutes = 59;

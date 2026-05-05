@@ -79,6 +79,7 @@
 
     <script src="../assets/js/jquery-3.2.1.min.js"></script>
     <script src="../assets/js/bootstrap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="../assets/css/style.css   " data-n-g="">
 
     <link rel="stylesheet" type="text/css" href="../assets/css/bs4.css" />
@@ -1120,8 +1121,21 @@
 
         .ff-deployed-name-wrap {
             display: flex;
-            align-items: flex-start;
+            align-items: center;
             gap: 10px;
+            min-width: 0;
+        }
+
+        .ff-deployed-name-wrap>div {
+            min-width: 0;
+        }
+
+        .ff-deployed-row>div:first-child>.ff-deployed-name-wrap>div,
+        .ff-deployed-child-row>div:first-child>.ff-deployed-name-wrap>div {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
         }
 
         .ff-deployed-checkbox {
@@ -1141,9 +1155,10 @@
         }
 
         .ff-deployed-child-sub {
-            margin-top: 4px;
+            margin-top: 0;
             color: #586d81;
             font-size: 12px;
+            white-space: nowrap;
         }
 
         .ff-deployed-entry-pill {
@@ -1164,12 +1179,26 @@
             color: #22384e;
             font-size: 14px;
             font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .ff-deployed-sub {
-            margin-top: 4px;
+            margin-top: 0;
             color: #586d81;
             font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .ff-deployed-child-name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .ff-deployed-group-toggle {
+            min-width: 0;
         }
 
         .ff-deployed-status {
@@ -1459,6 +1488,196 @@
         .ff-pagination-btn:disabled {
             cursor: not-allowed;
             opacity: 0.45;
+        }
+
+        /* ── Daily MTM Graph popup ─────────────────────────────────── */
+        .ff-mtm-modal-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 99999;
+            background: rgba(0,0,0,0.65);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 12px;
+        }
+        .ff-mtm-modal-backdrop[hidden] { display: none; }
+        .ff-mtm-modal-dialog {
+            background: #fff;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 820px;
+            display: flex;
+            flex-direction: column;
+            max-height: 90vh;
+            overflow: hidden;
+        }
+        .dark .ff-mtm-modal-dialog { background: #1a1a1a; }
+        .ff-mtm-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            flex-shrink: 0;
+        }
+        .dark .ff-mtm-modal-header { border-color: #2e2e2e; }
+        .ff-mtm-modal-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        .dark .ff-mtm-modal-title { color: #f3f4f6; }
+        .ff-mtm-modal-close {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 50%;
+            color: #6b7280;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .ff-mtm-modal-close:hover { background: #f3f4f6; }
+        .ff-mtm-modal-body { overflow: auto; padding: 0; }
+        .ff-mtm-modal-top-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px 10px;
+            border-bottom: 1px solid #e5e7eb;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .dark .ff-mtm-modal-top-bar { border-color: #2e2e2e; }
+        .ff-mtm-broker-tabs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .ff-mtm-broker-tab {
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid #d1d5db;
+            cursor: pointer;
+            background: none;
+            color: #374151;
+        }
+        .ff-mtm-broker-tab.is-active {
+            border-color: #3b82f6;
+            color: #3b82f6;
+        }
+        .ff-mtm-exchange-toggle {
+            display: flex;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            overflow: hidden;
+            font-size: 12px;
+        }
+        .ff-mtm-exchange-tab {
+            padding: 4px 12px;
+            cursor: pointer;
+            background: none;
+            border: none;
+            color: #374151;
+        }
+        .ff-mtm-exchange-tab.is-active {
+            background: #eff6ff;
+            color: #3b82f6;
+            font-weight: 600;
+        }
+        .ff-mtm-stats {
+            display: flex;
+            align-items: flex-start;
+            gap: 24px;
+            padding: 16px 20px 8px;
+            flex-wrap: wrap;
+        }
+        .ff-mtm-stat-today { display: flex; flex-direction: column; gap: 4px; }
+        .ff-mtm-stat-today-label { font-size: 11px; color: #6b7280; font-weight: 500; }
+        .ff-mtm-stat-today-val { font-size: 22px; font-weight: 600; }
+        .ff-mtm-stat-group {
+            display: grid;
+            grid-template-columns: repeat(3, auto);
+            gap: 4px 20px;
+            font-size: 12px;
+        }
+        .ff-mtm-stat-item { display: flex; flex-direction: column; gap: 2px; }
+        .ff-mtm-stat-label { color: #6b7280; font-weight: 500; }
+        .ff-mtm-stat-val { font-size: 13px; font-weight: 600; }
+        .ff-mtm-stat-time { color: #9ca3af; font-size: 11px; }
+        .ff-mtm-action-btns {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+        }
+        .ff-mtm-action-btn {
+            border: 1px solid #e5e7eb;
+            border-radius: 50%;
+            padding: 6px;
+            background: none;
+            cursor: pointer;
+            color: #6b7280;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .ff-mtm-action-btn:hover { background: #f9fafb; }
+        .ff-mtm-legend {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 4px 20px 12px;
+            flex-wrap: wrap;
+        }
+        .ff-mtm-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; }
+        .ff-mtm-legend-dot { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+        .ff-mtm-underlying-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .ff-mtm-toggle-switch {
+            position: relative;
+            width: 28px;
+            height: 15px;
+            background: #9ca3af;
+            border-radius: 999px;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+            transition: background 0.2s;
+        }
+        .ff-mtm-toggle-switch.is-on { background: #3b82f6; }
+        .ff-mtm-toggle-thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 11px;
+            height: 11px;
+            background: #fff;
+            border-radius: 50%;
+            transition: left 0.2s;
+        }
+        .ff-mtm-toggle-switch.is-on .ff-mtm-toggle-thumb { left: 15px; }
+        .ff-mtm-underlying-select {
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 12px;
+            color: #374151;
+            cursor: pointer;
+        }
+        .ff-mtm-chart-wrap { padding: 0 16px 16px; position: relative; height: 320px; }
+        .ff-mtm-no-data {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #9ca3af;
+            font-size: 13px;
         }
 
         .ff-setup-modal[hidden] {
@@ -2490,7 +2709,8 @@
                                                     class="text-sm font-semibold tabular-nums text-green-500">₹ 0</p>
                                             </div>
                                             <div class="col-span-3 flex items-center justify-center gap-1"><button
-                                                    class="rounded border p-1 px-2">
+                                                    id="ff-mtm-graph-btn"
+                                                    class="rounded border p-1 px-2" title="Daily MTM Graph">
                                                     <p aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg"
                                                             width="24" height="24" viewBox="0 0 24 24" fill="none"
                                                             stroke="currentColor" stroke-width="2"
@@ -5451,6 +5671,416 @@
     }());
 </script>
 <script src="../assets/js/app-header.js"></script>
-<script src="../assets/js/script.js"></script>
+<!-- <script src="../assets/js/script.js"></script> -->
+<script>
+
+    (function () {
+        function init(scope) {
+            var root = scope || document;
+            var btn = root.querySelector('.mobile_nav_button .toggle_icon');
+            var container = root.querySelector('.header-nav-link-container');
+            if (!btn || !container || btn.dataset.navBound === 'true') return;
+
+            var overlay = document.querySelector('.pt-nav-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.className = 'pt-nav-overlay';
+                document.body.appendChild(overlay);
+            }
+
+            container.classList.remove('show');
+            btn.classList.remove('icon-burger--active');
+            btn.dataset.navBound = 'true';
+
+            function openMenu() {
+                container.classList.add('show');
+                btn.classList.add('icon-burger--active');
+                overlay.classList.add('show');
+            }
+            function closeMenu() {
+                container.classList.remove('show');
+                btn.classList.remove('icon-burger--active');
+                overlay.classList.remove('show');
+            }
+
+            btn.addEventListener('click', function () {
+                container.classList.contains('show') ? closeMenu() : openMenu();
+            });
+
+            overlay.addEventListener('click', closeMenu);
+        }
+
+        window.initAppHeaderNav = init;
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    })();
+
+</script>
+
+<!-- Daily MTM Graph Modal -->
+<div id="ff-mtm-modal" class="ff-mtm-modal-backdrop" hidden>
+  <div class="ff-mtm-modal-dialog">
+    <div class="ff-mtm-modal-header">
+      <span class="ff-mtm-modal-title">Daily MTM Graph</span>
+      <button class="ff-mtm-modal-close" id="ff-mtm-modal-close" title="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:18px;height:18px">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <div class="ff-mtm-modal-body">
+      <div class="ff-mtm-modal-top-bar">
+        <div class="ff-mtm-broker-tabs" id="ff-mtm-broker-tabs">
+          <button class="ff-mtm-broker-tab is-active" data-broker="total">Total</button>
+        </div>
+        <div class="ff-mtm-exchange-toggle">
+          <button class="ff-mtm-exchange-tab is-active" data-exchange="NSE/BSE">NSE/BSE</button>
+          <button class="ff-mtm-exchange-tab" data-exchange="DELTA">DELTA</button>
+        </div>
+      </div>
+      <div class="ff-mtm-stats">
+        <div class="ff-mtm-stat-today">
+          <span class="ff-mtm-stat-today-label">Today's MTM</span>
+          <span class="ff-mtm-stat-today-val" id="ff-mtm-today-val" style="color:#16a34a">₹ 0</span>
+        </div>
+        <div class="ff-mtm-stat-group">
+          <div class="ff-mtm-stat-item">
+            <span class="ff-mtm-stat-label">Min MTM</span>
+            <span class="ff-mtm-stat-val" id="ff-mtm-min-val" style="color:#ef4444">₹ 0</span>
+            <span class="ff-mtm-stat-time" id="ff-mtm-min-time"></span>
+          </div>
+          <div class="ff-mtm-stat-item">
+            <span class="ff-mtm-stat-label">Max MTM</span>
+            <span class="ff-mtm-stat-val" id="ff-mtm-max-val" style="color:#16a34a">₹ 0</span>
+            <span class="ff-mtm-stat-time" id="ff-mtm-max-time"></span>
+          </div>
+          <div class="ff-mtm-stat-item">
+            <span class="ff-mtm-stat-label">Max Drawdown</span>
+            <span class="ff-mtm-stat-val" id="ff-mtm-drawdown-val" style="color:#ef4444">₹ 0</span>
+          </div>
+        </div>
+        <div class="ff-mtm-action-btns">
+          <button class="ff-mtm-action-btn" id="ff-mtm-csv-btn" title="Download CSV">
+            <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px">
+              <path d="M15.16 13.9L13.66 6.31H15.08L16.02 12.42L16.96 6.31H18.33L16.88 13.9H15.16Z" fill="currentColor"/>
+              <path d="M11.03 14a2.12 2.12 0 01-1.5-.55 2.17 2.17 0 01-.64-1.57l1.17-.35c.07.48.19.84.35 1.09.17.24.42.36.75.36.25 0 .44-.07.57-.21a.77.77 0 00.2-.56c0-.22-.05-.42-.15-.59a1.7 1.7 0 00-.43-.45L9.98 10.5a3.1 3.1 0 01-.67-.84A2.18 2.18 0 019.07 8.07c0-.4.08-.74.24-1.01.17-.28.4-.49.69-.63.3-.15.64-.22 1.03-.22.6 0 1.06.2 1.37.59.33.38.52.85.56 1.41l-.95.35a3.2 3.2 0 00-.23-.69 1.13 1.13 0 00-.36-.47.82.82 0 00-.51-.16.77.77 0 00-.57.18.65.65 0 00-.2.52c0 .13.03.26.08.38.06.12.16.25.29.37l1.34 1.23c.18.17.35.35.51.55.17.19.3.41.41.65.1.25.16.53.16.85 0 .43-.09.79-.26 1.08a1.74 1.74 0 01-.72.69c-.31.14-.67.21-1.07.21z" fill="currentColor"/>
+              <path d="M5.94 14a2.05 2.05 0 01-1.42-.36 2.1 2.1 0 01-.76-1.03A5.62 5.62 0 013.72 11V9.24c0-.64.06-1.19.17-1.63.11-.46.33-.81.65-1.04.32-.25.8-.37 1.41-.37.55 0 .98.09 1.27.28.31.17.52.44.63.82.11.35.17.79.17 1.31v.45H6.74V8.58c0-.33-.02-.59-.07-.78a.6.6 0 00-.24-.43.65.65 0 00-.41-.13.65.65 0 00-.47.14.8.8 0 00-.23.56c-.04.24-.05.58-.05 1.01V11.34c0 .65.06 1.08.19 1.3.12.22.34.32.65.32.24 0 .41-.05.51-.15.11-.11.18-.27.21-.48.03-.2.05-.43.05-.68v-.62h1.27v.53c0 .51-.06.95-.18 1.31-.12.37-.33.65-.64.84-.3.19-.71.29-1.24.29z" fill="currentColor"/>
+              <path d="M1.33 13.9v-1.56h1.4v1.56H1.33z" fill="currentColor"/>
+            </svg>
+          </button>
+          <button class="ff-mtm-action-btn" id="ff-mtm-download-btn" title="Download">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px;height:16px">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+            </svg>
+          </button>
+          <button class="ff-mtm-action-btn" id="ff-mtm-share-btn" title="Share">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px;height:16px">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+            </svg>
+          </button>
+          <button class="ff-mtm-action-btn" id="ff-mtm-x-btn" title="Share on X">
+            <svg width="16" height="16" viewBox="0 0 22 25" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21.84 22.46L14.02 10.17L21.74 1.67a1 1 0 00-1.49-1.34L12.9 8.42 7.84.46A1 1 0 007 0H1a1 1 0 00-.84 1.54L7.98 13.83.26 22.33a1 1 0 001.48 1.35L9.09 15.59l5.06 7.95A1 1 0 0015 24h6a1 1 0 00.84-1.54zm-6.3-1.46L2.82 2h3.62L19.18 22h-3.64z" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="ff-mtm-legend">
+        <div class="ff-mtm-legend-item">
+          <div class="ff-mtm-legend-dot" style="background:#3b82f6"></div>
+          <span>MTM</span>
+        </div>
+        <div class="ff-mtm-legend-item">
+          <div class="ff-mtm-legend-dot" style="background:#fecaca"></div>
+          <span>Drawdown</span>
+        </div>
+        <label class="ff-mtm-underlying-toggle">
+          <button class="ff-mtm-toggle-switch" id="ff-mtm-underlying-toggle" role="switch" aria-checked="false">
+            <span class="ff-mtm-toggle-thumb"></span>
+          </button>
+          <div class="ff-mtm-legend-dot" style="background:#a46e04"></div>
+          <select class="ff-mtm-underlying-select" id="ff-mtm-underlying-select">
+            <option>NIFTY</option>
+            <option>BANKNIFTY</option>
+            <option>FINNIFTY</option>
+            <option>SENSEX</option>
+          </select>
+        </label>
+      </div>
+      <div class="ff-mtm-chart-wrap">
+        <canvas id="ff-mtm-chart"></canvas>
+        <div class="ff-mtm-no-data" id="ff-mtm-no-data" hidden>No MTM data yet. Data will appear as trades update.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+    var mtmModal = document.getElementById('ff-mtm-modal');
+    var mtmModalClose = document.getElementById('ff-mtm-modal-close');
+    var mtmGraphBtn = document.getElementById('ff-mtm-graph-btn');
+    var mtmChartCanvas = document.getElementById('ff-mtm-chart');
+    var mtmNoData = document.getElementById('ff-mtm-no-data');
+    var underlyingToggle = document.getElementById('ff-mtm-underlying-toggle');
+    var underlyingSelect = document.getElementById('ff-mtm-underlying-select');
+
+    var mtmChartInstance = null;
+    var showUnderlying = false;
+
+    function openMtmModal() {
+        mtmModal.removeAttribute('hidden');
+        renderMtmChart();
+    }
+
+    function closeMtmModal() {
+        mtmModal.setAttribute('hidden', '');
+    }
+
+    if (mtmGraphBtn) {
+        mtmGraphBtn.addEventListener('click', openMtmModal);
+    }
+    if (mtmModalClose) {
+        mtmModalClose.addEventListener('click', closeMtmModal);
+    }
+    mtmModal.addEventListener('click', function (e) {
+        if (e.target === mtmModal) closeMtmModal();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !mtmModal.hasAttribute('hidden')) closeMtmModal();
+    });
+
+    if (underlyingToggle) {
+        underlyingToggle.addEventListener('click', function () {
+            showUnderlying = !showUnderlying;
+            underlyingToggle.classList.toggle('is-on', showUnderlying);
+            underlyingToggle.setAttribute('aria-checked', showUnderlying);
+            if (!mtmModal.hasAttribute('hidden')) renderMtmChart();
+        });
+    }
+    if (underlyingSelect) {
+        underlyingSelect.addEventListener('change', function () {
+            if (!mtmModal.hasAttribute('hidden')) renderMtmChart();
+        });
+    }
+
+    // Exchange tabs
+    document.querySelectorAll('.ff-mtm-exchange-tab').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            document.querySelectorAll('.ff-mtm-exchange-tab').forEach(function (b) { b.classList.remove('is-active'); });
+            btn.classList.add('is-active');
+        });
+    });
+
+    function formatMtmVal(v) {
+        var n = Math.round(v * 100) / 100;
+        return '₹ ' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function fmtTime(ts) {
+        if (!ts) return '';
+        var d = new Date(ts);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
+    function updateMtmStats() {
+        var history = window._ffMtmHistory || [];
+        var todayEl = document.getElementById('ff-mtm-today-val');
+        var minEl = document.getElementById('ff-mtm-min-val');
+        var minTimeEl = document.getElementById('ff-mtm-min-time');
+        var maxEl = document.getElementById('ff-mtm-max-val');
+        var maxTimeEl = document.getElementById('ff-mtm-max-time');
+        var ddEl = document.getElementById('ff-mtm-drawdown-val');
+
+        if (!history.length) {
+            if (todayEl) { todayEl.textContent = '₹ 0'; todayEl.style.color = '#16a34a'; }
+            if (minEl) minEl.textContent = '₹ 0';
+            if (maxEl) maxEl.textContent = '₹ 0';
+            if (ddEl) ddEl.textContent = '₹ 0';
+            return;
+        }
+
+        var current = history[history.length - 1].mtm;
+        var minVal = Infinity, minTs = null, maxVal = -Infinity, maxTs = null;
+        var runningMax = -Infinity, maxDrawdown = 0;
+
+        history.forEach(function (pt) {
+            var m = pt.mtm;
+            if (m < minVal) { minVal = m; minTs = pt.ts; }
+            if (m > maxVal) { maxVal = m; maxTs = pt.ts; }
+            if (m > runningMax) runningMax = m;
+            var dd = runningMax - m;
+            if (dd > maxDrawdown) maxDrawdown = dd;
+        });
+
+        if (todayEl) {
+            todayEl.textContent = formatMtmVal(current);
+            todayEl.style.color = current >= 0 ? '#16a34a' : '#ef4444';
+        }
+        if (minEl) { minEl.textContent = formatMtmVal(minVal); }
+        if (minTimeEl) { minTimeEl.textContent = 'at ' + fmtTime(minTs); }
+        if (maxEl) { maxEl.textContent = formatMtmVal(maxVal); }
+        if (maxTimeEl) { maxTimeEl.textContent = 'at ' + fmtTime(maxTs); }
+        if (ddEl) { ddEl.textContent = '₹ -' + Math.round(maxDrawdown * 100) / 100; }
+    }
+
+    function renderMtmChart() {
+        var history = window._ffMtmHistory || [];
+        updateMtmStats();
+
+        if (!history.length) {
+            if (mtmNoData) mtmNoData.removeAttribute('hidden');
+            if (mtmChartInstance) { mtmChartInstance.destroy(); mtmChartInstance = null; }
+            return;
+        }
+        if (mtmNoData) mtmNoData.setAttribute('hidden', '');
+
+        var labels = history.map(function (pt) { return fmtTime(pt.ts); });
+        var mtmVals = history.map(function (pt) { return pt.mtm; });
+
+        // Drawdown area: difference from running max
+        var runningMax = -Infinity;
+        var drawdownTop = mtmVals.map(function (m) {
+            if (m > runningMax) runningMax = m;
+            return runningMax;
+        });
+
+        var selectedUnderlying = (underlyingSelect ? underlyingSelect.value : 'NIFTY').toUpperCase();
+        var spotHistory = window._ffSpotHistory || {};
+        var spotVals = history.map(function (pt) {
+            var bucket = spotHistory[selectedUnderlying] || [];
+            // find closest spot reading by timestamp
+            var best = null, bestDiff = Infinity;
+            bucket.forEach(function (sp) {
+                var diff = Math.abs(sp.ts - pt.ts);
+                if (diff < bestDiff) { bestDiff = diff; best = sp.price; }
+            });
+            return best;
+        });
+
+        var datasets = [
+            {
+                label: 'Peak',
+                data: drawdownTop,
+                borderColor: 'transparent',
+                backgroundColor: 'transparent',
+                pointRadius: 0,
+                tension: 0.3,
+                yAxisID: 'y',
+                order: 2
+            },
+            {
+                label: 'MTM',
+                data: mtmVals,
+                borderColor: '#3b82f6',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.3,
+                yAxisID: 'y',
+                order: 1,
+                fill: { target: 0, below: 'rgba(254,202,202,0.55)', above: 'transparent' }
+            }
+        ];
+
+        if (showUnderlying) {
+            datasets.push({
+                label: selectedUnderlying,
+                data: spotVals,
+                borderColor: '#a46e04',
+                backgroundColor: 'transparent',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                tension: 0.3,
+                yAxisID: 'y2',
+                order: 0
+            });
+        }
+
+        var scales = {
+            x: {
+                ticks: { maxTicksLimit: 8, font: { size: 11 }, color: '#6b7280' },
+                grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            y: {
+                position: 'left',
+                ticks: { font: { size: 11 }, color: '#6b7280',
+                    callback: function (v) { return '₹' + v.toLocaleString('en-IN'); }
+                },
+                grid: { color: 'rgba(0,0,0,0.06)' }
+            }
+        };
+        if (showUnderlying) {
+            scales.y2 = {
+                position: 'right',
+                ticks: { font: { size: 11 }, color: '#a46e04' },
+                grid: { drawOnChartArea: false }
+            };
+        }
+
+        if (mtmChartInstance) {
+            mtmChartInstance.data.labels = labels;
+            mtmChartInstance.data.datasets = datasets;
+            mtmChartInstance.options.scales = scales;
+            mtmChartInstance.update('none');
+            return;
+        }
+
+        if (!window.Chart) return;
+        mtmChartInstance = new window.Chart(mtmChartCanvas, {
+            type: 'line',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function (ctx) {
+                                if (ctx.dataset.label === 'Peak') return null;
+                                var v = ctx.parsed.y;
+                                return ctx.dataset.label + ': ₹' + (v != null ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-');
+                            }
+                        }
+                    }
+                },
+                scales: scales,
+                interaction: { mode: 'index', intersect: false }
+            }
+        });
+    }
+
+    // CSV download
+    var csvBtn = document.getElementById('ff-mtm-csv-btn');
+    if (csvBtn) {
+        csvBtn.addEventListener('click', function () {
+            var history = window._ffMtmHistory || [];
+            if (!history.length) return;
+            var rows = ['Time,MTM'];
+            history.forEach(function (pt) {
+                rows.push(fmtTime(pt.ts) + ',' + pt.mtm.toFixed(2));
+            });
+            var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'mtm-history.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+    }
+
+    window.ffOpenMtmGraph = openMtmModal;
+    window.ffRenderMtmChart = renderMtmChart;
+}());
+</script>
 
 </html>

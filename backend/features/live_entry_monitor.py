@@ -283,6 +283,18 @@ class LiveEntryMonitor:
     ) -> None:
         trade_id      = str(trade.get('_id') or '')
         strategy_name = str(trade.get('name') or trade.get('strategy_name') or '')
+        activation_mode = str(trade.get('activation_mode') or '').strip().lower()
+
+        # Fast-forward entries must happen only after execution_socket resolves
+        # the option chain and queues/enters the pending legs. If this monitor
+        # also triggers entry, the same parent legs can be bootstrapped twice.
+        if activation_mode == 'fast-forward':
+            _trace_stdout(
+                f'[ENTRY SKIP]  strategy={strategy_name}  trade_id={trade_id}  '
+                f'reason=fast_forward_uses_option_chain_entry_path'
+            )
+            return
+
         raw_entry     = str(trade.get('entry_time') or '')
         entry_hhmm    = _extract_entry_hhmm(raw_entry)
 

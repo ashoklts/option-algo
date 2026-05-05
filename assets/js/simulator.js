@@ -7816,23 +7816,34 @@ function blackScholesPut(S, K, T, r, sigma) {
     return putPrice;
 }
 
+// Bisection method to back-calculate implied IV from a live option price
+function calcImpliedIV(ltp, S, K, T, r, optionType) {
+    if (ltp <= 0 || T < 1 / (365 * 24 * 60)) return null;
+    var low = 0.001, high = 5.0;
+    for (var i = 0; i < 60; i++) {
+        var mid = (low + high) / 2;
+        var price = optionType === 'Call'
+            ? blackScholesCall(S, K, T, r, mid)
+            : blackScholesPut(S, K, T, r, mid);
+        if (Math.abs(price - ltp) < 0.01) return mid;
+        if (price < ltp) low = mid; else high = mid;
+    }
+    return (low + high) / 2;
+}
+
 // Calculate current day P&L using Black-Scholes (Target Date line)
+// Uses per-leg implied IV derived from live LTP — same method as Sensibull/AlgoBacktest.
+// This ensures the blue line passes through the actual current MTM value at spot.
 function calculateCurrentDayPnL(spotPrice) {
     if (!optionLegs.length) return 0;
 
     const r = parseFloat(document.getElementById('riskFreeRate')?.value || 6) / 100;
-    // Use market snapshot time, not browser clock, so calculations are deterministic
     const now = currentMarketTime;
-
-    // Use nearest expiry among all legs as the reference for the current-day curve.
-    // Each leg's T is computed individually so multi-expiry strategies are handled correctly.
     let totalPnL = 0;
 
     optionLegs.forEach(leg => {
-        // Exited leg: frozen PnL — constant regardless of spotPrice
-        if (leg.isQueued) {
-            return;
-        }
+        if (leg.isQueued) return;
+
         if (leg.exited) {
             totalPnL += leg.type === 'Buy'
                 ? (leg.exitPrice - leg.premium) * leg.quantity
@@ -7842,22 +7853,33 @@ function calculateCurrentDayPnL(spotPrice) {
 
         const { type, optionType, strike, premium, quantity, expiry } = leg;
 
-        // Per-leg IV: ATM IV from option chain data for this expiry + user shift
-        const sigma = getEffectiveIV(expiry);
-
-        // T = precise fractional years from RIGHT NOW to this leg's expiry
         const expiryDate = new Date(expiry);
-        // Set expiry to end-of-trading-day (15:30 IST = 10:00 UTC) for accuracy
         expiryDate.setUTCHours(10, 0, 0, 0);
         const msToExpiry = expiryDate - now;
         const T = Math.max(1 / (365 * 24 * 60), msToExpiry / (1000 * 60 * 60 * 24 * 365));
 
-        // Black-Scholes theoretical price at spotPrice with current DTE
+        // Get live LTP: leg's own liveLtp → option chain close → fallback
+        const chain = getChainData(strike, expiry, optionType);
+        const liveLtp =
+            (leg.liveLtp != null && isFinite(Number(leg.liveLtp))) ? Number(leg.liveLtp)
+            : (leg.lastPrice != null && isFinite(Number(leg.lastPrice))) ? Number(leg.lastPrice)
+            : (chain && chain.close != null && isFinite(Number(chain.close))) ? Number(chain.close)
+            : null;
+
+        // Per-leg sigma: implied IV from live price → chain IV → ATM IV (with user shift)
+        let sigma;
+        if (liveLtp && liveLtp > 0) {
+            sigma = calcImpliedIV(liveLtp, currentSpotPrice, strike, T, r, optionType) ?? getEffectiveIV(expiry);
+        } else if (chain && chain.iv && chain.iv > 0) {
+            sigma = Math.max(0.01, chain.iv * (1 + ivShiftPct / 100));
+        } else {
+            sigma = getEffectiveIV(expiry);
+        }
+
         const optionValue = optionType === 'Call'
             ? blackScholesCall(spotPrice, strike, T, r, sigma)
             : blackScholesPut(spotPrice, strike, T, r, sigma);
 
-        // PnL relative to entry premium: zero when spot = entry spot (position just opened)
         const legPnL = type === 'Buy'
             ? (optionValue - premium) * quantity
             : (premium - optionValue) * quantity;
@@ -7963,22 +7985,38 @@ function updateSpotLinePosition() {
     // Get spot price label element
     const spotPriceLabel = document.getElementById('spotPriceLabel');
 
-    // Position the vertical line
-    spotLine.style.display = 'block';
-    spotLine.style.left = xPos + 'px';
-    spotLine.style.top = chartArea.top + 'px';
-    spotLine.style.height = (chartArea.bottom - chartArea.top) + 'px';
-
-    // Position and update the spot price label at the top
+    // Position and update the spot price label inside the chart so it
+    // doesn't overlap the metrics row above the canvas.
     spotPriceLabel.style.display = 'block';
     spotPriceLabel.style.left = xPos + 'px';
-    spotPriceLabel.style.top = (chartArea.top - 30) + 'px';
     spotPriceLabel.textContent = '₹' + currentSpotPrice.toFixed(2);
 
-    // Position the floating bubble — content is kept in sync by syncPnLDisplays()
+    const topLabelGap = 8;
+    const lineLabelGap = 18;
+    const bottomBubbleGap = 12;
+    const bottomLineGap = 18;
+
+    const topLabelTop = chartArea.top + topLabelGap;
+    spotPriceLabel.style.top = topLabelTop + 'px';
+
+    // Position the floating bubble inside the chart so it doesn't slip behind
+    // the position table below the canvas.
     floatingPnL.style.display = 'flex';
     floatingPnL.style.left = (xPos - floatingPnL.offsetWidth / 2) + 'px';
-    floatingPnL.style.top = (chartArea.bottom + 50) + 'px';
+    const maxBubbleTop = chartArea.bottom - floatingPnL.offsetHeight - bottomBubbleGap;
+    const minBubbleTop = topLabelTop + spotPriceLabel.offsetHeight + 56;
+    const bubbleTop = Math.max(minBubbleTop, maxBubbleTop);
+    floatingPnL.style.top = bubbleTop + 'px';
+
+    // Reduce the visible line height so it sits between the two labels.
+    const lineTop = topLabelTop + spotPriceLabel.offsetHeight + lineLabelGap;
+    const lineBottom = bubbleTop - bottomLineGap;
+    const lineHeight = Math.max(0, lineBottom - lineTop);
+
+    spotLine.style.display = lineHeight > 0 ? 'block' : 'none';
+    spotLine.style.left = xPos + 'px';
+    spotLine.style.top = lineTop + 'px';
+    spotLine.style.height = lineHeight + 'px';
 
     // Keep adjustment lines in sync every time spot line refreshes
     updateAdjustmentLines();

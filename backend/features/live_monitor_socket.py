@@ -417,6 +417,15 @@ class _LiveMonitorLoop:
                         for token, ltp in _tm.ltp_map.items()
                         if token not in spot_token_set and ltp and float(ltp) > 0
                     ]
+                    from features.kite_ticker import INDIA_VIX_TOKEN_ID as _VIX_TOKEN_ID
+                    _vix_ltp = float(_tm.ltp_map.get(str(_VIX_TOKEN_ID), 0) or 0)
+                    vix_ltp_list = [{
+                        'token': 'NSE_00',
+                        'underlying': 'INDIA VIX',
+                        'option_type': 'SPOT',
+                        'ltp': _vix_ltp,
+                        'timestamp': now_ts,
+                    }] if _vix_ltp > 0 else []
                     from features.execution_socket import broadcast_to_channel
                     await broadcast_to_channel('update', _build_message(
                         'ltp_update',
@@ -425,7 +434,7 @@ class _LiveMonitorLoop:
                             'trade_date':       now_ts[:10],
                             'listen_time':      listen_hhmm,
                             'listen_timestamp': now_ts,
-                            'ltp':              spot_ltp_list + option_ltp_list,
+                            'ltp':              spot_ltp_list + option_ltp_list + vix_ltp_list,
                             'spot_map':         dict(_tm.spot_map),
                             'broker_status':    _tm.status,
                             'mode':             self.activation_mode,

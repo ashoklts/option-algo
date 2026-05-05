@@ -19,6 +19,7 @@ live_monitor_socket.py.
 from __future__ import annotations
 
 from typing import Any
+from bson import ObjectId
 
 from features.mongo_data import MongoData
 from features.algo_backtest_event import (
@@ -84,11 +85,67 @@ def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
         return
 
 
+def _build_kite_quote_instrument(symbol: str, underlying: str) -> str:
+    normalized_symbol = str(symbol or '').strip()
+    if not normalized_symbol:
+        return ''
+    if ':' in normalized_symbol:
+        return normalized_symbol
+    normalized_underlying = str(underlying or '').strip().upper()
+    exchange = 'BFO' if normalized_underlying in {'SENSEX', 'BANKEX'} else 'NFO'
+    return f'{exchange}:{normalized_symbol}'
+
+
+def _get_quote_access_token(db, trade: dict) -> str:
+    broker_id = str(trade.get('broker') or '').strip()
+    if broker_id:
+        broker_doc = db._db['broker_configuration'].find_one(
+            {'_id': ObjectId(broker_id)},
+            {'access_token': 1},
+        ) or {}
+        access_token = str(broker_doc.get('access_token') or '').strip()
+        if access_token:
+            return access_token
+    market_cfg = db._db['kite_market_config'].find_one({'enabled': True}, {'access_token': 1}) or {}
+    return str(market_cfg.get('access_token') or '').strip()
+
+
+def get_live_option_quote_price(db, trade: dict, symbol: str) -> float:
+    instrument = _build_kite_quote_instrument(
+        symbol,
+        str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or ''),
+    )
+    if not instrument:
+        return 0.0
+    try:
+        from features.kite_broker import get_kite_instance
+
+        access_token = _get_quote_access_token(db, trade)
+        if not access_token:
+            return 0.0
+
+        kite = get_kite_instance(access_token)
+        quote_map = kite.quote([instrument]) or {}
+        quote_doc = quote_map.get(instrument) or {}
+        for key in ('last_price', 'last_trade_price'):
+            price = _safe_float(quote_doc.get(key))
+            if price > 0:
+                return price
+        ohlc = quote_doc.get('ohlc') if isinstance(quote_doc.get('ohlc'), dict) else {}
+        for key in ('close', 'open'):
+            price = _safe_float(ohlc.get(key))
+            if price > 0:
+                return price
+    except Exception:
+        return 0.0
+    return 0.0
+
+
 def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
     db = MongoData()
     try:
         query: dict[str, Any] = {
-            'activation_mode': 'live',
+            'activation_mode': {'$in': ['live', 'fast-forward']},
             'active_on_server': True,
             'trade_status': 1,
             'status': 'StrategyStatus.Live_Running',
@@ -245,10 +302,9 @@ def resolve_live_pending_entry_snapshot(
     option_raw = str(contract_cfg.get('Option') or leg_cfg.get('InstrumentKind') or '')
     option_type = option_raw.split('.')[-1] if '.' in option_raw else option_raw
     expiry_kind = str(contract_cfg.get('Expiry') or leg_cfg.get('ExpiryKind') or 'ExpiryType.Weekly')
-    strike_param = str(contract_cfg.get('StrikeParameter') or leg_cfg.get('StrikeParameter') or 'StrikeType.ATM')
-    step = STRIKE_STEPS.get(underlying, 50)
     atm_price = resolve_atm_price(underlying, spot_price) if spot_price > 0 else 0
-    strike = _resolve_strike(spot_price, strike_param, option_type, step) if spot_price > 0 else None
+    # Always resolve strike at entry time via live option chain.
+    strike = None
 
     expiry = None
     token = ''
@@ -346,7 +402,9 @@ def resolve_live_entry_execution_payload(
     if underlying and leg_token and leg_token.isdigit() and leg_strike not in (None, '') and leg_expiry:
         ltp_map = _get_live_ltp_map()
         spot_price = _get_live_spot_price(underlying)
-        ltp = _safe_float(ltp_map.get(leg_token))
+        ltp = get_live_option_quote_price(db, trade, leg_symbol)
+        if ltp <= 0:
+            ltp = _safe_float(ltp_map.get(leg_token))
         if ltp <= 0:
             # Token not yet subscribed or no tick received — subscribe now so next tick delivers LTP
             _subscribe_live_option_token(leg_token, leg_symbol)
@@ -359,7 +417,7 @@ def resolve_live_entry_execution_payload(
             'symbol': leg_symbol,
             'entry_price': ltp,
             'current_option_price': ltp,
-            'entry_price_source': 'kite_live',
+            'entry_price_source': 'quote' if entry_price > 0 and entry_price != _safe_float(ltp_map.get(leg_token)) else 'kite_live',
             'ltp': ltp,
             'atm_price': 0,
         }
@@ -381,7 +439,13 @@ def resolve_live_entry_execution_payload(
         contract_cfg,
         now_ts=now_ts,
     ) or {}
-    entry_price = _safe_float(snapshot.get('ltp'))
+    entry_price = get_live_option_quote_price(
+        db,
+        trade,
+        str(snapshot.get('symbol') or leg.get('symbol') or '').strip(),
+    )
+    if entry_price <= 0:
+        entry_price = _safe_float(snapshot.get('ltp'))
     return {
         'spot_price': _safe_float(
             snapshot.get('spot_at_queue')
@@ -394,7 +458,7 @@ def resolve_live_entry_execution_payload(
         'symbol': str(snapshot.get('symbol') or leg.get('symbol') or '').strip(),
         'entry_price': entry_price,
         'current_option_price': entry_price,
-        'entry_price_source': 'kite_live',
+        'entry_price_source': 'quote' if entry_price > 0 and entry_price != _safe_float(snapshot.get('ltp')) else 'kite_live',
         'ltp': entry_price,
         'atm_price': snapshot.get('atm_price'),
     }
@@ -411,6 +475,7 @@ __all__ = [
     'get_spot_price',
     'get_option_ltp',
     'get_open_legs_ltp_array',
+    'get_live_option_quote_price',
     'resolve_live_pending_entry_snapshot',
     'resolve_live_entry_execution_payload',
     'sync_live_open_position_subscriptions',

@@ -29,7 +29,7 @@ import uuid
 from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, APIRouter, Query, Request
@@ -49,7 +49,15 @@ from features.kite_broker import (
 )
 from features.kite_ticker import ticker_manager
 from features.mock_ticker import mock_ticker_manager
-from features.spot_atm_utils import get_kite_expiries, list_kite_option_contracts
+from features.spot_atm_utils import (
+    _load_kite_instruments,
+    KITE_INDEX_TOKENS,
+    fetch_kite_quotes_for_expiry,
+    get_cached_spot_doc,
+    get_kite_expiries,
+    get_kite_chain_doc,
+    list_kite_option_contracts,
+)
 from features.execution_socket import (
     broadcast_backtest_simulation_step,
     emit_broker_settings_for_user,
@@ -63,7 +71,12 @@ from features.live_fast_monitor import live_fast_monitor_supervisor
 from features.live_monitor_socket import live_monitor_loop
 from features import live_entry_monitor
 from features.mock_kite_socket import mock_kite_socket_router
-from features.kite_broker_ws import load_credentials_from_db
+from features.kite_broker_ws import (
+    get_common_credentials,
+    get_ltp_map,
+    is_configured,
+    load_credentials_from_db,
+)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -84,6 +97,8 @@ _jobs_lock = multiprocessing.Lock()
 _LIST_CACHE_TTL_SECONDS = 30.0
 _list_cache: dict[str, dict] = {}
 _list_cache_lock = threading.Lock()
+_ACTIVE_OPTION_CHAIN_CACHE: dict[str, dict[str, Any]] = {}
+_ACTIVE_OPTION_CHAIN_CACHE_LOCK = threading.Lock()
 
 
 def _resolve_app_user_id(value: str | None = None) -> str:
@@ -117,6 +132,113 @@ def _invalidate_list_cache(*keys: str) -> None:
             return
         for key in keys:
             _list_cache.pop(key, None)
+
+
+def _load_active_option_chain_cache() -> dict[str, dict[str, Any]]:
+    db = MongoData()
+    try:
+        contracts = list(
+            db._db["active_option_tokens"].find(
+                {},
+                {
+                    "_id": 0,
+                    "instrument": 1,
+                    "option_type": 1,
+                    "expiry": 1,
+                    "strike": 1,
+                    "exchange": 1,
+                    "symbol": 1,
+                    "token": 1,
+                    "tokens": 1,
+                    "created_at": 1,
+                    "updated_at": 1,
+                },
+            ).sort([("instrument", 1), ("expiry", 1), ("strike", 1), ("option_type", 1)])
+        )
+    finally:
+        db.close()
+
+    cache: dict[str, dict[str, Any]] = {}
+    for contract in contracts:
+        instrument = str(contract.get("instrument") or "").strip().upper()
+        expiry = str(contract.get("expiry") or "").strip()[:10]
+        option_type = str(contract.get("option_type") or "").strip().upper()
+        token = str(contract.get("token") or contract.get("tokens") or "").strip()
+        if not instrument or not expiry:
+            continue
+
+        instrument_bucket = cache.setdefault(
+            instrument,
+            {
+                "instrument": instrument,
+                "expiries": [],
+                "expiry_count": 0,
+                "total_contracts": 0,
+                "source": "active_option_tokens",
+                "option_chain": [],
+                "grouped_option_chain": {},
+            },
+        )
+        if expiry not in instrument_bucket["expiries"]:
+            instrument_bucket["expiries"].append(expiry)
+
+        grouped_bucket = instrument_bucket["grouped_option_chain"].setdefault(
+            expiry,
+            {"CE": [], "PE": []},
+        )
+
+        strike_raw = contract.get("strike")
+        try:
+            strike_value = float(strike_raw)
+        except (TypeError, ValueError):
+            strike_value = 0.0
+        strike = int(strike_value) if strike_value.is_integer() else strike_value
+
+        row = {
+            "instrument": instrument,
+            "expiry": expiry,
+            "strike": strike,
+            "option_type": option_type,
+            "token": token,
+            "tokens": token,
+            "symbol": str(contract.get("symbol") or "").strip(),
+            "exchange": str(contract.get("exchange") or "").strip(),
+            "ltp": 0.0,
+            "created_at": str(contract.get("created_at") or "").strip(),
+            "updated_at": str(contract.get("updated_at") or "").strip(),
+        }
+        instrument_bucket["option_chain"].append(row)
+        if option_type in {"CE", "PE"}:
+            grouped_bucket[option_type].append(row)
+
+    for instrument_bucket in cache.values():
+        instrument_bucket["expiries"].sort()
+        instrument_bucket["expiry_count"] = len(instrument_bucket["expiries"])
+        instrument_bucket["total_contracts"] = len(instrument_bucket["option_chain"])
+        for expiry_bucket in instrument_bucket["grouped_option_chain"].values():
+            expiry_bucket["CE"].sort(key=lambda item: float(item.get("strike") or 0.0))
+            expiry_bucket["PE"].sort(key=lambda item: float(item.get("strike") or 0.0))
+
+    return cache
+
+
+def _refresh_active_option_chain_cache() -> dict[str, dict[str, Any]]:
+    cache = _load_active_option_chain_cache()
+    with _ACTIVE_OPTION_CHAIN_CACHE_LOCK:
+        _ACTIVE_OPTION_CHAIN_CACHE.clear()
+        _ACTIVE_OPTION_CHAIN_CACHE.update(cache)
+    return cache
+
+
+def _get_active_option_chain_cache(instrument: str) -> dict[str, Any] | None:
+    normalized_instrument = str(instrument or "").strip().upper()
+    with _ACTIVE_OPTION_CHAIN_CACHE_LOCK:
+        cached = _ACTIVE_OPTION_CHAIN_CACHE.get(normalized_instrument)
+        if cached is not None:
+            return cached
+
+    cache = _refresh_active_option_chain_cache()
+    return cache.get(normalized_instrument)
 
 
 def _request_fingerprint(request: dict) -> str:
@@ -931,6 +1053,10 @@ async def _setup_logging():
         MongoData().ensure_core_indexes()
     except Exception:
         log.exception("Failed to ensure MongoDB indexes at startup")
+    try:
+        _refresh_active_option_chain_cache()
+    except Exception:
+        log.exception("Failed to preload active option chain cache at startup")
 
 
 @app.on_event("startup")
@@ -2161,7 +2287,13 @@ async def portfolio_activate(payload: dict):
             doc["strategy"] = imported_strategy
         elif not isinstance(doc.get("strategy"), dict):
             doc["strategy"] = {"Ticker": prepared_state.get("ticker") or "NIFTY"}
-        doc["legs"] = doc.get("legs") if isinstance(doc.get("legs"), list) else []
+        # Activation must always start with a clean runtime leg state.
+        # Incoming payloads can be copied from existing algo_trades records
+        # (or exported execution JSON) and may already contain previously
+        # entered leg/history refs. Reusing them causes duplicate CE/PE legs
+        # to appear on the new activation. Preserve strategy config, but reset
+        # the runtime legs array for every fresh algo_trades insert.
+        doc["legs"] = []
         default_status = "StrategyStatus.Import" if activation_mode == "algo-backtest" else "StrategyStatus.Live_Running"
         doc["status"] = doc.get("status") or default_status
         prepared_broker = (
@@ -2346,6 +2478,124 @@ async def portfolio_execution_settings_update(payload: dict):
     }
 
 
+def _calculate_margin_sync(body: dict) -> dict:
+    """Run all blocking DB + CPU work in a thread — keeps the async event loop free."""
+    from features.span_margin import calculate_margin, SpanPosition
+
+    legs_raw = body.get("legs", [])
+    positions = []
+    resolved_legs: list[dict[str, Any]] = []
+    broker_margin: dict[str, Any] | None = None
+    db = MongoData()
+    try:
+        try:
+            load_credentials_from_db(db)
+        except Exception:
+            log.exception("Failed to load Kite credentials for margin calculation")
+
+        for leg in legs_raw:
+            underlying = str(leg.get("underlying", "NIFTY")).upper().strip()
+            instrument_type = str(leg.get("instrument_type", "CE")).upper().strip()
+            expiry = str(leg.get("expiry", "")).strip()
+            strike = float(leg.get("strike", 0) or 0)
+            transaction_type = str(leg.get("transaction_type", "SELL")).upper().strip()
+            quantity = int(leg.get("quantity", 1))
+            lot_size = int(leg.get("lot_size", 1))
+            ltp = float(leg.get("ltp", 0) or 0)
+            spot = float(leg.get("spot", 0) or 0)
+
+            if spot <= 0:
+                spot_doc = get_cached_spot_doc(db._db, underlying)
+                spot = float(
+                    (spot_doc or {}).get("spot_price")
+                    or (spot_doc or {}).get("ltp")
+                    or (spot_doc or {}).get("close")
+                    or 0.0
+                )
+
+            if instrument_type in {"CE", "PE"} and ltp <= 0:
+                ltp = _resolve_single_option_ltp(
+                    db._db, underlying, expiry, strike, instrument_type,
+                )
+            elif instrument_type == "FUT" and ltp <= 0:
+                ltp = spot
+
+            positions.append(SpanPosition(
+                underlying=underlying, instrument_type=instrument_type,
+                expiry=expiry, strike=strike, transaction_type=transaction_type,
+                quantity=quantity, lot_size=lot_size, ltp=ltp, spot=spot,
+            ))
+            resolved_legs.append({
+                "underlying": underlying, "instrument_type": instrument_type,
+                "expiry": expiry, "strike": strike, "transaction_type": transaction_type,
+                "quantity": quantity, "lot_size": lot_size, "ltp": ltp, "spot": spot,
+            })
+
+        use_broker_api = body.get("use_broker_api", True)
+        if resolved_legs and use_broker_api:
+            broker_margin = _calculate_kite_basket_margin(db._db, resolved_legs)
+    finally:
+        db.close()
+
+    if not positions:
+        return {"span_margin": 0, "exposure_margin": 0, "total_margin": 0, "premium_received": 0, "net_margin": 0, "legs": []}
+
+    product = str(body.get("product", "NRML")).upper()
+    broker  = str(body.get("broker",  "kite")).lower()
+    result  = calculate_margin(positions, product=product, broker=broker)
+    broker_final = (broker_margin or {}).get("final") or {}
+    if isinstance(broker_final, dict) and broker_final:
+        premium_received_display = 0.0
+        for leg in resolved_legs:
+            it = str(leg.get("instrument_type") or "").upper()
+            if it not in {"CE", "PE"}:
+                continue
+            leg_premium_value = float(leg.get("ltp") or 0.0) * int(leg.get("quantity") or 0) * int(leg.get("lot_size") or 0)
+            if str(leg.get("transaction_type") or "").upper() == "SELL":
+                premium_received_display += leg_premium_value
+            else:
+                premium_received_display -= leg_premium_value
+        return {
+            "span_margin": float(broker_final.get("span") or 0.0),
+            "exposure_margin": float(broker_final.get("exposure") or 0.0),
+            "total_margin": float(broker_final.get("total") or 0.0),
+            "premium_received": round(premium_received_display, 2),
+            "net_margin": float(broker_final.get("total") or 0.0),
+            "source": "kite_basket_order_margins",
+            "broker_margin": broker_margin,
+            "legs": [
+                {"underlying": l.underlying, "instrument_type": l.instrument_type,
+                 "expiry": l.expiry, "strike": l.strike, "transaction_type": l.transaction_type,
+                 "quantity": l.quantity, "lot_size": l.lot_size, "ltp": l.ltp,
+                 "span_contribution": l.span_contribution, "exposure_margin": l.exposure_margin,
+                 "total_margin": l.total_margin, "implied_vol": l.implied_vol}
+                for l in result.legs
+            ],
+        }
+    return {
+        "span_margin": result.span_margin, "exposure_margin": result.exposure_margin,
+        "total_margin": result.total_margin, "premium_received": result.premium_received,
+        "net_margin": result.net_margin, "source": "local_span_engine",
+        "legs": [
+            {"underlying": l.underlying, "instrument_type": l.instrument_type,
+             "expiry": l.expiry, "strike": l.strike, "transaction_type": l.transaction_type,
+             "quantity": l.quantity, "lot_size": l.lot_size, "ltp": l.ltp,
+             "span_contribution": l.span_contribution, "exposure_margin": l.exposure_margin,
+             "total_margin": l.total_margin, "implied_vol": l.implied_vol}
+            for l in result.legs
+        ],
+    }
+
+
+@router.post("/margin/calculate")
+async def calculate_margin_api(request: Request):
+    import asyncio
+    body = await request.json()
+    if not body.get("legs"):
+        return {"span_margin": 0, "exposure_margin": 0, "total_margin": 0, "premium_received": 0, "net_margin": 0, "legs": []}
+    return await asyncio.to_thread(_calculate_margin_sync, body)
+
+
 @router.get("/trades/list")
 async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest", trade_status: Optional[int] = None):
     """
@@ -2426,6 +2676,299 @@ async def list_algo_executions(environment: str = "algo-backtest", is_signal: bo
     )
 
 
+def _build_trade_history_payload(db_obj, raw_trade: dict, normalized_status: str):
+    normalized_strategy_id = str(raw_trade.get("_id") or "").strip()
+    trade_record = {
+        "_id": normalized_strategy_id,
+        "strategy_id": str(raw_trade.get("strategy_id") or ""),
+        "source_strategy_id": str(raw_trade.get("source_strategy_id") or ""),
+        "name": raw_trade.get("name") or "",
+        "status": raw_trade.get("status") or "",
+        "trade_status": raw_trade.get("trade_status"),
+        "active_on_server": bool(raw_trade.get("active_on_server")),
+        "activation_mode": raw_trade.get("activation_mode") or normalized_status,
+        "trade_date": raw_trade.get("trade_date") or "",
+        "broker": raw_trade.get("broker") or "",
+        "user_id": raw_trade.get("user_id") or "",
+        "ticker": raw_trade.get("ticker") or "",
+        "creation_ts": raw_trade.get("creation_ts") or "",
+        "last_activation_ts": raw_trade.get("last_activation_ts") or "",
+        "entry_time": raw_trade.get("entry_time") or "",
+        "exit_time": raw_trade.get("exit_time") or "",
+        "portfolio": raw_trade.get("portfolio") if isinstance(raw_trade.get("portfolio"), dict) else {},
+        "strategy": raw_trade.get("strategy") if isinstance(raw_trade.get("strategy"), dict) else {},
+        "execution_config_base": raw_trade.get("execution_config_base") if isinstance(raw_trade.get("execution_config_base"), dict) else {},
+        "execution_config_extra": raw_trade.get("execution_config_extra") if isinstance(raw_trade.get("execution_config_extra"), dict) else {},
+    }
+
+    populated_records = _populate_history_legs(db_obj, [trade_record])
+    populated_records = _attach_leg_feature_statuses(db_obj, populated_records)
+    populated_records = _attach_broker_configuration_details(db_obj, populated_records)
+    detailed_trade = _enrich_execution_record_with_pnl((populated_records or [trade_record])[0])
+
+    legs = detailed_trade.get("legs") if isinstance(detailed_trade.get("legs"), list) else []
+    pending_feature_legs = detailed_trade.get("pending_feature_legs") if isinstance(detailed_trade.get("pending_feature_legs"), list) else []
+
+    trade_mtm = round(sum(float((leg or {}).get("pnl") or 0) for leg in legs if isinstance(leg, dict)), 2)
+    open_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 1]
+    closed_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 2]
+    pending_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 0]
+
+    orders = []
+    for doc in (
+        db_obj["broker_orders"]
+        .find({"trade_id": normalized_strategy_id})
+        .sort("placed_at", -1)
+        .limit(1000)
+    ):
+        doc["_id"] = str(doc.get("_id") or "")
+        orders.append(doc)
+
+    notifications = []
+    feature_filters = [{"trade_id": normalized_strategy_id}]
+    related_strategy_ids = {
+        str(detailed_trade.get("strategy_id") or "").strip(),
+        str(detailed_trade.get("source_strategy_id") or "").strip(),
+    }
+    related_strategy_ids.discard("")
+    for related_id in related_strategy_ids:
+        feature_filters.append({"strategy_id": related_id})
+
+    for doc in (
+        db_obj["algo_leg_feature_status"]
+        .find({"$or": feature_filters})
+        .sort("created_at", -1)
+        .limit(1000)
+    ):
+        normalized_doc = dict(doc)
+        normalized_doc["_id"] = str(doc.get("_id") or "")
+        normalized_doc["type"] = str(doc.get("feature") or "").strip() or "feature_status"
+        normalized_doc["event_type"] = normalized_doc["type"]
+        normalized_doc["timestamp"] = (
+            doc.get("triggered_at")
+            or doc.get("updated_at")
+            or doc.get("created_at")
+            or ""
+        )
+        notifications.append(normalized_doc)
+
+    notification_status = {}
+    for item in notifications:
+        event_type = str(item.get("event_type") or item.get("type") or "unknown").strip() or "unknown"
+        notification_status[event_type] = notification_status.get(event_type, 0) + 1
+
+    return {
+        "success": True,
+        "view_type": "strategy",
+        "strategy_id": normalized_strategy_id,
+        "group_id": str(((detailed_trade.get("portfolio") or {}).get("group_id")) or "").strip(),
+        "activation_mode": str(detailed_trade.get("activation_mode") or normalized_status),
+        "trade": detailed_trade,
+        "summary": {
+            "mtm": trade_mtm,
+            "open_positions": len(open_legs),
+            "closed_positions": len(closed_legs),
+            "pending_positions": len(pending_legs),
+            "broker_orders_count": len(orders),
+            "notifications_count": len(notifications),
+        },
+        "legs": {
+            "all": legs,
+            "open": open_legs,
+            "closed": closed_legs,
+            "pending": pending_legs,
+            "pending_feature_legs": pending_feature_legs,
+        },
+        "broker_orders": orders,
+        "open_orders": [
+            order for order in orders
+            if str(order.get("status") or "").strip().upper() in {"OPEN", "PENDING", "TRIGGER PENDING"}
+        ],
+        "notifications": notifications,
+        "notification_status": notification_status,
+        "execution_config_base": raw_trade.get("execution_config_base") if isinstance(raw_trade.get("execution_config_base"), dict) else {},
+        "execution_config_extra": raw_trade.get("execution_config_extra") if isinstance(raw_trade.get("execution_config_extra"), dict) else {},
+    }
+
+
+def _aggregate_group_trade_history_payload(group_id: str, normalized_status: str, payloads: list[dict]):
+    valid_payloads = [payload for payload in payloads if isinstance(payload, dict)]
+    if not valid_payloads:
+        raise HTTPException(status_code=404, detail="Strategy trade history not found for this group_id")
+
+    primary_payload = valid_payloads[0]
+    primary_trade = primary_payload.get("trade") if isinstance(primary_payload.get("trade"), dict) else {}
+    group_name = str(((primary_trade.get("portfolio") or {}).get("group_name")) or "").strip() or f"Group {group_id}"
+    strategy_names = []
+    tickers = set()
+    broker_labels = set()
+    user_id = ""
+    all_legs = []
+    open_legs = []
+    closed_legs = []
+    pending_legs = []
+    pending_feature_legs = []
+    broker_orders = []
+    notifications = []
+    strategy_execution_configs = []
+    notification_status = {}
+    total_mtm = 0.0
+
+    for payload in valid_payloads:
+        trade = payload.get("trade") if isinstance(payload.get("trade"), dict) else {}
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        legs = payload.get("legs") if isinstance(payload.get("legs"), dict) else {}
+        trade_name = str(trade.get("name") or "").strip()
+        if trade_name:
+            strategy_names.append(trade_name)
+        ticker = str(trade.get("ticker") or trade.get("underlying") or "").strip()
+        if ticker:
+            tickers.add(ticker)
+        broker_label = str(
+            ((trade.get("broker_details") or {}).get("broker_name"))
+            or ((trade.get("broker_details") or {}).get("display_name"))
+            or trade.get("broker_label")
+            or trade.get("broker")
+            or ""
+        ).strip()
+        if broker_label:
+            broker_labels.add(broker_label)
+        if not user_id:
+            user_id = str(trade.get("user_id") or "").strip()
+
+        total_mtm += float(summary.get("mtm") or 0)
+        all_legs.extend(legs.get("all") if isinstance(legs.get("all"), list) else [])
+        open_legs.extend(legs.get("open") if isinstance(legs.get("open"), list) else [])
+        closed_legs.extend(legs.get("closed") if isinstance(legs.get("closed"), list) else [])
+        pending_legs.extend(legs.get("pending") if isinstance(legs.get("pending"), list) else [])
+        pending_feature_legs.extend(legs.get("pending_feature_legs") if isinstance(legs.get("pending_feature_legs"), list) else [])
+        broker_orders.extend(payload.get("broker_orders") if isinstance(payload.get("broker_orders"), list) else [])
+        notifications.extend(payload.get("notifications") if isinstance(payload.get("notifications"), list) else [])
+
+        for key, value in (payload.get("notification_status") or {}).items():
+            normalized_key = str(key or "").strip() or "unknown"
+            notification_status[normalized_key] = notification_status.get(normalized_key, 0) + int(value or 0)
+
+        strategy_execution_configs.append({
+            "strategy_id": str(trade.get("_id") or payload.get("strategy_id") or "").strip(),
+            "name": str(trade.get("name") or "").strip(),
+            "execution_config_base": payload.get("execution_config_base") if isinstance(payload.get("execution_config_base"), dict) else {},
+            "execution_config_extra": payload.get("execution_config_extra") if isinstance(payload.get("execution_config_extra"), dict) else {},
+        })
+
+    broker_orders.sort(key=lambda item: str((item or {}).get("placed_at") or ""), reverse=True)
+    notifications.sort(
+        key=lambda item: str(
+            (item or {}).get("timestamp")
+            or (item or {}).get("triggered_at")
+            or (item or {}).get("updated_at")
+            or (item or {}).get("created_at")
+            or ""
+        ),
+        reverse=True,
+    )
+
+    strategy_count = len(valid_payloads)
+    tickers_label = ", ".join(sorted(tickers)) if tickers else "Multiple"
+    broker_label_text = ", ".join(sorted(broker_labels)) if broker_labels else (primary_trade.get("broker") or "-")
+    trade = deepcopy(primary_trade)
+    trade["_id"] = group_id
+    trade["name"] = f"{group_name} ({strategy_count})"
+    trade["ticker"] = tickers_label
+    trade["user_id"] = user_id or str(trade.get("user_id") or "")
+    trade["activation_mode"] = normalized_status
+    trade["broker_label"] = broker_label_text
+    portfolio_meta = trade.get("portfolio") if isinstance(trade.get("portfolio"), dict) else {}
+    portfolio_meta["group_id"] = group_id
+    portfolio_meta["group_name"] = group_name
+    portfolio_meta["strategy_count"] = strategy_count
+    trade["portfolio"] = portfolio_meta
+    trade["strategy_names"] = strategy_names
+    trade["status"] = trade.get("status") or "Group"
+
+    return {
+        "success": True,
+        "view_type": "group",
+        "group_id": group_id,
+        "strategy_id": "",
+        "activation_mode": normalized_status,
+        "trade": trade,
+        "summary": {
+            "mtm": round(total_mtm, 2),
+            "open_positions": len(open_legs),
+            "closed_positions": len(closed_legs),
+            "pending_positions": len(pending_legs),
+            "broker_orders_count": len(broker_orders),
+            "notifications_count": len(notifications),
+            "strategy_count": strategy_count,
+        },
+        "legs": {
+            "all": all_legs,
+            "open": open_legs,
+            "closed": closed_legs,
+            "pending": pending_legs,
+            "pending_feature_legs": pending_feature_legs,
+        },
+        "broker_orders": broker_orders[:1000],
+        "open_orders": [
+            order for order in broker_orders
+            if str(order.get("status") or "").strip().upper() in {"OPEN", "PENDING", "TRIGGER PENDING"}
+        ][:1000],
+        "notifications": notifications[:1000],
+        "notification_status": notification_status,
+        "execution_config_base": (strategy_execution_configs[0].get("execution_config_base") if strategy_execution_configs else {}),
+        "execution_config_extra": (strategy_execution_configs[0].get("execution_config_extra") if strategy_execution_configs else {}),
+        "strategy_execution_configs": strategy_execution_configs,
+    }
+
+
+def _aggregate_portfolio_trade_history_payload(portfolio_id: str, normalized_status: str, payloads: list[dict]):
+    valid_payloads = [payload for payload in payloads if isinstance(payload, dict)]
+    if not valid_payloads:
+        raise HTTPException(status_code=404, detail="Strategy trade history not found for this portfolio")
+
+    # Group individual strategy payloads by group_id
+    groups_map: dict[str, list[dict]] = {}
+    for payload in valid_payloads:
+        gid = str(payload.get("group_id") or ((payload.get("trade") or {}).get("portfolio") or {}).get("group_id") or "").strip()
+        if not gid:
+            gid = "__no_group__"
+        groups_map.setdefault(gid, []).append(payload)
+
+    # Build per-group aggregations
+    groups = []
+    for gid, group_payloads in groups_map.items():
+        group_agg = _aggregate_group_trade_history_payload(gid, normalized_status, group_payloads)
+        group_agg["strategies"] = group_payloads
+        groups.append(group_agg)
+
+    # Sort groups by group_id for stable ordering
+    groups.sort(key=lambda g: str(g.get("group_id") or ""))
+
+    # Portfolio-level aggregation (sum of all strategies)
+    portfolio_agg = _aggregate_group_trade_history_payload(portfolio_id, normalized_status, valid_payloads)
+    trade = portfolio_agg.get("trade") if isinstance(portfolio_agg.get("trade"), dict) else {}
+    portfolio_meta = trade.get("portfolio") if isinstance(trade.get("portfolio"), dict) else {}
+    portfolio_name = str(portfolio_meta.get("group_name") or trade.get("name") or "").strip() or f"Portfolio {portfolio_id}"
+    strategy_count = len(valid_payloads)
+    group_count = len(groups)
+
+    trade["_id"] = portfolio_id
+    trade["name"] = f"{portfolio_name} ({strategy_count})"
+    portfolio_meta["portfolio"] = portfolio_id
+    trade["portfolio"] = portfolio_meta
+
+    portfolio_agg["view_type"] = "portfolio"
+    portfolio_agg["portfolio_id"] = portfolio_id
+    portfolio_agg["group_id"] = str(portfolio_meta.get("group_id") or "").strip()
+    portfolio_agg["strategy_id"] = ""
+    portfolio_agg["trade"] = trade
+    portfolio_agg["summary"]["group_count"] = group_count
+    portfolio_agg["groups"] = groups
+    portfolio_agg["strategies"] = valid_payloads
+    return portfolio_agg
+
+
 @router.get("/strategy-trade-history/{strategy_id}")
 async def get_strategy_trade_history(strategy_id: str, status: str = "algo-backtest"):
     db = MongoData()
@@ -2445,110 +2988,73 @@ async def get_strategy_trade_history(strategy_id: str, status: str = "algo-backt
         if not raw_trade:
             raise HTTPException(status_code=404, detail="Strategy trade history not found")
 
-        trade_record = {
-            "_id": str(raw_trade.get("_id") or ""),
-            "strategy_id": str(raw_trade.get("strategy_id") or ""),
-            "source_strategy_id": str(raw_trade.get("source_strategy_id") or ""),
-            "name": raw_trade.get("name") or "",
-            "status": raw_trade.get("status") or "",
-            "trade_status": raw_trade.get("trade_status"),
-            "active_on_server": bool(raw_trade.get("active_on_server")),
-            "activation_mode": raw_trade.get("activation_mode") or normalized_status,
-            "broker": raw_trade.get("broker") or "",
-            "user_id": raw_trade.get("user_id") or "",
-            "ticker": raw_trade.get("ticker") or "",
-            "creation_ts": raw_trade.get("creation_ts") or "",
-            "last_activation_ts": raw_trade.get("last_activation_ts") or "",
-            "entry_time": raw_trade.get("entry_time") or "",
-            "exit_time": raw_trade.get("exit_time") or "",
-            "portfolio": raw_trade.get("portfolio") if isinstance(raw_trade.get("portfolio"), dict) else {},
-            "strategy": raw_trade.get("strategy") if isinstance(raw_trade.get("strategy"), dict) else {},
-        }
+        return _build_trade_history_payload(db._db, raw_trade, normalized_status)
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
 
-        populated_records = _populate_history_legs(db._db, [trade_record])
-        populated_records = _attach_leg_feature_statuses(db._db, populated_records)
-        populated_records = _attach_broker_configuration_details(db._db, populated_records)
-        detailed_trade = _enrich_execution_record_with_pnl((populated_records or [trade_record])[0])
 
-        legs = detailed_trade.get("legs") if isinstance(detailed_trade.get("legs"), list) else []
-        pending_feature_legs = detailed_trade.get("pending_feature_legs") if isinstance(detailed_trade.get("pending_feature_legs"), list) else []
+@router.get("/strategy-trade-history/group/{group_id}")
+async def get_group_trade_history(group_id: str, status: str = "algo-backtest"):
+    db = MongoData()
+    try:
+        normalized_group_id = str(group_id or "").strip()
+        normalized_status = str(status or "").strip() or "algo-backtest"
+        if not normalized_group_id:
+            raise HTTPException(status_code=400, detail="group_id is required")
 
-        trade_mtm = round(sum(float((leg or {}).get("pnl") or 0) for leg in legs if isinstance(leg, dict)), 2)
-        open_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 1]
-        closed_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 2]
-        pending_legs = [leg for leg in legs if int((leg or {}).get("status") or 0) == 0]
+        raw_trades = list(db._db["algo_trades"].find({
+            "portfolio.group_id": normalized_group_id,
+            "activation_mode": normalized_status,
+        }))
+        if not raw_trades:
+            raw_trades = list(db._db["algo_trades"].find({
+                "portfolio.group_id": normalized_group_id,
+            }))
+        if not raw_trades:
+            raise HTTPException(status_code=404, detail="Strategy trade history not found for this group_id")
 
-        orders = []
-        for doc in (
-            db._db["broker_orders"]
-            .find({"trade_id": normalized_strategy_id})
-            .sort("placed_at", -1)
-            .limit(1000)
-        ):
-            doc["_id"] = str(doc.get("_id") or "")
-            orders.append(doc)
+        payloads = [
+            _build_trade_history_payload(db._db, raw_trade, normalized_status)
+            for raw_trade in raw_trades
+        ]
+        result = _aggregate_group_trade_history_payload(normalized_group_id, normalized_status, payloads)
+        result["strategies"] = payloads
+        return result
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
 
-        notifications = []
-        feature_filters = [{"trade_id": normalized_strategy_id}]
-        related_strategy_ids = {
-            str(detailed_trade.get("strategy_id") or "").strip(),
-            str(detailed_trade.get("source_strategy_id") or "").strip(),
-        }
-        related_strategy_ids.discard("")
-        for related_id in related_strategy_ids:
-            feature_filters.append({"strategy_id": related_id})
 
-        for doc in (
-            db._db["algo_leg_feature_status"]
-            .find({"$or": feature_filters})
-            .sort("created_at", -1)
-            .limit(1000)
-        ):
-            normalized_doc = dict(doc)
-            normalized_doc["_id"] = str(doc.get("_id") or "")
-            normalized_doc["type"] = str(doc.get("feature") or "").strip() or "feature_status"
-            normalized_doc["event_type"] = normalized_doc["type"]
-            normalized_doc["timestamp"] = (
-                doc.get("triggered_at")
-                or doc.get("updated_at")
-                or doc.get("created_at")
-                or ""
-            )
-            notifications.append(normalized_doc)
+@router.get("/strategy-trade-history/portfolio/{portfolio_id}")
+async def get_portfolio_trade_history(portfolio_id: str, status: str = "algo-backtest"):
+    db = MongoData()
+    try:
+        normalized_portfolio_id = str(portfolio_id or "").strip()
+        normalized_status = str(status or "").strip() or "algo-backtest"
+        if not normalized_portfolio_id:
+            raise HTTPException(status_code=400, detail="portfolio_id is required")
 
-        notification_status = {}
-        for item in notifications:
-            event_type = str(item.get("event_type") or item.get("type") or "unknown").strip() or "unknown"
-            notification_status[event_type] = notification_status.get(event_type, 0) + 1
+        raw_trades = list(db._db["algo_trades"].find({
+            "portfolio.portfolio": normalized_portfolio_id,
+            "activation_mode": normalized_status,
+        }))
+        if not raw_trades:
+            raw_trades = list(db._db["algo_trades"].find({
+                "portfolio.portfolio": normalized_portfolio_id,
+            }))
+        if not raw_trades:
+            raise HTTPException(status_code=404, detail="Strategy trade history not found for this portfolio")
 
-        return {
-            "success": True,
-            "strategy_id": normalized_strategy_id,
-            "activation_mode": str(detailed_trade.get("activation_mode") or normalized_status),
-            "trade": detailed_trade,
-            "summary": {
-                "mtm": trade_mtm,
-                "open_positions": len(open_legs),
-                "closed_positions": len(closed_legs),
-                "pending_positions": len(pending_legs),
-                "broker_orders_count": len(orders),
-                "notifications_count": len(notifications),
-            },
-            "legs": {
-                "all": legs,
-                "open": open_legs,
-                "closed": closed_legs,
-                "pending": pending_legs,
-                "pending_feature_legs": pending_feature_legs,
-            },
-            "broker_orders": orders,
-            "open_orders": [
-                order for order in orders
-                if str(order.get("status") or "").strip().upper() in {"OPEN", "PENDING", "TRIGGER PENDING"}
-            ],
-            "notifications": notifications,
-            "notification_status": notification_status,
-        }
+        payloads = [
+            _build_trade_history_payload(db._db, raw_trade, normalized_status)
+            for raw_trade in raw_trades
+        ]
+        return _aggregate_portfolio_trade_history_payload(normalized_portfolio_id, normalized_status, payloads)
     finally:
         try:
             db.close()
@@ -5154,6 +5660,325 @@ def _sync_active_option_tokens(instrument: str) -> dict:
         db.close()
 
 
+def _get_live_index_spot_price(normalized_instrument: str) -> float:
+    index_token = KITE_INDEX_TOKENS.get(normalized_instrument)
+    if not index_token:
+        return 0.0
+    try:
+        from features.kite_broker_ws import get_ltp_map  # type: ignore
+
+        ltp_value = (get_ltp_map() or {}).get(str(index_token), 0.0)
+        return float(ltp_value or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _resolve_single_option_ltp(
+    db,
+    underlying: str,
+    expiry: str,
+    strike: float,
+    option_type: str,
+) -> float:
+    normalized_underlying = str(underlying or "").strip().upper()
+    normalized_expiry = str(expiry or "").strip()[:10]
+    normalized_option_type = str(option_type or "").strip().upper()
+
+    contract = {}
+    try:
+        contract = db["active_option_tokens"].find_one(
+            {
+                "instrument": normalized_underlying,
+                "expiry": normalized_expiry,
+                "strike": strike,
+                "option_type": normalized_option_type,
+            },
+            {
+                "_id": 0,
+                "token": 1,
+                "tokens": 1,
+                "symbol": 1,
+            },
+        ) or {}
+    except Exception:
+        contract = {}
+
+    token = str(contract.get("token") or contract.get("tokens") or "").strip()
+    symbol = str(contract.get("symbol") or "").strip()
+    if not token:
+        try:
+            inst = (_load_kite_instruments() or {}).get(
+                (normalized_underlying, normalized_expiry, float(strike), normalized_option_type)
+            ) or {}
+            token = str(inst.get("token") or "").strip()
+            symbol = str(inst.get("symbol") or "").strip()
+        except Exception:
+            token = ""
+
+    if not token:
+        log.warning(
+            "margin quote token not found underlying=%s expiry=%s strike=%s option_type=%s",
+            normalized_underlying,
+            normalized_expiry,
+            strike,
+            normalized_option_type,
+        )
+        return 0.0
+
+    try:
+        live_ltp = float((get_ltp_map() or {}).get(token, 0.0) or 0.0)
+        if live_ltp > 0:
+            return live_ltp
+    except Exception:
+        pass
+
+    try:
+        if not is_configured():
+            return 0.0
+        api_key, access_token = get_common_credentials()
+        if not api_key or not access_token:
+            return 0.0
+        kite = get_kite_instance(access_token)
+        quotes = kite.quote([int(token)]) or {}
+        for _quote_key, quote_doc in quotes.items():
+            quote_ltp = float(
+                quote_doc.get("last_price")
+                or (quote_doc.get("ohlc") or {}).get("close")
+                or 0.0
+            )
+            if quote_ltp > 0:
+                print(
+                    f"[MARGIN SINGLE QUOTE] underlying={normalized_underlying} "
+                    f"expiry={normalized_expiry} strike={strike} type={normalized_option_type} "
+                    f"token={token} symbol={symbol or '-'} ltp={quote_ltp}",
+                    flush=True,
+                )
+                return quote_ltp
+    except Exception as exc:
+        log.warning(
+            "margin single quote error underlying=%s expiry=%s strike=%s option_type=%s token=%s: %s",
+            normalized_underlying,
+            normalized_expiry,
+            strike,
+            normalized_option_type,
+            token,
+            exc,
+        )
+
+    return 0.0
+
+
+def _resolve_margin_order_contract(
+    db,
+    underlying: str,
+    instrument_type: str,
+    expiry: str,
+    strike: float,
+) -> dict[str, Any]:
+    normalized_underlying = str(underlying or "").strip().upper()
+    normalized_instrument_type = str(instrument_type or "").strip().upper()
+    normalized_expiry = str(expiry or "").strip()[:10]
+
+    if normalized_instrument_type in {"CE", "PE"}:
+        contract = db["active_option_tokens"].find_one(
+            {
+                "instrument": normalized_underlying,
+                "expiry": normalized_expiry,
+                "strike": strike,
+                "option_type": normalized_instrument_type,
+            },
+            {
+                "_id": 0,
+                "symbol": 1,
+                "exchange": 1,
+            },
+        ) or {}
+        symbol = str(contract.get("symbol") or "").strip()
+        exchange = str(contract.get("exchange") or "").strip() or ("BFO" if normalized_underlying in {"SENSEX", "BANKEX"} else "NFO")
+        if symbol:
+            return {"tradingsymbol": symbol, "exchange": exchange}
+    return {}
+
+
+def _calculate_kite_basket_margin(db, legs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not legs or not is_configured():
+        return None
+
+    api_key, access_token = get_common_credentials()
+    if not api_key or not access_token:
+        return None
+
+    orders: list[dict[str, Any]] = []
+    for leg in legs:
+        contract = _resolve_margin_order_contract(
+            db,
+            leg.get("underlying"),
+            leg.get("instrument_type"),
+            leg.get("expiry"),
+            float(leg.get("strike") or 0.0),
+        )
+        tradingsymbol = str(contract.get("tradingsymbol") or "").strip()
+        exchange = str(contract.get("exchange") or "").strip()
+        quantity = int(leg.get("quantity") or 0) * int(leg.get("lot_size") or 0)
+        if not tradingsymbol or not exchange or quantity <= 0:
+            return None
+        orders.append(
+            {
+                "exchange": exchange,
+                "tradingsymbol": tradingsymbol,
+                "transaction_type": str(leg.get("transaction_type") or "SELL").upper(),
+                "variety": "regular",
+                "product": "NRML",
+                "order_type": "MARKET",
+                "quantity": quantity,
+                "price": 0,
+                "trigger_price": 0,
+            }
+        )
+
+    try:
+        kite = get_kite_instance(access_token)
+        return kite.basket_order_margins(orders, consider_positions=False) or {}
+    except Exception as exc:
+        log.warning("kite basket margin error: %s", exc)
+        return None
+
+
+def _build_full_option_chain_response(instrument: str) -> dict[str, Any]:
+    normalized_instrument = str(instrument or "").strip().upper()
+    if not normalized_instrument:
+        raise HTTPException(status_code=400, detail="Instrument is required")
+
+    allowed_instruments = {"NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"}
+    if normalized_instrument not in allowed_instruments:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported instrument '{normalized_instrument}'. "
+                "Use one of: NIFTY, BANKNIFTY, SENSEX, FINNIFTY, MIDCPNIFTY"
+            ),
+        )
+
+    cached_base = _get_active_option_chain_cache(normalized_instrument)
+    if not cached_base:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No option chain rows found in active_option_tokens for instrument {normalized_instrument}",
+        )
+
+    response = deepcopy(cached_base)
+    return {
+        **response,
+        "spot_price": _get_live_index_spot_price(normalized_instrument),
+    }
+
+
+@app.get("/algo/get-option-chain/{instrument}")
+@app.get("/algo/get-opiton-chain/{instrument}")
+async def get_option_chain_algo(instrument: str):
+    return _build_full_option_chain_response(instrument)
+
+
+@app.get("/get-option-chain/{instrument}")
+@app.get("/get-opiton-chain/{instrument}")
+async def get_option_chain(instrument: str):
+    return _build_full_option_chain_response(instrument)
+
+
+@app.get("/algo/option-chain-snapshot/{instrument}")
+async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")):
+    """Historical option chain at listen_timestamp for algo-backtest.
+    Returns the exact same shape as /algo/get-option-chain/{instrument} so the
+    frontend can consume both without any format differences."""
+    normalized = str(instrument or "").strip().upper()
+    norm_ts = str(ts or "").strip().replace(" ", "T").rstrip("Z")
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Instrument is required")
+    if not norm_ts:
+        return _build_full_option_chain_response(normalized)
+
+    db = MongoData()
+    try:
+        chain_col = db._db["option_chain"]
+
+        # Step 1: find the exact minute-tick timestamp at or before norm_ts
+        pivot = chain_col.find_one(
+            {"underlying": normalized, "timestamp": {"$lte": norm_ts}},
+            {"_id": 0, "timestamp": 1},
+            sort=[("timestamp", -1)],
+        )
+        if not pivot:
+            raise HTTPException(status_code=404, detail=f"No option chain data found at or before {norm_ts}")
+        pivot_ts = pivot["timestamp"]
+
+        # Step 2: all rows at that exact timestamp
+        raw_rows = list(chain_col.find(
+            {"underlying": normalized, "timestamp": pivot_ts},
+            {"_id": 0, "expiry": 1, "strike": 1, "type": 1, "close": 1,
+             "iv": 1, "delta": 1, "oi": 1, "spot_price": 1, "timestamp": 1},
+        ))
+        if not raw_rows:
+            raise HTTPException(status_code=404, detail="No rows at snapshot timestamp")
+
+        spot = float((raw_rows[0].get("spot_price") or 0))
+
+        # Step 3: build response in the SAME shape as _build_full_option_chain_response
+        expiry_set: set[str] = set()
+        option_chain: list[dict] = []
+        grouped_option_chain: dict[str, dict] = {}
+
+        for row in raw_rows:
+            expiry = str(row.get("expiry") or "")[:10]   # normalise to YYYY-MM-DD
+            strike = row.get("strike")
+            opt_type = str(row.get("type") or "").upper()
+            if not expiry or strike is None or opt_type not in ("CE", "PE"):
+                continue
+
+            expiry_set.add(expiry)
+            chain_row: dict[str, Any] = {
+                "underlying": normalized,
+                "expiry": expiry,
+                "strike": float(strike),
+                "type": opt_type,
+                "close": float(row.get("close") or 0),
+                "iv": float(row.get("iv") or 0) or None,
+                "delta": float(row.get("delta") or 0) or None,
+                "oi": int(row.get("oi") or 0),
+                "spot_price": spot,
+                "timestamp": pivot_ts,
+            }
+            option_chain.append(chain_row)
+
+            exp_bucket = grouped_option_chain.setdefault(expiry, {})
+            strike_key = str(int(strike)) if float(strike) == int(float(strike)) else str(strike)
+            exp_bucket.setdefault(strike_key, {})[opt_type] = chain_row
+
+        expiries_sorted = sorted(expiry_set)
+        return {
+            "instrument": normalized,
+            "expiries": expiries_sorted,
+            "expiry_count": len(expiries_sorted),
+            "total_contracts": len(option_chain),
+            "source": "option_chain_snapshot",
+            "option_chain": option_chain,
+            "grouped_option_chain": grouped_option_chain,
+            "spot_price": spot,
+            "timestamp": pivot_ts,
+        }
+    finally:
+        db.close()
+
+
+@app.get("/refresh-option-chain-cache")
+async def refresh_option_chain_cache():
+    cache = _refresh_active_option_chain_cache()
+    return {
+        "status": "ok",
+        "instruments": sorted(cache.keys()),
+        "instrument_count": len(cache),
+    }
+
+
 @app.get("/mock/start")
 async def mock_start(time: str = Query(default="")):
     """
@@ -5162,12 +5987,16 @@ async def mock_start(time: str = Query(default="")):
     If time is omitted, the last saved mock time is resumed.
     Returns HTML control page.
     """
+    resume_time = (time or mock_ticker_manager.mock_current_time or "").strip()
     if mock_ticker_manager.status not in ("running", "connecting"):
-        resume_time = (time or mock_ticker_manager.mock_current_time or "").strip()
         if resume_time:
             import threading
             threading.Thread(target=_start_mock_bg, args=(resume_time,), daemon=True).start()
-    live_monitor_loop.start()
+    trade_date = resume_time[:10] if "T" in resume_time else ""
+    live_monitor_loop.start(
+        trade_date=trade_date,
+        activation_mode="fast-forward",
+    )
     return HTMLResponse(content=_MOCK_CONTROL_HTML)
 
 
@@ -5196,3 +6025,109 @@ async def mock_ltp(token: str):
     if ltp is None:
         raise HTTPException(status_code=404, detail=f"No mock LTP for token {token}")
     return {"token": token, "ltp": ltp}
+
+
+# ─── MTM Historical Data ──────────────────────────────────────────────────────
+
+@app.get("/algo/mtm/historical-data")
+async def mtm_historical_data(
+    tokens: str = Query(default=""),
+    candle: str = Query(default=""),
+    activation_mode: str = Query(default="algo-backtest"),
+):
+    """
+    Return per-minute OHLCV candle data for the given active leg tokens.
+
+    Query params:
+        tokens          – comma-separated  e.g. NSE_54812,NSE_54815,BSE_869786
+        candle          – ISO timestamp    e.g. 2026-04-08T11:10:21+05:30
+        activation_mode – algo-backtest | fast-forward | live
+
+    Only tokens that have an active (entered, not exited) leg on the trade date
+    derived from `candle` are returned.
+
+    Backtest:          open = high = low = close
+    Fast-forward/Live: real OHLCV from Kite historical_data API (minute candles)
+    """
+    from features.mtm_historical_data import get_mtm_historical_data
+
+    if not tokens.strip():
+        raise HTTPException(status_code=400, detail="tokens param is required")
+
+    db = MongoData()
+    try:
+        data = get_mtm_historical_data(db, tokens, candle, activation_mode)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"mtm historical data error: {exc}") from exc
+    finally:
+        db.close()
+
+    return data
+
+
+@app.get("/algo/spot/historical-data")
+async def spot_historical_data(
+    underlying: str = Query(default=""),
+    candle: str = Query(default=""),
+    activation_mode: str = Query(default="algo-backtest"),
+):
+    """
+    Return per-minute spot price history for an underlying index (e.g. NIFTY)
+    and India VIX from option_chain_index_spot.
+
+    Query params:
+        underlying      – e.g. NIFTY, BANKNIFTY
+        candle          – ISO timestamp  e.g. 2025-11-03T15:30:00
+        activation_mode – algo-backtest | fast-forward | live
+
+    Response:
+        { "NSE_01": { timestamp, close }, "NSE_00": { timestamp, close } }
+    """
+    from features.spot_historical_data import get_spot_historical_data
+
+    if not underlying.strip():
+        raise HTTPException(status_code=400, detail="underlying param is required")
+
+    db = MongoData()
+    try:
+        data = get_spot_historical_data(db, underlying, candle, activation_mode)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"spot historical data error: {exc}") from exc
+    finally:
+        db.close()
+
+    return data
+
+
+@app.get("/algo/option-chain/historical-iv")
+async def option_chain_historical_iv(
+    tokens: str = Query(default=""),
+    candle: str = Query(default=""),
+    activation_mode: str = Query(default="algo-backtest"),
+):
+    """
+    Return per-minute price + IV + Delta history for option leg tokens
+    from option_chain_historical_data.
+
+    Query params:
+        tokens          – comma-separated  e.g. NSE_2025110484996,NSE_2025110460049
+        candle          – ISO timestamp    e.g. 2025-11-03T15:30:00
+        activation_mode – algo-backtest | fast-forward | live
+
+    Response:
+        { "NSE_TOKEN": { timestamp, close, iv, delta, oi } }
+    """
+    from features.iv_historical_data import get_iv_historical_data
+
+    if not tokens.strip():
+        raise HTTPException(status_code=400, detail="tokens param is required")
+
+    db = MongoData()
+    try:
+        data = get_iv_historical_data(db, tokens, candle, activation_mode)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"iv historical data error: {exc}") from exc
+    finally:
+        db.close()
+
+    return data

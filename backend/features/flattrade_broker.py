@@ -297,6 +297,44 @@ class FlatTradeAdapter:
             })
         return out
 
+    # ── modify_order ─────────────────────────────────────────────────────────
+
+    def modify_order(
+        self,
+        variety: str = "regular",   # noqa: ignored — Flattrade has no variety concept
+        order_id: str = "",
+        order_type: str = "LIMIT",
+        quantity: int | None = None,
+        price: float = 0.0,
+        trigger_price: float = 0.0,
+        validity: str = "DAY",
+    ) -> str:
+        _prctyp = {
+            "LIMIT": "LMT",
+            "MARKET": "MKT",
+            "SL":     "SL-LMT",
+            "SL-M":   "SL-MKT",
+        }.get(order_type, "LMT")
+
+        body: dict = {
+            "norenordno": order_id,
+            "uid":        self.user_id,
+            "prc":        str(round(float(price or 0), 2)),
+            "prctyp":     _prctyp,
+            "ret":        str(validity or "DAY").upper(),
+        }
+        if quantity is not None:
+            body["qty"] = str(int(quantity))
+        if _prctyp in ("SL-LMT", "SL-MKT") and trigger_price:
+            body["trgprc"] = str(round(float(trigger_price), 2))
+
+        result = self._post("ModifyOrder", body)
+        if not isinstance(result, dict) or result.get("stat") != "Ok":
+            raise Exception(
+                f"FlatTrade ModifyOrder failed: {(result or {}).get('emsg', result)}"
+            )
+        return str(result.get("result") or order_id)
+
     # ── cancel_order ─────────────────────────────────────────────────────────
 
     def cancel_order(self, variety: str = "regular", order_id: str = "") -> str:

@@ -1,0 +1,1126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+  <title>Live Portfolio Monitor</title>
+  <script src="../assets/js/app-env.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #f3f4f6; color: #1f2937; }
+
+    /* ── Layout ──────────────────────────────────────────────── */
+    .lm-layout { display: flex; min-height: 100vh; }
+
+    /* ── Sidebar ─────────────────────────────────────────────── */
+    .lm-sidebar {
+      width: 230px;
+      min-width: 230px;
+      background: #fff;
+      border-right: 1px solid #e5e7eb;
+      position: fixed;
+      top: 0; left: 0;
+      height: 100vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      z-index: 30;
+    }
+    .lm-sidebar-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .lm-sidebar-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    /* Total MTM card */
+    .lm-total-card {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid #e5e7eb;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      background: #eff6ff;
+      margin: 10px 10px 4px;
+      cursor: default;
+    }
+    .lm-total-left { display: flex; flex-direction: column; gap: 4px; }
+    .lm-total-label { font-size: 11px; font-weight: 500; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
+    .lm-total-mtm { font-size: 15px; font-weight: 700; color: #16a34a; tabular-nums: true; }
+    .lm-total-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .lm-open-pos { font-size: 11px; color: #374151; font-weight: 500; }
+    .lm-live-dot { display: flex; align-items: center; gap: 4px; }
+    .lm-live-dot-inner { position: relative; width: 8px; height: 8px; }
+    .lm-live-dot-inner span {
+      display: block;
+      position: absolute;
+      width: 100%; height: 100%;
+      border-radius: 999px;
+    }
+    .lm-live-dot-inner .ping {
+      background: #16a34a;
+      animation: ping 1s cubic-bezier(0,0,0.2,1) infinite;
+      opacity: 0.75;
+    }
+    .lm-live-dot-inner .solid { background: #16a34a; }
+    @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
+
+    /* Socket status */
+    .lm-socket-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 10px 0;
+      padding: 6px 10px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f9fafb;
+      font-size: 11px;
+      font-weight: 600;
+      color: #6b7280;
+    }
+    .lm-socket-dot {
+      width: 8px; height: 8px;
+      border-radius: 999px;
+      background: #9ca3af;
+      flex: 0 0 auto;
+    }
+    .lm-socket-status[data-state="connected"] { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
+    .lm-socket-status[data-state="connected"] .lm-socket-dot { background: #16a34a; }
+    .lm-socket-status[data-state="connecting"] .lm-socket-dot,
+    .lm-socket-status[data-state="reconnecting"] .lm-socket-dot { background: #f59e0b; }
+    .lm-socket-status[data-state="error"] .lm-socket-dot,
+    .lm-socket-status[data-state="disconnected"] .lm-socket-dot { background: #dc2626; }
+
+    /* Broker list */
+    .lm-broker-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px 10px 14px;
+      overflow-y: auto;
+    }
+    .lm-broker-empty {
+      font-size: 11px;
+      color: #9ca3af;
+      padding: 8px 4px;
+    }
+    .lm-broker-card {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 12px;
+      border: 1px solid #c7ddff;
+      border-radius: 10px;
+      background: #f7fbff;
+    }
+    .lm-broker-main { display: flex; align-items: flex-start; gap: 8px; }
+    .lm-broker-icon { width: 16px; height: 16px; object-fit: contain; flex: 0 0 16px; margin-top: 2px; }
+    .lm-broker-copy { flex: 1; min-width: 0; }
+    .lm-broker-name-row { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+    .lm-broker-name { font-size: 13px; font-weight: 600; color: #1f3b57; }
+    .lm-broker-mtm { font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .lm-broker-meta { font-size: 11px; color: #5b7087; margin-top: 2px; }
+    .lm-broker-strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; padding-top: 6px; border-top: 1px solid #dbeafe; }
+    .lm-bss-chip { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+    .lm-bss-sl  { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .lm-bss-tgt { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .lm-bss-lock { background: #fefce8; color: #92400e; border: 1px solid #fde68a; }
+    .lm-bss-lock-on { background: #fffbeb; color: #065f46; border: 1px solid #6ee7b7; }
+    .lm-bss-trail { background: #f0f9ff; color: #0369a1; border: 1px solid #bae6fd; }
+
+    /* ── Main content ─────────────────────────────────────────── */
+    .lm-main {
+      flex: 1;
+      margin-left: 230px;
+      padding: 24px 20px;
+      min-width: 0;
+    }
+
+    /* Deployed section */
+    .lm-deployed-section { margin-bottom: 24px; }
+    .lm-deployed-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      color: #1f3347;
+    }
+    .lm-deployed-title { font-size: 20px; font-weight: 500; }
+    .lm-deployed-chevron { width: 22px; height: 22px; color: #31485f; flex: 0 0 auto; }
+
+    /* Table layout */
+    .lm-deployed-columns {
+      display: grid;
+      grid-template-columns: minmax(240px, 1.45fr) minmax(150px, 0.9fr) minmax(120px, 0.8fr) minmax(170px, 1fr) minmax(200px, 1fr);
+      gap: 24px;
+      align-items: center;
+      padding: 10px 14px;
+      border-radius: 6px;
+      background: #fafbfc;
+      color: #5b7086;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .lm-deployed-row {
+      display: grid;
+      grid-template-columns: minmax(240px, 1.45fr) minmax(150px, 0.9fr) minmax(120px, 0.8fr) minmax(170px, 1fr) minmax(200px, 1fr);
+      gap: 24px;
+      align-items: center;
+      margin-top: 16px;
+      padding: 14px 12px;
+      border: 1px solid #dbe4ee;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .lm-deployed-group {
+      margin-top: 16px;
+      border: 1px solid #dbe4ee;
+      border-radius: 10px;
+      background: #fff;
+      overflow: hidden;
+    }
+    .lm-deployed-group .lm-deployed-row {
+      margin-top: 0;
+      border: 0;
+      border-radius: 0;
+    }
+    .lm-deployed-children {
+      padding: 12px;
+      background: #fafcfe;
+    }
+    .lm-deployed-group[data-expanded="false"] .lm-deployed-children { display: none; }
+
+    .lm-deployed-child-row {
+      display: grid;
+      grid-template-columns: minmax(240px, 1.45fr) minmax(150px, 0.9fr) minmax(120px, 0.8fr) minmax(170px, 1fr) minmax(200px, 1fr);
+      gap: 24px;
+      align-items: center;
+      margin-top: 12px;
+      padding: 14px 12px;
+      border: 1px solid #e6edf5;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .lm-deployed-child-row:first-child { margin-top: 0; }
+
+    .lm-deployed-empty {
+      padding: 18px 14px;
+      border: 1px dashed #dbe4ee;
+      border-radius: 8px;
+      background: #fff;
+      color: #5b7086;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    /* Name cell */
+    .lm-name-wrap { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .lm-name-wrap > div { min-width: 0; }
+    .lm-name-inner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .lm-checkbox { width: 18px; height: 18px; accent-color: #1580ed; cursor: pointer; flex: 0 0 auto; }
+    .lm-strategy-icon { color: #f59e0b; font-size: 12px; line-height: 1; margin-top: 2px; }
+    .lm-group-toggle { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+    .lm-group-caret {
+      width: 18px; height: 18px;
+      color: #31485f;
+      flex: 0 0 auto;
+      transition: transform 0.2s ease;
+    }
+    .lm-deployed-group[data-expanded="true"] .lm-group-caret { transform: rotate(180deg); }
+    .lm-name {
+      color: #22384e; font-size: 14px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lm-sub { margin-top: 0; color: #586d81; font-size: 12px; white-space: nowrap; }
+    .lm-child-name {
+      color: #22384e; font-size: 13px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lm-child-sub { margin-top: 0; color: #586d81; font-size: 12px; white-space: nowrap; }
+
+    /* Broker cell */
+    .lm-broker-cell { display: inline-flex; align-items: center; gap: 8px; color: #22384e; font-size: 14px; min-width: 0; }
+    .lm-broker-cell-icon { width: 18px; height: 18px; object-fit: contain; flex: 0 0 18px; }
+    .lm-broker-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; border-radius: 4px;
+      background: #eef6ff; color: #3b82f6; font-size: 8px; font-weight: 700;
+    }
+    .lm-broker-name-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Status badge */
+    .lm-status {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 2px 6px; border-radius: 2px; border: 1px solid;
+      font-size: 11px; font-weight: 600; line-height: 1;
+      text-transform: uppercase; white-space: nowrap;
+    }
+    .lm-status.running  { border-color: #8bd5a9; background: #f2fbf5; color: #1c9b47; }
+    .lm-status.paused   { border-color: #f1c188; background: #fff7ef; color: #d07a16; }
+    .lm-status.stopped  { border-color: #9e9d9d; background: #fff; color: #9e9d9d; }
+    .lm-status.squared-off { border-color: #9e9d9d; background: #fff; color: #9e9d9d; }
+
+    /* MTM cell */
+    .lm-mtm-wrap { display: flex; align-items: center; gap: 8px; }
+    .lm-mtm { font-size: 14px; font-weight: 700; white-space: nowrap; color: #16a34a; }
+
+    /* Actions */
+    .lm-actions { display: flex; justify-content: flex-end; gap: 8px; opacity: 0; pointer-events: none; transition: opacity 0.18s; }
+    .lm-deployed-row:hover .lm-actions,
+    .lm-deployed-child-row:hover .lm-actions,
+    .lm-deployed-row:focus-within .lm-actions,
+    .lm-deployed-child-row:focus-within .lm-actions { opacity: 1; pointer-events: auto; }
+    .lm-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 32px; padding: 0 12px; border-radius: 6px;
+      font-size: 12px; font-weight: 500; white-space: nowrap;
+      text-decoration: none; cursor: pointer; border: 0;
+    }
+    .lm-btn-solid { background: #1580ed; color: #fff; }
+    .lm-btn-solid:hover { background: #1169c4; }
+    .lm-btn-outline { background: #fff; color: #1580ed; border: 1px solid #1580ed; }
+    .lm-btn-danger { background: #fff; color: #dc2626; border: 1px solid #fecaca; }
+    .lm-btn-danger:hover { background: #fef2f2; }
+    .lm-btn-warn { background: #fff; color: #d07a16; border: 1px solid #f1c188; }
+    .lm-btn-warn:hover { background: #fff7ef; }
+
+    /* Divider / no strategies */
+    .lm-divider {
+      display: flex; align-items: center; gap: 16px;
+      margin-top: 24px; color: #9ca3af; font-size: 13px; white-space: nowrap;
+    }
+    .lm-divider hr { flex: 1; border: 0; border-top: 1px solid #e5e7eb; }
+
+    @media (max-width: 900px) {
+      .lm-sidebar { width: 200px; }
+      .lm-main { margin-left: 200px; }
+      .lm-deployed-columns, .lm-deployed-row, .lm-deployed-child-row {
+        grid-template-columns: minmax(180px, 1.2fr) minmax(120px, 0.8fr) minmax(100px, 0.7fr) minmax(130px, 0.9fr) minmax(160px, 1fr);
+        gap: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="lm-layout">
+
+  <!-- ── Sidebar ─────────────────────────────────────────────── -->
+  <aside class="lm-sidebar">
+    <div class="lm-sidebar-head">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+        style="width:18px;height:18px;color:#1580ed;flex:0 0 auto;">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+      </svg>
+      <span class="lm-sidebar-title">Portfolio Monitor</span>
+    </div>
+
+    <!-- Total MTM -->
+    <div class="lm-total-card">
+      <div class="lm-total-left">
+        <span class="lm-total-label">Total MTM</span>
+        <span class="lm-total-mtm" id="lm-total-mtm">₹ 0.00</span>
+      </div>
+      <div class="lm-total-right">
+        <span class="lm-open-pos" id="lm-open-pos">0/0</span>
+        <div class="lm-live-dot">
+          <div class="lm-live-dot-inner">
+            <span class="ping"></span>
+            <span class="solid"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Socket status -->
+    <div class="lm-socket-status" id="lm-socket-status" data-state="connecting">
+      <div class="lm-socket-dot"></div>
+      <span id="lm-socket-label">Connecting...</span>
+    </div>
+
+    <!-- Broker list -->
+    <div class="lm-broker-list" id="lm-broker-list">
+      <div class="lm-broker-empty">Loading brokers...</div>
+    </div>
+  </aside>
+
+  <!-- ── Main ────────────────────────────────────────────────── -->
+  <main class="lm-main">
+
+    <!-- Deployed Portfolios section -->
+    <div class="lm-deployed-section">
+      <div class="lm-deployed-header">
+        <span class="lm-deployed-title">Deployed Portfolios</span>
+        <svg class="lm-deployed-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path>
+        </svg>
+      </div>
+
+      <div id="lm-deployed-table">
+        <div class="lm-deployed-columns">
+          <span>Name</span>
+          <span>Broker</span>
+          <span>Status</span>
+          <span>MTM</span>
+          <span>Actions</span>
+        </div>
+        <div id="lm-deployed-rows">
+          <div class="lm-deployed-empty">Loading deployed portfolios...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Divider -->
+    <div class="lm-divider">
+      <hr /><span>No strategies found</span><hr />
+    </div>
+
+  </main>
+</div>
+
+<!-- ── Scripts ──────────────────────────────────────────────── -->
+<script src="../assets/js/algo-stream-sockets.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ── Config ───────────────────────────────────────────────────
+  var ACTIVATION_MODE = 'forward-test';
+  var POLL_INTERVAL_MS = 30000;
+
+  // ── State ────────────────────────────────────────────────────
+  var currentRecords = [];
+  var executionMap   = {};   // { recordId: record }
+  var pnlCache       = {};   // { recordId: number }
+  var ltpMap         = {};   // { token: price }
+  var ltpSigMap      = {};   // { sig: price }
+  var brokerSettingsCache = {};
+  var brokerStaticMap = {};
+  var sqMtmCache      = {};
+  var recordPriceIndex = {};
+  var fetchInFlight    = false;
+  var exOrdSocket  = null;
+  var updSocket    = null;
+
+  // ── DOM refs ─────────────────────────────────────────────────
+  var deployedRowsEl  = document.getElementById('lm-deployed-rows');
+  var brokerListEl    = document.getElementById('lm-broker-list');
+  var totalMtmEl      = document.getElementById('lm-total-mtm');
+  var openPosEl       = document.getElementById('lm-open-pos');
+  var socketStatusEl  = document.getElementById('lm-socket-status');
+  var socketLabelEl   = document.getElementById('lm-socket-label');
+
+  // ── API URL resolution ───────────────────────────────────────
+  function getApiBase() {
+    if (typeof window.resolveAlgoApiBaseUrl === 'function') return window.resolveAlgoApiBaseUrl();
+    return (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+      || window.APP_ALGO_API_BASE_URL
+      || window.APP_LOCAL_ALGO_API_BASE_URL
+      || 'http://localhost:8000/algo';
+  }
+
+  function buildApiUrl(path) {
+    return getApiBase().replace(/\/+$/, '') + '/' + String(path || '').replace(/^\/+/, '');
+  }
+
+  // ── Utility ──────────────────────────────────────────────────
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function fmtMoney(n) {
+    var num = Number(n || 0);
+    return '₹ ' + (num < 0 ? '-' : '') + Math.abs(num).toLocaleString('en-IN', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2
+    });
+  }
+
+  function fmtRs(n) {
+    var v = Math.round((parseFloat(n) || 0) * 100) / 100;
+    return '₹ ' + v.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  // ── Status normalization ─────────────────────────────────────
+  function normalizeStatus(rec) {
+    var s = String(rec && rec.status || '');
+    if (!rec) return { text: 'STOPPED', cls: 'stopped' };
+    if (rec.active_on_server === false || s.indexOf('SquaredOff') !== -1)
+      return { text: 'SQD OFF', cls: 'squared-off' };
+    if (s.indexOf('Paused') !== -1) return { text: 'PAUSED', cls: 'paused' };
+    if (s.indexOf('Stopped') !== -1) return { text: 'STOPPED', cls: 'stopped' };
+    if (s.indexOf('Running') !== -1 || s.indexOf('Live') !== -1 || rec.active_on_server)
+      return { text: 'RUNNING', cls: 'running' };
+    return { text: 'STOPPED', cls: 'stopped' };
+  }
+
+  // ── Broker helpers ───────────────────────────────────────────
+  function humanize(v) {
+    var n = String(v || '').replace(/^Broker\./i,'').replace(/[_-]+/g,' ')
+      .replace(/([a-z])([A-Z])/g,'$1 $2').replace(/\s+/g,' ').trim();
+    if (!n) return '';
+    return n.split(' ').map(function(p) { return p ? p[0].toUpperCase()+p.slice(1).toLowerCase() : ''; }).join(' ');
+  }
+
+  function isObjectId(v) { return /^[a-f0-9]{24}$/i.test(String(v||'')); }
+
+  function getBrokerName(rec) {
+    if (!rec) return 'Unknown';
+    var d = (rec.broker_details && typeof rec.broker_details === 'object') ? rec.broker_details : {};
+    var candidates = [
+      humanize(d.alias), humanize(d.display_name), humanize(d.broker_name),
+      humanize(d.name), humanize(d.title),
+      (!isObjectId(rec.broker_label) ? rec.broker_label : ''),
+      (!isObjectId(rec.broker) ? humanize(rec.broker) : '')
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var v = String(candidates[i] || '').trim();
+      if (v) return v;
+    }
+    return 'Unknown';
+  }
+
+  function getBrokerIcon(rec) {
+    var d = (rec && rec.broker_details && typeof rec.broker_details === 'object') ? rec.broker_details : {};
+    var ic = String(d.broker_icon || '').trim();
+    if (!ic) return '';
+    if (/^https?:\/\//i.test(ic) || ic.indexOf('../') === 0) return ic;
+    return '../assets/images/brokers/' + encodeURIComponent(ic);
+  }
+
+  function buildBrokerCellHtml(rec) {
+    var name = getBrokerName(rec);
+    var icon = getBrokerIcon(rec);
+    var iconHtml = icon
+      ? '<img class="lm-broker-cell-icon" src="' + esc(icon) + '" alt="" onerror="this.style.display=\'none\'">'
+      : '<span class="lm-broker-badge">FT</span>';
+    return '<div class="lm-broker-cell">' + iconHtml +
+      '<span class="lm-broker-name-cell">' + esc(name) + '</span></div>';
+  }
+
+  // ── Grouping ─────────────────────────────────────────────────
+  function groupRecords(records) {
+    var map = {};
+    (records || []).forEach(function (rec) {
+      var pm = (rec.portfolio && typeof rec.portfolio === 'object') ? rec.portfolio : {};
+      var gid = pm.group_id || pm.portfolio || rec._id || '';
+      if (!map[gid]) {
+        map[gid] = {
+          group_id:    gid,
+          group_name:  pm.group_name || rec.name || 'Portfolio',
+          portfolio_id: pm.portfolio || '',
+          items: []
+        };
+      }
+      map[gid].items.push(rec);
+    });
+    return Object.keys(map).map(function (k) { return map[k]; });
+  }
+
+  // ── PnL helpers ──────────────────────────────────────────────
+  function getLegToken(leg) {
+    return String(leg && (leg.token || leg.instrument_token || leg.symbol_token) || '').trim();
+  }
+
+  function getLegSig(leg) {
+    return [
+      String(leg.ticker || leg.underlying || '').toUpperCase(),
+      String(leg.expiry_date || leg.expiry || '').slice(0,10),
+      String(leg.strike || ''),
+      String(leg.option || leg.option_type || '').toUpperCase().split('.').pop()
+    ].join('|');
+  }
+
+  function resolveLtp(leg) {
+    var tok = getLegToken(leg);
+    if (tok && ltpMap[tok] != null) return Number(ltpMap[tok]);
+    var sig = getLegSig(leg);
+    if (sig && sig !== '|||' && ltpSigMap[sig] != null) return Number(ltpSigMap[sig]);
+    // Fallback to last_saw_price / mark_price / ltp on the leg itself
+    var fallback = leg.last_saw_price || leg.mark_price || leg.ltp;
+    if (fallback != null) return Number(fallback);
+    return null;
+  }
+
+  function computeStrategyPnl(rid) {
+    var rec = executionMap[rid];
+    if (!rec) return 0;
+    var legs = Array.isArray(rec.legs) ? rec.legs : [];
+    var isSqd = rec.active_on_server === false
+      || String(rec.status || '').indexOf('SquaredOff') !== -1;
+    if (!legs.length) return sqMtmCache[rid] || 0;
+
+    var total = 0;
+    legs.forEach(function (leg) {
+      if (!leg || !leg.entry_trade) return;
+      var ePrice = parseFloat((leg.entry_trade.price || leg.entry_trade.trigger_price) || 0) || 0;
+      var qty    = (parseInt(leg.quantity, 10) || 0) * (parseInt(leg.lot_size, 10) || 1);
+      var isSell = String(leg.position || '').toLowerCase().indexOf('sell') !== -1;
+      var pnl = 0;
+
+      if (leg.exit_trade) {
+        var xPrice = parseFloat((leg.exit_trade.price || leg.exit_trade.trigger_price) || 0) || 0;
+        if (xPrice > 0) {
+          pnl = isSell ? (ePrice - xPrice) * qty : (xPrice - ePrice) * qty;
+        } else {
+          var ltp = resolveLtp(leg);
+          if (ltp === null) return;
+          pnl = isSell ? (ePrice - ltp) * qty : (ltp - ePrice) * qty;
+        }
+      } else {
+        if (isSqd) return;
+        var ltp = resolveLtp(leg);
+        if (ltp === null) return;
+        leg.last_saw_price = ltp;
+        leg.ltp = ltp;
+        pnl = isSell ? (ePrice - ltp) * qty : (ltp - ePrice) * qty;
+      }
+      leg.pnl = pnl;
+      total += pnl;
+    });
+
+    if (isSqd) sqMtmCache[rid] = total;
+    return total;
+  }
+
+  function buildPriceIndex(records) {
+    recordPriceIndex = {};
+    (records || []).forEach(function (rec) {
+      var rid = String(rec._id || '');
+      if (!rid) return;
+      (Array.isArray(rec.legs) ? rec.legs : []).forEach(function (leg) {
+        [getLegToken(leg), getLegSig(leg)].forEach(function (k) {
+          if (k && k !== '|||') {
+            if (!recordPriceIndex[k]) recordPriceIndex[k] = {};
+            recordPriceIndex[k][rid] = true;
+          }
+        });
+      });
+    });
+  }
+
+  function buildBrokerStaticMap(records) {
+    brokerStaticMap = {};
+    (records || []).forEach(function (rec) {
+      var label = getBrokerName(rec);
+      var bk = label.toLowerCase();
+      if (!brokerStaticMap[bk]) {
+        brokerStaticMap[bk] = {
+          key: bk, label: label, icon: getBrokerIcon(rec),
+          brokerId: String(rec.broker || ''), userId: String(rec.user_id || ''),
+          strategyCount: 0, openLegCount: 0, mtm: 0
+        };
+      }
+      brokerStaticMap[bk].strategyCount += 1;
+      var openLegs = Array.isArray(rec.legs) ? rec.legs.filter(function(l){
+        return l && !l.exit_trade;
+      }).length : (typeof rec.open_legs_count === 'number' ? rec.open_legs_count : 0);
+      brokerStaticMap[bk].openLegCount += openLegs;
+    });
+  }
+
+  // ── Refresh all MTM ──────────────────────────────────────────
+  function refreshAllMtm() {
+    var groupPnl  = {};
+    var brokerMtm = {};
+    var totalPnl  = 0;
+    var totalOpen = 0;
+    var totalCount = 0;
+
+    Object.keys(executionMap).forEach(function (rid) {
+      var rec = executionMap[rid];
+      var pnl = computeStrategyPnl(rid);
+      pnlCache[rid] = pnl;
+
+      // Update individual strategy cell
+      var el = document.querySelector('.lm-mtm[data-record-id="' + rid + '"]');
+      if (el) {
+        var r = Math.round(pnl * 100) / 100;
+        el.textContent = fmtMoney(r);
+        el.style.color = r >= 0 ? '#16a34a' : '#ef4444';
+      }
+
+      // Accumulate group PnL
+      var gid = String((rec.portfolio && rec.portfolio.group_id) || '');
+      if (gid) groupPnl[gid] = (groupPnl[gid] || 0) + pnl;
+
+      // Accumulate broker MTM
+      var bn = getBrokerName(rec).toLowerCase();
+      brokerMtm[bn] = (brokerMtm[bn] || 0) + pnl;
+
+      // Counts
+      var openLegs = Array.isArray(rec.legs)
+        ? rec.legs.filter(function(l){ return l && !l.exit_trade; }).length
+        : (typeof rec.open_legs_count === 'number' ? rec.open_legs_count : 0);
+      totalOpen += openLegs;
+      totalCount += 1;
+    });
+
+    // Update group MTM cells
+    Object.keys(groupPnl).forEach(function (gid) {
+      var el = document.querySelector('.lm-mtm[data-group-mtm="' + gid + '"]');
+      if (!el) return;
+      var r = Math.round(groupPnl[gid] * 100) / 100;
+      el.textContent = fmtMoney(r);
+      el.style.color = r >= 0 ? '#16a34a' : '#ef4444';
+    });
+
+    // Total MTM
+    Object.keys(groupPnl).forEach(function (gid) { totalPnl += groupPnl[gid]; });
+    var tRnd = Math.round(totalPnl * 100) / 100;
+    if (totalMtmEl) {
+      totalMtmEl.textContent = fmtMoney(tRnd);
+      totalMtmEl.style.color = tRnd >= 0 ? '#16a34a' : '#ef4444';
+    }
+    if (openPosEl) openPosEl.textContent = totalOpen + '/' + totalCount;
+
+    // Update browser tab
+    document.title = fmtMoney(tRnd) + ' · Live Monitor';
+
+    renderBrokerSummary(brokerMtm);
+  }
+
+  // ── Broker summary sidebar ───────────────────────────────────
+  function buildBrokerSettingsStrip(bs) {
+    if (!bs) return '';
+    var chips = [];
+    if (bs.stop_loss != null) {
+      var eff = (bs.state && bs.state.effective_sl != null) ? bs.state.effective_sl : bs.stop_loss;
+      chips.push('<span class="lm-bss-chip lm-bss-sl">SL ' + fmtRs(eff) + '</span>');
+    }
+    if (bs.target != null) chips.push('<span class="lm-bss-chip lm-bss-tgt">TGT ' + fmtRs(bs.target) + '</span>');
+    var lat = bs.lock_and_trail;
+    if (lat && lat.instrument_move != null) {
+      var st = bs.state || {};
+      var cls = st.lock_activated ? 'lm-bss-lock lm-bss-lock-on' : 'lm-bss-lock';
+      var txt = st.lock_activated
+        ? 'Lock ✓ ' + fmtRs(st.current_lock_floor || lat.stop_loss_move)
+        : 'Lock @ ' + fmtRs(lat.instrument_move) + ' → ' + fmtRs(lat.stop_loss_move);
+      chips.push('<span class="lm-bss-chip ' + cls + '">' + txt + '</span>');
+    } else if (!lat && bs.trail_sl && bs.trail_sl.instrument_move != null) {
+      chips.push('<span class="lm-bss-chip lm-bss-trail">Trail ' + fmtRs(bs.trail_sl.stop_loss_move) + '</span>');
+    }
+    if (!chips.length) return '';
+    return '<div class="lm-broker-strip">' + chips.join('') + '</div>';
+  }
+
+  function renderBrokerSummary(brokerMtm) {
+    if (!brokerListEl) return;
+    var keys = Object.keys(brokerStaticMap);
+    if (!keys.length) {
+      brokerListEl.innerHTML = '<div class="lm-broker-empty">No brokers loaded.</div>';
+      return;
+    }
+
+    keys.sort().forEach(function (k) {
+      var entry = brokerStaticMap[k];
+      var mtm = brokerMtm[k] || 0;
+      entry.mtm = mtm;
+      var mtmColor = mtm >= 0 ? '#16a34a' : '#ef4444';
+      var mtmFmt   = fmtMoney(mtm);
+      var bid      = entry.brokerId || k;
+
+      // Try to patch existing card
+      var card = brokerListEl.querySelector('[data-broker-key="' + k + '"]');
+      if (card) {
+        var mtmEl = card.querySelector('[data-broker-mtm]');
+        if (mtmEl) { mtmEl.textContent = mtmFmt; mtmEl.style.color = mtmColor; }
+        // Patch settings strip if cache available
+        var bsKey = bid;
+        if (brokerSettingsCache[bsKey]) {
+          var strip = card.querySelector('.lm-broker-strip');
+          var newStrip = buildBrokerSettingsStrip(brokerSettingsCache[bsKey]);
+          if (strip && newStrip) strip.outerHTML = newStrip;
+          else if (newStrip) card.insertAdjacentHTML('beforeend', newStrip);
+        }
+        return;
+      }
+
+      // Remove placeholder
+      var empty = brokerListEl.querySelector('.lm-broker-empty');
+      if (empty) empty.remove();
+
+      var iconHtml = entry.icon
+        ? '<img class="lm-broker-icon" src="' + esc(entry.icon) + '" alt="" onerror="this.style.display=\'none\'">'
+        : '';
+
+      var bsData = brokerSettingsCache[bid];
+      var stripHtml = buildBrokerSettingsStrip(bsData);
+
+      brokerListEl.insertAdjacentHTML('beforeend', '' +
+        '<div class="lm-broker-card" data-broker-key="' + esc(k) + '" data-broker-id="' + esc(bid) + '">' +
+        '  <div class="lm-broker-main">' +
+        (iconHtml ? iconHtml : '') +
+        '    <div class="lm-broker-copy">' +
+        '      <div class="lm-broker-name-row">' +
+        '        <span class="lm-broker-name">' + esc(entry.label) + '</span>' +
+        '        <span class="lm-broker-mtm" data-broker-mtm="' + esc(bid) + '" style="color:' + mtmColor + ';">' + esc(mtmFmt) + '</span>' +
+        '      </div>' +
+        '      <p class="lm-broker-meta">' + entry.strategyCount + ' strateg' + (entry.strategyCount === 1 ? 'y' : 'ies') +
+              ' • ' + entry.openLegCount + ' open legs</p>' +
+        '    </div>' +
+        '  </div>' +
+        stripHtml +
+        '</div>'
+      );
+    });
+  }
+
+  // ── Expand/collapse state ────────────────────────────────────
+  function captureExpandedState() {
+    var state = {};
+    if (!deployedRowsEl) return state;
+    deployedRowsEl.querySelectorAll('.lm-deployed-group[data-group-id]').forEach(function(el) {
+      var gid = el.getAttribute('data-group-id');
+      if (gid) state[gid] = el.getAttribute('data-expanded') === 'true';
+    });
+    return state;
+  }
+
+  function applyExpandedState(groups, prev) {
+    if (!deployedRowsEl) return;
+    (groups || []).forEach(function (g) {
+      var gid = String(g.group_id || '');
+      if (!gid || !prev[gid]) return;
+      var el = deployedRowsEl.querySelector('[data-group-id="' + gid + '"]');
+      if (el) el.setAttribute('data-expanded', 'true');
+    });
+  }
+
+  // ── Render deployed rows ─────────────────────────────────────
+  function renderDeployedRows(records) {
+    if (!deployedRowsEl) return;
+    var prev = captureExpandedState();
+
+    if (!Array.isArray(records) || !records.length) {
+      deployedRowsEl.innerHTML = '<div class="lm-deployed-empty">No deployed portfolios found.</div>';
+      renderBrokerSummary({});
+      return;
+    }
+
+    var groups = groupRecords(records);
+
+    deployedRowsEl.innerHTML = groups.map(function (group) {
+      var items = group.items;
+      var activeCount = items.filter(function (i) { return !!i.active_on_server; }).length;
+      var primary = items[0] || {};
+      var pStatus;
+
+      if (activeCount > 0) {
+        pStatus = { text: 'RUNNING', cls: 'running' };
+      } else if (items.every(function (i) {
+        return i.active_on_server === false || String(i.status || '').indexOf('SquaredOff') !== -1;
+      })) {
+        pStatus = { text: 'SQD OFF', cls: 'squared-off' };
+      } else {
+        pStatus = normalizeStatus(primary);
+      }
+
+      var totalOpenPos = items.reduce(function (sum, item) {
+        return sum + (typeof item.open_legs_count === 'number' ? item.open_legs_count : 0);
+      }, 0);
+
+      var gid = group.group_id;
+
+      var childRows = items.map(function (rec) {
+        var sid    = rec._id || '';
+        var sStatus = normalizeStatus(rec);
+        var legCount = typeof rec.open_legs_count === 'number' ? rec.open_legs_count : 0;
+        var isActive = !!rec.active_on_server;
+
+        return '' +
+          '<div class="lm-deployed-child-row" data-record-id="' + esc(sid) + '">' +
+          '  <div>' +
+          '    <div class="lm-name-wrap">' +
+          '      <input type="checkbox" class="lm-checkbox"' + (isActive ? '' : ' disabled') + '>' +
+          '      <div>' +
+          '        <div style="display:flex;align-items:center;gap:8px;">' +
+          '          <span class="lm-strategy-icon">&#10038;</span>' +
+          '          <div class="lm-child-name">' + esc(rec.name || 'Untitled Strategy') + '</div>' +
+          '        </div>' +
+          '        <div class="lm-child-sub">' + esc(rec.ticker || '') + (rec.ticker ? ' • ' : '') + 'Open Pos: ' + legCount + '</div>' +
+          '      </div>' +
+          '    </div>' +
+          '  </div>' +
+          '  ' + buildBrokerCellHtml(rec) +
+          '  <div><span class="lm-status ' + sStatus.cls + '">' + sStatus.text + '</span></div>' +
+          '  <div class="lm-mtm-wrap">' +
+          '    <span class="lm-mtm" data-record-id="' + esc(sid) + '">₹ 0.00</span>' +
+          '  </div>' +
+          '  <div class="lm-actions">' +
+          (isActive ? '<button type="button" class="lm-btn lm-btn-danger" data-action="square-off" data-record-id="' + esc(sid) + '" data-group-id="' + esc(gid) + '">Square Off</button>' : '') +
+          '  </div>' +
+          '</div>';
+      }).join('');
+
+      return '' +
+        '<div class="lm-deployed-group" data-group-id="' + esc(gid) + '" data-expanded="false">' +
+        '  <div class="lm-deployed-row" data-group-toggle="' + esc(gid) + '">' +
+        '    <div>' +
+        '      <div class="lm-name-wrap">' +
+        '        <input type="checkbox" class="lm-checkbox"' + (activeCount > 0 ? '' : ' disabled') + ' data-group-checkbox="' + esc(gid) + '">' +
+        '        <div>' +
+        '          <div class="lm-group-toggle">' +
+        '            <svg class="lm-group-caret" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>' +
+        '            <div class="lm-name">' + esc(group.group_name) + '</div>' +
+        '          </div>' +
+        '          <div class="lm-sub" data-group-openpos="' + esc(gid) + '">Open Pos: ' + totalOpenPos + '</div>' +
+        '        </div>' +
+        '      </div>' +
+        '    </div>' +
+        '    ' + buildBrokerCellHtml(primary) +
+        '    <div><span class="lm-status ' + pStatus.cls + '">' + pStatus.text + ' ' + activeCount + '/' + items.length + '</span></div>' +
+        '    <div class="lm-mtm-wrap">' +
+        '      <span class="lm-mtm" data-group-mtm="' + esc(gid) + '">₹ 0.00</span>' +
+        '    </div>' +
+        '    <div class="lm-actions">' +
+        (activeCount > 0 ? '<button type="button" class="lm-btn lm-btn-danger" data-action="square-off-group" data-group-id="' + esc(gid) + '">Square Off</button>' : '') +
+        '    </div>' +
+        '  </div>' +
+        '  <div class="lm-deployed-children">' + childRows + '</div>' +
+        '</div>';
+    }).join('');
+
+    applyExpandedState(groups, prev);
+
+    // Bind group toggle
+    deployedRowsEl.querySelectorAll('[data-group-toggle]').forEach(function (rowEl) {
+      rowEl.addEventListener('click', function (e) {
+        if (e.target && (e.target.type === 'checkbox' || e.target.tagName === 'BUTTON')) return;
+        var gid2 = rowEl.getAttribute('data-group-toggle');
+        var grp  = deployedRowsEl.querySelector('[data-group-id="' + gid2 + '"]');
+        if (!grp) return;
+        var exp = grp.getAttribute('data-expanded') === 'true';
+        grp.setAttribute('data-expanded', exp ? 'false' : 'true');
+      });
+    });
+
+    refreshAllMtm();
+  }
+
+  // ── Fetch portfolios ─────────────────────────────────────────
+  function fetchPortfolios() {
+    if (fetchInFlight) return;
+    fetchInFlight = true;
+    var url = buildApiUrl('executions') + '?environment=' + encodeURIComponent(ACTIVATION_MODE) + '&is_signal=false&trade_status=1';
+    fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        var records = Array.isArray(data.records) ? data.records : [];
+        currentRecords = records.slice();
+        records.forEach(function (rec) {
+          var rid = String(rec._id || '');
+          if (rid) executionMap[rid] = rec;
+        });
+        buildPriceIndex(records);
+        buildBrokerStaticMap(records);
+        renderDeployedRows(records);
+      })
+      .catch(function (err) {
+        console.error('[LiveMonitor] Fetch error:', err);
+        if (deployedRowsEl)
+          deployedRowsEl.innerHTML = '<div class="lm-deployed-empty">Unable to load deployed portfolios. Retrying…</div>';
+      })
+      .finally(function () { fetchInFlight = false; });
+  }
+
+  function buildPriceIndex(records) {
+    recordPriceIndex = {};
+    (records || []).forEach(function (rec) {
+      var rid = String(rec._id || '');
+      if (!rid) return;
+      (Array.isArray(rec.legs) ? rec.legs : []).forEach(function (leg) {
+        [getLegToken(leg), getLegSig(leg)].forEach(function (k) {
+          if (k && k !== '|||') {
+            if (!recordPriceIndex[k]) recordPriceIndex[k] = {};
+            recordPriceIndex[k][rid] = true;
+          }
+        });
+      });
+    });
+  }
+
+  // ── Socket status display ────────────────────────────────────
+  function setSocketStatus(state, label) {
+    if (socketStatusEl) socketStatusEl.setAttribute('data-state', state);
+    if (socketLabelEl)  socketLabelEl.textContent = label || state;
+  }
+
+  // ── Merge a record update ────────────────────────────────────
+  function mergeRecord(incoming, existing) {
+    if (!existing) return incoming;
+    var merged = Object.assign({}, existing, incoming);
+    if (incoming.broker_details == null) merged.broker_details = existing.broker_details;
+    return merged;
+  }
+
+  // ── Handle execute-orders socket ─────────────────────────────
+  function handleExecOrdsMsg(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    var strategyRecords = Array.isArray(payload.data) ? payload.data
+      : (payload.data && Array.isArray(payload.data.records) ? payload.data.records : []);
+
+    var needFull = false;
+    strategyRecords.forEach(function (rec) {
+      var rid = String((rec._id || rec.trade_id) || '');
+      if (!rid) return;
+      var merged = mergeRecord(rec, executionMap[rid]);
+      executionMap[rid] = merged;
+
+      var found = false;
+      currentRecords = currentRecords.map(function (r) {
+        var id = String((r._id || r.trade_id) || '');
+        if (id === rid) { found = true; return merged; }
+        return r;
+      });
+      if (!found) { currentRecords.push(merged); needFull = true; }
+
+      var t = String(rec.position_refresh_trigger || '');
+      if (t === 'cancel-deployment' || t === 'squared-off') needFull = true;
+    });
+
+    if (needFull) {
+      buildBrokerStaticMap(currentRecords);
+      buildPriceIndex(currentRecords);
+      renderDeployedRows(currentRecords);
+    } else {
+      refreshAllMtm();
+    }
+  }
+
+  // ── Handle update socket ─────────────────────────────────────
+  function handleUpdMsg(payload) {
+    if (!payload || typeof payload !== 'object') return;
+
+    if (payload.type === 'ltp_update') {
+      var d = payload.data || {};
+      if (d.ltp && typeof d.ltp === 'object') Object.assign(ltpMap, d.ltp);
+      if (d.instrument_ltp && typeof d.instrument_ltp === 'object') Object.assign(ltpSigMap, d.instrument_ltp);
+      refreshAllMtm();
+      return;
+    }
+
+    if (payload.type === 'connection_established') {
+      sendUpdSub();
+      setSocketStatus('connected', 'Connected');
+      return;
+    }
+
+    if (payload.type === 'subscription_ack') {
+      setSocketStatus('connected', 'Live');
+      return;
+    }
+
+    if (payload.type === 'broker-settings') {
+      var bsList = (payload.data && Array.isArray(payload.data.brokers)) ? payload.data.brokers : [];
+      bsList.forEach(function (bs) {
+        var bid = String(bs && bs.broker_id || '').trim();
+        if (!bid) return;
+        brokerSettingsCache[bid] = bs;
+        // Patch card if present
+        var card = brokerListEl && brokerListEl.querySelector('[data-broker-id="' + bid + '"]');
+        if (card) {
+          var strip = card.querySelector('.lm-broker-strip');
+          var newStrip = buildBrokerSettingsStrip(bs);
+          if (strip && newStrip) strip.outerHTML = newStrip;
+          else if (newStrip) card.insertAdjacentHTML('beforeend', newStrip);
+        }
+      });
+      return;
+    }
+
+    if (payload.type === 'update') {
+      var positions = (payload.data && Array.isArray(payload.data.open_positions)) ? payload.data.open_positions : [];
+      positions.forEach(function (pos) {
+        var tid = String(pos.trade_id || '');
+        var lid = String(pos.leg_id || '');
+        if (!tid || !lid || !executionMap[tid]) return;
+        (Array.isArray(executionMap[tid].legs) ? executionMap[tid].legs : []).forEach(function (leg) {
+          if (String((leg.leg_id || leg.id) || '') !== lid) return;
+          if (pos.current_price != null) { leg.last_saw_price = pos.current_price; leg.ltp = pos.current_price; }
+        });
+      });
+      refreshAllMtm();
+    }
+  }
+
+  // ── Send subscription payloads ───────────────────────────────
+  function sendExecSub() {
+    if (!exOrdSocket || typeof exOrdSocket.send !== 'function') return;
+    exOrdSocket.send({
+      activation_mode: ACTIVATION_MODE,
+      status: ACTIVATION_MODE,
+      autoload: false,
+      reason: 'live_monitor_subscribe'
+    });
+  }
+
+  function sendUpdSub() {
+    if (!updSocket || typeof updSocket.send !== 'function') return;
+    updSocket.send({
+      activation_mode: ACTIVATION_MODE,
+      status: ACTIVATION_MODE,
+      autoload: false,
+      reason: 'live_monitor_subscribe'
+    });
+  }
+
+  // ── Connect sockets ──────────────────────────────────────────
+  function connectSockets() {
+    if (!window.AlgoStreamSockets) {
+      console.warn('[LiveMonitor] AlgoStreamSockets not available – no live socket.');
+      setSocketStatus('error', 'Socket unavailable');
+      return;
+    }
+
+    exOrdSocket = window.AlgoStreamSockets.createChannel({
+      channel: 'execute-orders',
+      activationMode: ACTIVATION_MODE,
+      onStatusChange: function (state, meta) {
+        setSocketStatus(state, (meta && meta.message) || state);
+      },
+      onMessage: function (payload) {
+        if (payload && payload.type === 'connection_established') sendExecSub();
+        handleExecOrdsMsg(payload);
+      }
+    });
+    exOrdSocket.connect();
+
+    updSocket = window.AlgoStreamSockets.createChannel({
+      channel: 'update',
+      activationMode: ACTIVATION_MODE,
+      onStatusChange: function (state, meta) {
+        setSocketStatus(state, (meta && meta.message) || state);
+      },
+      onMessage: handleUpdMsg
+    });
+    updSocket.connect();
+  }
+
+  // ── Init ─────────────────────────────────────────────────────
+  setSocketStatus('connecting', 'Connecting...');
+  fetchPortfolios();
+  connectSockets();
+  setInterval(fetchPortfolios, POLL_INTERVAL_MS);
+
+})();
+</script>
+
+</body>
+</html>

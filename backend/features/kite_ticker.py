@@ -43,6 +43,10 @@ SPOT_TOKENS: dict[int, str] = {
     288009: "MIDCPNIFTY",
 }
 
+# India VIX token — subscribed separately so LTP is live in ltp_map but
+# VIX is NOT written to option_chain_index_spot (it is not a tradeable spot).
+INDIA_VIX_TOKEN_ID = 264969
+
 
 class _TickerManager:
     def __init__(self):
@@ -101,7 +105,7 @@ class _TickerManager:
             # needs that contract.
             spot_token_ids = list(SPOT_TOKENS.keys())
             option_tokens: list[int] = []
-            all_tokens     = spot_token_ids
+            all_tokens     = spot_token_ids + [INDIA_VIX_TOKEN_ID]
 
             print(
                 f"[KITE TICKER] subscribing "

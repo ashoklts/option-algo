@@ -357,72 +357,18 @@ def resolve_fast_forward_pending_entry_snapshot(
     option_raw = str(contract_cfg.get('Option') or leg_cfg.get('InstrumentKind') or '')
     option_type = option_raw.split('.')[-1] if '.' in option_raw else option_raw
     expiry_kind = str(contract_cfg.get('Expiry') or leg_cfg.get('ExpiryKind') or 'ExpiryType.Weekly')
-    strike_param = str(contract_cfg.get('StrikeParameter') or leg_cfg.get('StrikeParameter') or 'StrikeType.ATM')
-    step = STRIKE_STEPS.get(underlying, 50)
-    atm_price = resolve_atm_price(underlying, spot_price) if spot_price > 0 else 0
-    strike = _resolve_strike(spot_price, strike_param, option_type, step) if spot_price > 0 else None
+    entry_kind  = str(contract_cfg.get('EntryType') or leg_cfg.get('EntryType') or leg_cfg.get('entry_kind') or '')
+    atm_price   = resolve_atm_price(underlying, spot_price) if spot_price > 0 else 0
 
+    # Strike is always resolved at entry time via live option chain (fetch_full_chain +
+    # select_strike_live). The snapshot only collects spot/atm — no DB lookup needed.
+    strike = None
     expiry = None
-    token = ''
+    token  = ''
     symbol = ''
-    ltp = 0.0
-    active_tokens_col = db._db['active_option_tokens']
-    date_key = str(now_ts or '')[:10]
-    token_base_query = {
-        '$or': [
-            {'instrument': underlying},
-            {'underlying': underlying},
-        ],
-    }
-    expiry_candidates: set[str] = set()
-    for row in active_tokens_col.find(
-        token_base_query,
-        {'expiry': 1, 'expiry_date': 1},
-    ):
-        expiry_value = _normalize_expiry_key(row.get('expiry') or row.get('expiry_date'))
-        if expiry_value and expiry_value >= date_key:
-            expiry_candidates.add(expiry_value)
-    expiries = sorted(expiry_candidates)
-    expiry = _resolve_expiry(date_key, expiry_kind, expiries) if expiries else None
-    if expiry and strike not in (None, ''):
-        option_key = option_type.upper()
-        strike_value = _safe_int(strike)
-        token_doc = active_tokens_col.find_one({
-            **token_base_query,
-            '$and': [
-                {'$or': [{'expiry': expiry}, {'expiry_date': expiry}]},
-                {'strike': strike_value},
-                {'option_type': option_key},
-            ],
-        }) or {}
-        if not token_doc:
-            token_doc = active_tokens_col.find_one({
-                **token_base_query,
-                '$and': [
-                    {'$or': [{'expiry': expiry}, {'expiry_date': expiry}]},
-                    {'option_type': option_key},
-                ],
-            })
-            if token_doc:
-                print(
-                    '[FF ENTRY SNAPSHOT FALLBACK] '
-                    f'trade={str(trade.get("_id") or "")} '
-                    f'leg={str(leg_cfg.get("id") or "")} '
-                    f'requested_strike={strike_value} '
-                    f'fallback_strike={_safe_int(token_doc.get("strike"))} '
-                    f'expiry={expiry} option={option_key}'
-                )
-        token = str(token_doc.get('token') or token_doc.get('tokens') or '').strip()
-        symbol = str(token_doc.get('symbol') or '').strip()
-        strike = token_doc.get('strike') if token_doc.get('strike') not in (None, '') else strike
-        if token:
-            _subscribe_option_token(token, symbol)
-        ltp = _get_socket_entry_ltp(token)
-        ltp_source = 'socket_ltp'
-        if ltp <= 0 and symbol:
-            ltp, ltp_source = resolve_fast_forward_entry_price(db, trade, token, symbol, 0.0)
-    else:
-        ltp_source = 'token_not_found'
+    ltp    = 0.0
+    ltp_source = 'token_not_found'
+
 
     spot_source = 'quote_api' if should_use_fast_forward_quote(trade) else 'socket'
     print(
@@ -448,7 +394,8 @@ def resolve_fast_forward_pending_entry_snapshot(
         f'token={token or "NOT_FOUND"} '
         f'symbol={symbol or "-"} '
         f'ltp={ltp} '
-        f'ltp_source={ltp_source}'
+        f'ltp_source={ltp_source} '
+        f'entry_kind={entry_kind}'
     )
     return {
         'spot_at_queue': spot_price,
@@ -504,6 +451,52 @@ def _get_fast_forward_quote_price(db, trade: dict, symbol: str) -> float:
     return 0.0
 
 
+def _extract_chain_price(chain_doc: dict | None) -> float:
+    doc = chain_doc if isinstance(chain_doc, dict) else {}
+    for key in ('close', 'last_price', 'ltp', 'price', 'open'):
+        price = _safe_float(doc.get(key))
+        if price > 0:
+            return price
+    return 0.0
+
+
+def _get_fast_forward_chain_price(
+    db,
+    *,
+    token: str = '',
+    underlying: str = '',
+    expiry: str = '',
+    strike: Any = None,
+    option_type: str = '',
+    now_ts: str = '',
+) -> float:
+    chain_col = db._db[OPTION_CHAIN_COLLECTION]
+    normalized_token = str(token or '').strip()
+    if normalized_token:
+        try:
+            return _extract_chain_price(
+                get_chain_doc_by_token(chain_col, normalized_token, now_ts, activation_mode='fast-forward')
+            )
+        except Exception:
+            pass
+    if underlying and expiry and strike not in (None, '') and option_type:
+        try:
+            return _extract_chain_price(
+                get_chain_doc_at_time(
+                    chain_col,
+                    underlying,
+                    expiry,
+                    strike,
+                    option_type,
+                    now_ts,
+                    activation_mode='fast-forward',
+                )
+            )
+        except Exception:
+            pass
+    return 0.0
+
+
 def resolve_fast_forward_entry_price(
     db,
     trade: dict,
@@ -514,17 +507,15 @@ def resolve_fast_forward_entry_price(
     if str(trade.get('activation_mode') or '').strip() != 'fast-forward':
         return fallback_price, 'default'
 
-    socket_ltp = _get_socket_entry_ltp(token)
-    if should_use_fast_forward_quote(trade):
-        quote_price = _get_fast_forward_quote_price(db, trade, symbol)
-        if quote_price > 0:
-            return quote_price, 'quote'
-        if socket_ltp > 0:
-            return socket_ltp, 'socket_ltp_fallback'
-        return fallback_price, 'chain_fallback'
+    quote_price = _get_fast_forward_quote_price(db, trade, symbol)
+    if quote_price > 0:
+        return quote_price, 'quote'
 
-    if socket_ltp > 0:
-        return socket_ltp, 'socket_ltp'
+    # Quote returned 0 — try Kite WebSocket LTP (token already subscribed above)
+    socket_price = _wait_for_socket_entry_ltp(token, timeout_seconds=0.75)
+    if socket_price > 0:
+        return socket_price, 'socket'
+
     return fallback_price, 'chain_fallback'
 
 
@@ -548,7 +539,8 @@ def resolve_fast_forward_entry_execution_payload(
         leg_expiry = leg_expiry[:10]
     leg_symbol = str(leg.get('symbol') or '').strip()
 
-    # Fast path: contract already fully resolved → skip DB scan, get LTP from Kite ticker directly
+    # Fast path: contract already fully resolved → skip DB scan and resolve
+    # entry price from quote first, then historical fast-forward chain fallback.
     if underlying and leg_token and leg_token.isdigit() and leg_strike not in (None, '') and leg_expiry:
         try:
             from features.live_monitor_socket import _get_active_ticker_manager
@@ -556,17 +548,19 @@ def resolve_fast_forward_entry_execution_payload(
             spot_price = _safe_float(_tm_ff.get_spot(underlying))
         except Exception:
             spot_price = 0.0
-        ltp = _get_socket_entry_ltp(leg_token)
-        if ltp <= 0:
-            # Token not subscribed or no tick received yet — subscribe now so next tick delivers LTP
-            _subscribe_option_token(leg_token, leg_symbol)
-            ltp = _wait_for_socket_entry_ltp(leg_token, timeout_seconds=0.75)
-            # Also try Kite quote API as immediate fallback (if trade has get_quote enabled)
-            if should_use_fast_forward_quote(trade):
-                _quote_ltp = _get_fast_forward_quote_price(db, trade, leg_symbol)
-                if _quote_ltp > 0:
-                    ltp = _quote_ltp
-                    print(f'[FF FAST PATH QUOTE] token={leg_token} symbol={leg_symbol} quote_ltp={ltp}')
+        # Socket may not have spot yet — use the price captured at queue time
+        if spot_price <= 0:
+            spot_price = _safe_float(leg.get('spot_at_queue') or leg.get('spot_price') or leg.get('live_spot_price'))
+        _subscribe_option_token(leg_token, leg_symbol)
+        ltp = _get_fast_forward_chain_price(
+            db,
+            token=leg_token,
+            underlying=underlying,
+            expiry=leg_expiry,
+            strike=leg_strike,
+            option_type=str(leg.get('option') or '').split('.')[-1].upper(),
+            now_ts=now_ts,
+        )
         entry_price, price_source = resolve_fast_forward_entry_price(db, trade, leg_token, leg_symbol, ltp)
         return {
             'spot_price': spot_price,
@@ -587,10 +581,12 @@ def resolve_fast_forward_entry_execution_payload(
             'Option': str(leg.get('option') or leg.get('InstrumentKind') or ''),
             'Expiry': str(leg.get('expiry_kind') or leg.get('ExpiryKind') or 'ExpiryType.Weekly'),
             'StrikeParameter': str(leg.get('strike_parameter') or leg.get('StrikeParameter') or 'StrikeType.ATM'),
+            'EntryType': str(leg.get('entry_kind') or leg.get('EntryType') or ''),
         },
         'InstrumentKind': str(leg.get('option') or leg.get('InstrumentKind') or ''),
         'ExpiryKind': str(leg.get('expiry_kind') or leg.get('ExpiryKind') or 'ExpiryType.Weekly'),
         'StrikeParameter': str(leg.get('strike_parameter') or leg.get('StrikeParameter') or 'StrikeType.ATM'),
+        'entry_kind': str(leg.get('entry_kind') or leg.get('EntryType') or ''),
     }
     leg_spot_fallback = _safe_float(leg.get('spot_at_queue') or leg.get('spot_price') or 0)
     snapshot = resolve_fast_forward_pending_entry_snapshot(
@@ -650,6 +646,7 @@ __all__ = [
     'get_open_legs_ltp_array',
     'should_use_fast_forward_quote',
     'get_fast_forward_quote_spot_price',
+    '_get_fast_forward_quote_price',
     'resolve_fast_forward_pending_entry_snapshot',
     'resolve_fast_forward_entry_price',
     'resolve_fast_forward_entry_execution_payload',

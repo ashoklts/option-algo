@@ -36,10 +36,40 @@
         }
     }
 
+    function getAnalysePathParams() {
+        var pathname = String((window.location && window.location.pathname) || '').replace(/\\/g, '/');
+        var segments = pathname.split('/').filter(Boolean);
+        var analyseIndex = -1;
+        var index;
+
+        for (index = 0; index < segments.length; index += 1) {
+            if (String(segments[index] || '').trim().toLowerCase() === 'analyse') {
+                analyseIndex = index;
+            }
+        }
+
+        if (analyseIndex === -1 || segments.length < analyseIndex + 3) {
+            return {
+                entityType: '',
+                entityId: ''
+            };
+        }
+
+        return {
+            entityType: String(segments[analyseIndex + 1] || '').trim().toLowerCase(),
+            entityId: decodeURIComponent(String(segments[analyseIndex + 2] || '').trim())
+        };
+    }
+
     function getTradeQuery() {
         var params = new URLSearchParams(window.location.search || '');
+        var pathParams = getAnalysePathParams();
+        var pathEntityId = pathParams.entityId;
+        var pathEntityType = pathParams.entityType;
         return {
-            strategyId: String(params.get('strategy_id') || '').trim(),
+            strategyId: String(params.get('strategy_id') || (pathEntityType === 'strategy' ? pathEntityId : '') || '').trim(),
+            groupId: String(params.get('group_id') || (pathEntityType === 'group' ? pathEntityId : '') || '').trim(),
+            portfolioId: String(params.get('portfolio') || (pathEntityType === 'portfolio' ? pathEntityId : '') || '').trim(),
             status: String(params.get('status') || 'algo-backtest').trim() || 'algo-backtest'
         };
     }
@@ -280,9 +310,10 @@
         }
 
         if (type === 'execute_order') {
-            var records = Array.isArray(message.data)
-                ? message.data
-                : (message.data && Array.isArray(message.data.records) ? message.data.records : []);
+            var messageData = message && message.data ? message.data : {};
+            var records = Array.isArray(messageData)
+                ? messageData
+                : (Array.isArray(messageData.records) ? messageData.records : []);
             var matchedCurrentTrade = false;
             var query = getTradeQuery();
             records.forEach(function (record) {
@@ -315,10 +346,25 @@
                 }
             });
             scheduleSimulatorRefresh();
-            if (matchedCurrentTrade || (query.strategyId && records.some(function (record) {
-                var rid = String(record && (record._id || record.trade_id) || '').trim();
-                return rid === query.strategyId;
-            }))) {
+            var matchedCurrentGroup = !!(
+                query.groupId && (
+                    String(messageData.group_id || '').trim() === query.groupId
+                    || records.some(function (record) {
+                        return String(record && record.portfolio && record.portfolio.group_id || '').trim() === query.groupId;
+                    })
+                )
+            );
+            var matchedCurrentPortfolio = !!(
+                query.portfolioId && records.some(function (record) {
+                    return String(record && record.portfolio && record.portfolio.portfolio || '').trim() === query.portfolioId;
+                })
+            );
+            var matchedCurrentStrategy = !!(
+                query.strategyId && records.some(function (record) {
+                    return String(record && (record.strategy_id || record._id || record.trade_id) || '').trim() === query.strategyId;
+                })
+            );
+            if (matchedCurrentTrade || matchedCurrentGroup || matchedCurrentPortfolio || matchedCurrentStrategy) {
                 scheduleTradeHistoryReload();
             }
         }
@@ -386,16 +432,26 @@
         ensureAlgoApiBase();
 
         var query = getTradeQuery();
-        if (!query.strategyId) {
+        if (!query.strategyId && !query.groupId && !query.portfolioId) {
             return;
         }
 
-        var requestUrl = window.buildAlgoApiUrl(
-            'strategy-trade-history/' + encodeURIComponent(query.strategyId) + '?status=' + encodeURIComponent(query.status)
-        );
+        var requestUrl = query.portfolioId
+            ? window.buildAlgoApiUrl(
+                'strategy-trade-history/portfolio/' + encodeURIComponent(query.portfolioId) + '?status=' + encodeURIComponent(query.status)
+              )
+            : (query.strategyId
+                ? window.buildAlgoApiUrl(
+                    'strategy-trade-history/' + encodeURIComponent(query.strategyId) + '?status=' + encodeURIComponent(query.status)
+                  )
+                : window.buildAlgoApiUrl(
+                    'strategy-trade-history/group/' + encodeURIComponent(query.groupId) + '?status=' + encodeURIComponent(query.status)
+                  ));
 
         window.strategyTradeSimulatorRequest = {
             strategy_id: query.strategyId,
+            group_id: query.groupId,
+            portfolio_id: query.portfolioId,
             status: query.status,
             url: requestUrl
         };

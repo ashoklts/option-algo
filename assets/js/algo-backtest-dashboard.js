@@ -7,7 +7,8 @@
     };
     var localPageRouteMap = {
         portfolio: 'portfolio.html',
-        portfolioActivation: 'portfolio-activation.html'
+        portfolioActivation: 'portfolio-activation.html',
+        'strategy-trade-history': 'strategy-trade-history.html'
     };
 
     function getResolvedAlgoApiBaseUrl() {
@@ -98,11 +99,21 @@
     }
 
     function buildStrategyTradeHistoryUrl(strategyId) {
-        var query = '?strategy_id=' + encodeURIComponent(strategyId || '') + '&status=algo-backtest';
-        if (typeof window.buildAppUrl === 'function') {
-            return window.buildAppUrl('strategy-trade-history.html') + query;
-        }
-        return './strategy-trade-history.html' + query;
+        var status = encodeURIComponent(listeningModeKey || 'algo-backtest');
+        var query = '?strategy_id=' + encodeURIComponent(strategyId) + '&status=' + status;
+        return buildNamedPageUrl('strategy-trade-history', query);
+    }
+
+    function buildGroupTradeHistoryUrl(groupId) {
+        var status = encodeURIComponent(listeningModeKey || 'algo-backtest');
+        var query = '?group_id=' + encodeURIComponent(groupId) + '&status=' + status;
+        return buildNamedPageUrl('strategy-trade-history', query);
+    }
+
+    function buildPortfolioTradeHistoryUrl(portfolioId) {
+        var status = encodeURIComponent(listeningModeKey || 'algo-backtest');
+        var query = '?portfolio=' + encodeURIComponent(portfolioId) + '&status=' + status;
+        return buildNamedPageUrl('strategy-trade-history', query);
     }
 
     function buildStrategyHoverTools(itemId) {
@@ -130,29 +141,8 @@
             '</div>';
     }
 
-    function buildDeployedHoverTools(itemId) {
-        var safeItemId = escapeHtml(itemId || '');
-        return '' +
-            '<div class="ff-deployed-hover-tools" aria-label="Strategy quick actions">' +
-            '    <span class="ff-deployed-hover-tool is-static" title="MTM line" aria-hidden="true">' +
-            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-            '            <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>' +
-            '            <path d="m19 9-5 5-4-4-3 3"></path>' +
-            '        </svg>' +
-            '    </span>' +
-            '    <button type="button" class="ff-deployed-hover-tool is-button" title="Strategy builder" data-open-strategy-builder="' + safeItemId + '">' +
-            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-            '            <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>' +
-            '            <path d="M7 11.207a.5.5 0 0 1 .146-.353l2-2a.5.5 0 0 1 .708 0l3.292 3.292a.5.5 0 0 0 .708 0l4.292-4.292a.5.5 0 0 1 .854.353V16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"></path>' +
-            '        </svg>' +
-            '    </button>' +
-            '    <span class="ff-deployed-hover-tool is-static" title="Replay trade" aria-hidden="true">' +
-            '        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-            '            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>' +
-            '            <path d="M3 3v5h5"></path>' +
-            '        </svg>' +
-            '    </span>' +
-            '</div>';
+    function buildDeployedHoverTools(itemId, portfolioId) {
+        return '';
     }
 
     var table = document.querySelector('.ff-strategy-table');
@@ -190,6 +180,9 @@
     var manualRunBtn = document.getElementById('ff-manual-run-btn');
     var autoloadToggleBtn = document.getElementById('ff-autoload-toggle-btn');
     var autoloadStatusEl = document.getElementById('ff-autoload-status');
+    var strategyViewButton = document.querySelector('[data-testid="Strategy View-button"]');
+    var strategyViewInput = strategyViewButton ? strategyViewButton.querySelector('input[type="radio"]') : null;
+    var viewPortfolioButton = document.getElementById('view-portfolio');
     var headerBrokerListHost = document.getElementById('ff-header-broker-list');
     var seekButtons = Array.prototype.slice.call(document.querySelectorAll('[data-seek-minutes], [data-seek-target]'));
     var deployedRowsHost = document.getElementById('ff-deployed-rows');
@@ -252,6 +245,10 @@
     var initialPositionSnapshotRequested = false;
     var currentListenTimeEl = null;
     var latestListenTimestamp = '';
+
+    // MTM history for Daily MTM Graph popup
+    window._ffMtmHistory = window._ffMtmHistory || [];
+    window._ffSpotHistory = window._ffSpotHistory || {};
     var timelineScrubValue = '';
     var timelineAutoplayTimer = null;
     var backtestAutoloadEnabled = true;
@@ -261,7 +258,7 @@
     var currentDeployedRecords = [];
     var latestLtpSnapshot = [];
     var latestLtpSnapshotMap = {};
-    var defaultBrowserTitle = String(document.title || '').trim() || 'Options Simulator';
+    var defaultBrowserTitle = getLiveTabTitleSuffix() + ' | Algo Trading';
     var ltpRenderFrameId = 0;
     var ltpRenderTimerId = 0;
     var ltpRenderHeartbeatId = 0;
@@ -292,6 +289,73 @@
             payload.group_id = executeOrdersGroupId;
         }
         return payload;
+    }
+
+    function getFirstAvailablePortfolioId() {
+        var groupedRecords = groupDeployedRecords(currentDeployedRecords);
+        for (var i = 0; i < groupedRecords.length; i += 1) {
+            var portfolioId = String(groupedRecords[i] && groupedRecords[i].portfolio_id || '').trim();
+            if (portfolioId) {
+                return portfolioId;
+            }
+        }
+        return '';
+    }
+
+    function getPortfolioIdForTradeHistory() {
+        try {
+            var params = new URLSearchParams(window.location.search || '');
+            var paramPortfolioId = String(
+                params.get('portfolio')
+                || params.get('portfolio_id')
+                || params.get('strategy_id')
+                || ''
+            ).trim();
+            if (paramPortfolioId) {
+                return paramPortfolioId;
+            }
+        } catch (error) {
+            // Ignore URL parsing errors and continue through other fallbacks.
+        }
+
+        var configPortfolioId = String(
+            (window.APP_CONFIG && (
+                window.APP_CONFIG.portfolio
+                || window.APP_CONFIG.portfolio_id
+                || window.APP_CONFIG.strategy_id
+            ))
+            || window.portfolio
+            || window.portfolio_id
+            || window.strategy_id
+            || ''
+        ).trim();
+        if (configPortfolioId) {
+            return configPortfolioId;
+        }
+
+        if (typeof window.getContextValue === 'function') {
+            var contextPortfolioId = String(
+                window.getContextValue(['portfolio', 'portfolio_id', 'portfolioId', 'strategy_id'])
+                || ''
+            ).trim();
+            if (contextPortfolioId) {
+                return contextPortfolioId;
+            }
+        }
+
+        try {
+            var storageKeys = ['portfolio', 'portfolio_id', 'portfolioId', 'strategy_id'];
+            for (var i = 0; i < storageKeys.length; i += 1) {
+                var storedPortfolioId = String(window.localStorage.getItem(storageKeys[i]) || '').trim();
+                if (storedPortfolioId) {
+                    return storedPortfolioId;
+                }
+            }
+        } catch (error) {
+            // Ignore storage errors and continue to deployed-record fallback.
+        }
+
+        return getFirstAvailablePortfolioId();
     }
 
     // Cross-tab relay:
@@ -444,6 +508,24 @@
         latestLtpSnapshot = Object.keys(latestLtpSnapshotMap).map(function (key) {
             return latestLtpSnapshotMap[key];
         });
+
+        // Track spot prices for the MTM graph underlying overlay
+        var now = Date.now();
+        incoming.forEach(function (item) {
+            var uKey = String(item.underlying || '').trim().toUpperCase();
+            var optType = String(item.option_type || '').trim().toUpperCase();
+            if (uKey && optType === 'SPOT' && item.ltp != null) {
+                var spotH = window._ffSpotHistory;
+                if (!spotH[uKey]) spotH[uKey] = [];
+                var bucket = spotH[uKey];
+                var price = parseFloat(item.ltp);
+                if (!bucket.length || now - bucket[bucket.length - 1].ts >= 5000) {
+                    bucket.push({ ts: now, price: price });
+                } else {
+                    bucket[bucket.length - 1].price = price;
+                }
+            }
+        });
     }
 
     function rememberChangedLtpKeys(items) {
@@ -461,6 +543,8 @@
         latestLtpSnapshot = [];
         pendingChangedLtpKeys = {};
         forceFullLtpRender = true;
+        window._ffMtmHistory = [];
+        window._ffSpotHistory = {};
     }
 
     function buildLegContractKey(leg) {
@@ -780,6 +864,18 @@
         var countStr = countsCache.totalOpenLegs + '/' + countsCache.totalStrategies;
         updateBrowserTabTitle(totalRounded);
 
+        // Record MTM history point for the Daily MTM Graph
+        (function () {
+            var now = Date.now();
+            var hist = window._ffMtmHistory;
+            // Deduplicate: skip if same second as last entry
+            if (!hist.length || now - hist[hist.length - 1].ts >= 5000) {
+                hist.push({ ts: now, mtm: totalRounded });
+            } else {
+                hist[hist.length - 1].mtm = totalRounded;
+            }
+        }());
+
         ['ff-header-total-mtm', 'ff-toolbar-total-mtm'].forEach(function (id) {
             var el = document.getElementById(id);
             if (el) {
@@ -834,17 +930,47 @@
         return 'Algo Backtest';
     }
 
+    var _tabTitleIntervalId = 0;
+    var _lastTabTitleMtm = null;
+
     function updateBrowserTabTitle(mtmValue) {
         var numericMtm = parseFloat(mtmValue);
         if (!isFinite(numericMtm)) {
-            document.title = defaultBrowserTitle;
+            _lastTabTitleMtm = null;
+            document.title = getLiveTabTitleSuffix() + ' | Algo Trading';
             return;
         }
+        _lastTabTitleMtm = numericMtm;
         var rounded = Math.round(numericMtm * 100) / 100;
-        document.title = '\u20b9 ' + rounded.toLocaleString('en-IN', {
+        var sign = rounded >= 0 ? '+' : '';
+        document.title = '\u20b9 ' + sign + rounded.toLocaleString('en-IN', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         }) + ' | ' + getLiveTabTitleSuffix();
+    }
+
+    function _computeTotalMtmFromCache() {
+        var total = 0;
+        Object.keys(strategyPnlCache).forEach(function (id) {
+            total += Number(strategyPnlCache[id] || 0);
+        });
+        return total;
+    }
+
+    function startTabTitleInterval() {
+        if (_tabTitleIntervalId) return;
+        _tabTitleIntervalId = window.setInterval(function () {
+            if (listeningState !== 'running') return;
+            updateBrowserTabTitle(_computeTotalMtmFromCache());
+        }, 1000);
+    }
+
+    function stopTabTitleInterval() {
+        if (_tabTitleIntervalId) {
+            window.clearInterval(_tabTitleIntervalId);
+            _tabTitleIntervalId = 0;
+        }
+        _lastTabTitleMtm = null;
     }
 
 
@@ -925,6 +1051,18 @@
             ltpRenderTimerId = 0;
             flushScheduledLtpRender();
         }, Math.max(0, LTP_RENDER_INTERVAL_MS - elapsed));
+    }
+
+    function renderLtpImmediately() {
+        lastLtpRenderAt = Date.now();
+        var changedKeys = Object.keys(pendingChangedLtpKeys);
+        pendingChangedLtpKeys = {};
+        if (!forceFullLtpRender && changedKeys.length && Object.keys(strategyPnlCache).length) {
+            applyLtpToAffectedRecords(changedKeys);
+            return;
+        }
+        forceFullLtpRender = false;
+        applyLtpToMtm(latestLtpSnapshot);
     }
 
     function getCurrentBacktestListenTimestamp() {
@@ -1425,6 +1563,7 @@
         resetListeningPollTimer();
         listeningState = 'running';
         startLtpRenderHeartbeat();
+        startTabTitleInterval();
         updateMarketCountdown();
         if (backtestCountdownState) {
             marketCountdownTimer = window.setInterval(updateMarketCountdown, 1000);
@@ -1497,6 +1636,7 @@
         resetMarketCountdownTimer();
         resetListeningPollTimer();
         stopLtpRenderHeartbeat();
+        stopTabTitleInterval();
         backtestCountdownState = null;
         listeningState = 'idle';
         socketManuallyPaused = false;
@@ -2353,6 +2493,29 @@
         return featureMap && typeof featureMap === 'object' ? featureMap[featureKey] : null;
     }
 
+    function normalizeLegReference(value) {
+        var normalized = String(value || '').trim();
+        if (!normalized) {
+            return '';
+        }
+        if (/_re_/i.test(normalized)) {
+            normalized = normalized.split(/_re_/i)[0].trim();
+        }
+        if (normalized.indexOf('-overall_') !== -1) {
+            normalized = normalized.split('-overall_')[0].trim();
+        }
+        if (/^[A-Za-z0-9_]+-[A-Za-z0-9_]+$/.test(normalized)) {
+            normalized = normalized.split('-')[0].trim();
+        }
+        return normalized;
+    }
+
+    function countLegReentries(value) {
+        var normalized = String(value || '');
+        var matches = normalized.match(/_re_/gi);
+        return matches ? matches.length : 0;
+    }
+
     function resolveLegDisplayMeta(leg, record) {
         var legId = String(leg && (leg.id || leg.leg_id) || '').trim();
         var lazyLegRef = String(leg && leg.lazy_leg_ref || '').trim();
@@ -2365,6 +2528,7 @@
         var isTrueLazyLeg = !!(lazyLegRef && hasParentReference && !isOverallParentReentry && lazyLegRef !== parentLegId);
         var isLazy = isTrueLazyLeg;
         var isReentry = !!(leg && (leg.is_reentered_leg || triggeredBy));
+        var sourceLegRef = normalizeLegReference(lazyLegRef || parentLegId || triggeredBy || legId);
         var baseLabel = 'Parent Leg';
         var overallReason = String(record && record.last_overall_event_reason || '').trim().toLowerCase();
 
@@ -2396,8 +2560,8 @@
             baseLabel = 'Parent Leg (' + overallSourceLabel + (descendantReentryCount ? ' ' + descendantReentryCount : '') + ')';
         } else if (isLazy) {
             baseLabel = 'Lazy Leg';
-            if (lazyLegRef || legId) {
-                baseLabel += ' (' + (lazyLegRef || legId) + ')';
+            if (sourceLegRef) {
+                baseLabel += ' (' + sourceLegRef + ')';
             }
         }
 
@@ -2405,8 +2569,11 @@
         var reentryMatch = legType.match(/reentry_(\d+)/i);
         if (reentryMatch && reentryMatch[1]) {
             reentryCount = reentryMatch[1];
-        } else if (/_re_/i.test(legId)) {
-            reentryCount = '1';
+        } else {
+            var derivedReentryCount = Math.max(countLegReentries(legId), countLegReentries(parentLegId), countLegReentries(triggeredBy));
+            if (derivedReentryCount > 0) {
+                reentryCount = String(derivedReentryCount);
+            }
         }
 
         // AtCost pending: entry_trade is null, reentry_type is AtCost, not yet entered
@@ -2438,6 +2605,8 @@
             isOverallParentReentry: isOverallParentReentry,
             isAtCostPending: isAtCostPending,
             isAtCostTriggered: isAtCostTriggered,
+            sourceLegRef: sourceLegRef,
+            reentryCount: reentryCount,
             label: baseLabel
         };
     }
@@ -2700,8 +2869,8 @@
                     : (Array.isArray(item && item.legs) ? item.legs.length : 0);
                 return sum + count;
             }, 0);
-            var openUrl = group.portfolio_id
-                ? buildNamedPageUrl('portfolioActivation', '?strategy_id=' + encodeURIComponent(group.portfolio_id) + '&status=' + encodeURIComponent(listeningModeKey))
+            var openUrl = group.group_id
+                ? buildGroupTradeHistoryUrl(group.group_id)
                 : '#';
 
             var childRowsHtml = items.map(function (record) {
@@ -2765,11 +2934,11 @@
                 '        <div><span class="ff-deployed-status ' + primaryStatus.className + '">' + primaryStatus.text + ' ' + activeCount + '/' + items.length + '</span></div>' +
                 '        <div class="ff-deployed-mtm-wrap">' +
                 '            <div class="ff-deployed-mtm" data-group-mtm="' + escapeHtml(group.group_id) + '">₹ 0</div>' +
-                buildDeployedHoverTools(primaryRecord._id || '') +
+                buildDeployedHoverTools(primaryRecord._id || '', group.portfolio_id || '') +
                 '        </div>' +
                 '        <div class="ff-deployed-actions">' +
                 (activeCount > 0 ? '            ' + buildDeploymentActionButton(primaryOpenPositions, '', group.group_id) : '') +
-                '            <a class="ff-deployed-btn ff-deployed-btn-solid" href="' + openUrl + '">View</a>' +
+                '            <a class="ff-deployed-btn ff-deployed-btn-solid" href="' + openUrl + '" target="_blank" rel="noopener noreferrer">View</a>' +
                 '        </div>' +
                 '    </div>' +
                 '    <div class="ff-deployed-children">' + childRowsHtml + '</div>' +
@@ -3215,6 +3384,10 @@
                     var hhmm = String(ltpListenTs).replace('T', ' ').slice(11, 16);
                     if (hhmm) marketCountdownEl.textContent = 'Market is open \u2022 ' + hhmm;
                 }
+            }
+            if (document.hidden) {
+                renderLtpImmediately();
+                return;
             }
             scheduleLtpRender();
             return;
@@ -3685,6 +3858,40 @@
         openSetupModal(setupButton.getAttribute('data-strategy-name'));
     });
 
+    function openPortfolioTradeHistoryFromStrategyView(event) {
+        var portfolioId = getPortfolioIdForTradeHistory();
+        if (!portfolioId) {
+            console.warn('Portfolio trade history could not open because no portfolio id was found in URL, APP_CONFIG, window context, localStorage, or deployed records.');
+            if (typeof window.alert === 'function') {
+                window.alert('Portfolio ID not found on this page. Open this dashboard with a portfolio context first.');
+            }
+            return;
+        }
+        if (event) {
+            event.preventDefault();
+        }
+        window.open(buildPortfolioTradeHistoryUrl(portfolioId), '_blank');
+    }
+
+    window.ffOpenPortfolioTradeHistory = openPortfolioTradeHistoryFromStrategyView;
+
+    if (strategyViewButton) {
+        strategyViewButton.addEventListener('click', openPortfolioTradeHistoryFromStrategyView);
+    }
+    if (strategyViewInput) {
+        strategyViewInput.addEventListener('click', openPortfolioTradeHistoryFromStrategyView);
+    }
+    if (viewPortfolioButton) {
+        viewPortfolioButton.addEventListener('click', openPortfolioTradeHistoryFromStrategyView);
+    }
+    document.addEventListener('click', function (event) {
+        var portfolioTrigger = event.target.closest('[data-open-portfolio-trigger], .open-portfolio');
+        if (!portfolioTrigger) {
+            return;
+        }
+        openPortfolioTradeHistoryFromStrategyView(event);
+    });
+
     if (brokerSettingsEditBtn) {
         brokerSettingsEditBtn.addEventListener('click', function (event) {
             event.preventDefault();
@@ -3942,6 +4149,16 @@
     });
 
     deployedRowsHost.addEventListener('click', function (event) {
+        var portfolioTradeHistoryButton = event.target.closest('[data-open-portfolio-trade-history]');
+        if (portfolioTradeHistoryButton) {
+            event.preventDefault();
+            event.stopPropagation();
+            var portfolioTradeHistoryId = portfolioTradeHistoryButton.getAttribute('data-open-portfolio-trade-history');
+            if (portfolioTradeHistoryId) {
+                window.open(buildPortfolioTradeHistoryUrl(portfolioTradeHistoryId), '_blank');
+            }
+            return;
+        }
         var detailsToggleButton = event.target.closest('[data-strategy-details-toggle]');
         if (detailsToggleButton) {
             event.preventDefault();

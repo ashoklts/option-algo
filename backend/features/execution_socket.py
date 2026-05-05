@@ -327,9 +327,32 @@ def _record_signature(records: list[dict]) -> str:
     structural change does NOT trigger an execute_order emit.
     """
     import hashlib, json as _json
+
+    def _normalize_feature_rows(rows: Any) -> list[dict[str, Any]]:
+        normalized_rows: list[dict[str, Any]] = []
+        if not isinstance(rows, list):
+            return normalized_rows
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            normalized_rows.append({
+                'id': str(row.get('_id') or ''),
+                'feature': str(row.get('feature') or ''),
+                'status': str(row.get('status') or ''),
+                'leg_id': str(row.get('leg_id') or ''),
+                'queued_at': str(row.get('queued_at') or ''),
+                'armed_at': str(row.get('armed_at') or ''),
+                'triggered_at': str(row.get('triggered_at') or ''),
+                'base': row.get('momentum_base_price'),
+                'target': row.get('momentum_target_price'),
+            })
+        normalized_rows.sort(key=lambda item: (item['feature'], item['leg_id'], item['id']))
+        return normalized_rows
+
     sig: list[dict] = []
     for r in sorted(records, key=lambda x: str(x.get('_id') or '')):
         legs = r.get('legs') or []
+        pending_feature_legs = r.get('pending_feature_legs') or []
         sig.append({
             'id':     str(r.get('_id') or ''),
             'status': str(r.get('status') or ''),
@@ -341,12 +364,33 @@ def _record_signature(records: list[dict]) -> str:
                         'status': str(l.get('status') or ''),
                         'entry':  l.get('entry_price'),
                         'exit':   l.get('exit_price'),
-                        'feat':   l.get('feature_status'),   # algo_leg_feature_status
+                        'entry_trade': l.get('entry_trade'),
+                        'exit_trade': l.get('exit_trade'),
+                        'feat_rows': _normalize_feature_rows(l.get('feature_status_rows')),
                     }
                     for l in legs
                 ],
                 key=lambda x: x['id'],
             ),
+            'pending_feature_legs': sorted(
+                [
+                    {
+                        'id': str(l.get('id') or l.get('leg_id') or ''),
+                        'status': str(l.get('status') or ''),
+                        'feature': str(l.get('pending_feature') or ''),
+                        'queued_at': str(l.get('queued_at') or ''),
+                        'armed_at': str(l.get('armed_at') or ''),
+                        'triggered_at': str(l.get('triggered_at') or ''),
+                        'entry_trade': l.get('entry_trade'),
+                        'exit_trade': l.get('exit_trade'),
+                        'feat_rows': _normalize_feature_rows(l.get('feature_status_rows')),
+                    }
+                    for l in pending_feature_legs
+                    if isinstance(l, dict)
+                ],
+                key=lambda x: x['id'],
+            ),
+            'strategy_feature_rows': _normalize_feature_rows(r.get('strategy_feature_status_rows')),
         })
     return hashlib.md5(_json.dumps(sig, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -1246,7 +1290,9 @@ from features.position_manager import (
 
 def close_leg_in_db(db: MongoData, trade_id: str, leg_index: int,
                     exit_price: float, exit_reason: str, now_ts: str,
-                    leg_id: str = '', activation_mode: str = '') -> None:
+                    leg_id: str = '', activation_mode: str = '',
+                    exit_iv: float | None = None,
+                    exit_vix: float | None = None) -> None:
     """Mark a leg as closed in algo_trades and update position history exit_trade."""
     from features.app_logger import log_db_write, log_db_error
     exit_trade_payload = {
@@ -1257,6 +1303,10 @@ def close_leg_in_db(db: MongoData, trade_id: str, leg_index: int,
         'exchange_timestamp': now_ts,
         'exit_reason': exit_reason,
     }
+    if exit_iv is not None:
+        exit_trade_payload['exit_iv'] = exit_iv
+    if exit_vix is not None:
+        exit_trade_payload['exit_vix'] = exit_vix
     try:
         if leg_id:
             db._db['algo_trades'].update_one(
@@ -1289,7 +1339,7 @@ def close_leg_in_db(db: MongoData, trade_id: str, leg_index: int,
             'leg_id': leg_id or leg_index, 'exit_reason': exit_reason,
         })
     if leg_id:
-        _update_position_history_exit(db, trade_id, leg_id, exit_price, exit_reason, now_ts)
+        _update_position_history_exit(db, trade_id, leg_id, exit_price, exit_reason, now_ts, exit_iv=exit_iv, exit_vix=exit_vix)
     if leg_id:
         _hist = db._db['algo_trade_positions_history'].find_one(
             {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
@@ -1360,9 +1410,15 @@ def update_leg_sl_in_db(db: MongoData, trade_id: str, leg_index: int,
 
 def push_new_leg_in_db(db: MongoData, trade_id: str, new_leg: dict) -> None:
     """Append a new leg entry to algo_trades.legs."""
+    leg_id = str((new_leg or {}).get('id') or '').strip()
+    if not leg_id:
+        return
     try:
         db._db['algo_trades'].update_one(
-            {'_id': trade_id},
+            {
+                '_id': trade_id,
+                'legs': {'$not': {'$elemMatch': {'id': leg_id}}},
+            },
             {'$push': {'legs': new_leg}},
         )
     except Exception as exc:
@@ -2100,6 +2156,8 @@ def _update_position_history_exit(
     exit_price: float,
     exit_reason: str,
     now_ts: str,
+    exit_iv: float | None = None,
+    exit_vix: float | None = None,
 ) -> None:
     """Update exit_trade in algo_trade_positions_history when a leg is closed."""
     exit_trade_payload = {
@@ -2110,6 +2168,10 @@ def _update_position_history_exit(
         'exchange_timestamp': now_ts,
         'exit_reason': exit_reason,
     }
+    if exit_iv is not None:
+        exit_trade_payload['exit_iv'] = exit_iv
+    if exit_vix is not None:
+        exit_trade_payload['exit_vix'] = exit_vix
     history_matchers = [
         {'leg_id': leg_id},
         {'id': leg_id},
@@ -2163,6 +2225,34 @@ def _normalize_chain_market_fields(chain_doc: dict | None) -> dict:
         if _safe_float(normalized_doc.get(field_name)) <= 0:
             normalized_doc[field_name] = close_price
     return normalized_doc
+
+
+def _resolve_quote_first_option_price(
+    db: MongoData,
+    trade: dict,
+    leg: dict,
+    *,
+    activation_mode: str,
+    fallback_price: float = 0.0,
+) -> float:
+    symbol = str(leg.get('symbol') or '').strip()
+    if activation_mode == 'fast-forward':
+        try:
+            from features.fast_forward_event import _get_fast_forward_quote_price
+            quote_price = _safe_float(_get_fast_forward_quote_price(db, trade, symbol))
+            if quote_price > 0:
+                return quote_price
+        except Exception:
+            pass
+    elif activation_mode == 'live':
+        try:
+            from features.live_event import get_live_option_quote_price
+            quote_price = _safe_float(get_live_option_quote_price(db, trade, symbol))
+            if quote_price > 0:
+                return quote_price
+        except Exception:
+            pass
+    return _safe_float(fallback_price)
 
 
 def _resolve_simple_momentum_target(base_price: float, momentum_type: str, momentum_value: float) -> float:
@@ -2482,23 +2572,16 @@ def _queue_lazy_momentum_to_feature_status(
     """
     feature_col = db._db['algo_leg_feature_status']
     queued_leg_id = _build_momentum_feature_leg_id(lazy_ref, triggered_by)
-    # Duplicate check — skip if already active for this trade+leg
-    try:
-        existing = feature_col.find_one({
-            'trade_id': trade_id,
-            'leg_id': queued_leg_id,
-            'feature': 'momentum_pending',
-            'status': 'active',
-        })
-        if existing:
-            log.info('momentum_pending already active for trade=%s leg=%s — skipping', trade_id, queued_leg_id)
-            return False
-    except Exception as exc:
-        log.warning('_queue_lazy_momentum_to_feature_status duplicate check error: %s', exc)
-
     mom = lazy_cfg.get('LegMomentum') or {}
     option_raw = str(lazy_cfg.get('InstrumentKind') or '')
     option_type = option_raw.split('.')[-1] if '.' in option_raw else option_raw
+    trade_doc = db._db['algo_trades'].find_one({'_id': trade_id}, {'ticker': 1, 'config.Ticker': 1, 'strategy.Ticker': 1}) or {}
+    underlying = str(
+        (trade_doc.get('strategy') or {}).get('Ticker')
+        or (trade_doc.get('config') or {}).get('Ticker')
+        or trade_doc.get('ticker')
+        or ''
+    ).strip().upper()
 
     doc = {
         'trade_id': trade_id,
@@ -2508,6 +2591,7 @@ def _queue_lazy_momentum_to_feature_status(
         'feature': 'momentum_pending',
         'enabled': True,
         'status': 'active',
+        'underlying': underlying,
         'option': option_type,
         'expiry_kind': str(lazy_cfg.get('ExpiryKind') or 'ExpiryType.Weekly'),
         'strike_parameter': str(lazy_cfg.get('StrikeParameter') or 'StrikeType.ATM'),
@@ -2529,7 +2613,19 @@ def _queue_lazy_momentum_to_feature_status(
         'triggered_at': None,
     }
     try:
-        feature_col.insert_one(doc)
+        result = feature_col.update_one(
+            {
+                'trade_id': trade_id,
+                'leg_id': queued_leg_id,
+                'feature': 'momentum_pending',
+                'status': 'active',
+            },
+            {'$setOnInsert': doc},
+            upsert=True,
+        )
+        if not result.upserted_id:
+            log.info('momentum_pending already active for trade=%s leg=%s — skipping', trade_id, queued_leg_id)
+            return False
         print(
             f'[MOMENTUM QUEUED] trade={trade_id} leg={queued_leg_id} parent={triggered_by} '
             f'type={doc["momentum_type"]} value={doc["momentum_value"]} option={option_type} leg_type={leg_type}'
@@ -2570,21 +2666,6 @@ def _queue_pending_entry_feature_status(
         return False
 
     feature_col = db._db['algo_leg_feature_status']
-    try:
-        existing = feature_col.find_one(
-            {
-                'trade_id': trade_id,
-                'leg_id': normalized_leg_id,
-                'feature': 'pending_entry',
-                'status': 'active',
-            },
-            {'_id': 1},
-        )
-        if existing:
-            return False
-    except Exception as exc:
-        log.warning('_queue_pending_entry_feature_status duplicate check error trade=%s leg=%s: %s', trade_id, normalized_leg_id, exc)
-
     option_raw = str(
         ((leg_cfg.get('ContractType') or {}).get('Option'))
         or leg_cfg.get('option')
@@ -2687,7 +2768,18 @@ def _queue_pending_entry_feature_status(
         'updated_at': now_ts,
     }
     try:
-        feature_col.insert_one(doc)
+        result = feature_col.update_one(
+            {
+                'trade_id': trade_id,
+                'leg_id': normalized_leg_id,
+                'feature': 'pending_entry',
+                'status': 'active',
+            },
+            {'$setOnInsert': doc},
+            upsert=True,
+        )
+        if not result.upserted_id:
+            return False
         print(
             f'[PENDING ENTRY QUEUED] trade={trade_id} leg={normalized_leg_id} '
             f'leg_type={doc["leg_type"]} reentry_type={doc["reentry_type"] or "-"} '
@@ -2772,6 +2864,37 @@ def _process_momentum_pending_feature_legs(
     if not active_docs:
         return entered_ids
 
+    deduped_active_docs: list[dict] = []
+    seen_feature_keys: set[tuple[str, str]] = set()
+    duplicate_row_ids: list[Any] = []
+    for feat_doc in active_docs:
+        feature_name = str(feat_doc.get('feature') or '').strip()
+        leg_id_key = str(feat_doc.get('leg_id') or '').strip()
+        dedupe_key = (feature_name, leg_id_key)
+        if not feature_name or not leg_id_key:
+            deduped_active_docs.append(feat_doc)
+            continue
+        if dedupe_key in seen_feature_keys:
+            duplicate_row_ids.append(feat_doc.get('_id'))
+            continue
+        seen_feature_keys.add(dedupe_key)
+        deduped_active_docs.append(feat_doc)
+    if duplicate_row_ids:
+        try:
+            feature_col.update_many(
+                {'_id': {'$in': [row_id for row_id in duplicate_row_ids if row_id is not None]}},
+                {'$set': {
+                    'status': 'disabled',
+                    'enabled': False,
+                    'disabled_reason': 'duplicate_queue_cleanup',
+                    'updated_at': now_ts,
+                    'disabled_at': now_ts,
+                }},
+            )
+        except Exception as exc:
+            log.warning('_process_momentum_pending_feature_legs duplicate cleanup error trade=%s: %s', trade_id, exc)
+    active_docs = deduped_active_docs
+
     underlying = str(
         (trade.get('strategy') or {}).get('Ticker')
         or (trade.get('config') or {}).get('Ticker')
@@ -2782,6 +2905,10 @@ def _process_momentum_pending_feature_legs(
 
     from features.strike_selector import resolve_expiry, resolve_strike as _resolve_strike_selector
 
+    # Tick-level option chain cache — fetched once per (underlying, expiry) per tick.
+    # All legs in this tick reuse the same chain data. Next tick = new dict = fresh fetch.
+    _live_chain_cache: dict[tuple, dict] = {}
+
     index_spot_doc = index_spot_doc or {}
     if not index_spot_doc:
         index_spot_col = db._db['option_chain_index_spot']
@@ -2790,7 +2917,44 @@ def _process_momentum_pending_feature_legs(
         )
     spot_price = _safe_float(index_spot_doc.get('spot_price'))
 
+    # For live/fast-forward: try socket ticker, then Kite quote API as final fallback.
+    # The quote API handles post-3:30 PM entries where the socket is no longer streaming.
+    if spot_price <= 0 and activation_mode in {'live', 'fast-forward'}:
+        try:
+            from features.live_monitor_socket import _get_active_ticker_manager
+            spot_price = _safe_float(_get_active_ticker_manager().get_spot(underlying))
+        except Exception:
+            pass
+    if spot_price <= 0 and activation_mode in {'live', 'fast-forward'}:
+        try:
+            from features.fast_forward_event import QUOTE_INSTRUMENT_BY_UNDERLYING
+            from features.kite_delta_chain import _get_kite_credentials  # type: ignore
+            from kiteconnect import KiteConnect  # type: ignore
+            _spot_instr = QUOTE_INSTRUMENT_BY_UNDERLYING.get(underlying.upper(), '')
+            if _spot_instr:
+                _api_key, _access_token = _get_kite_credentials(db)
+                if _api_key and _access_token:
+                    _kite = KiteConnect(api_key=_api_key)
+                    _kite.set_access_token(_access_token)
+                    _q = (_kite.quote([_spot_instr]) or {}).get(_spot_instr) or {}
+                    _qp = _safe_float(_q.get('last_price'))
+                    if _qp > 0:
+                        spot_price = _qp
+                        print(f'[SPOT QUOTE] underlying={underlying} spot={spot_price} source=kite_quote')
+        except Exception as exc:
+            log.warning('[SPOT QUOTE] fallback error underlying=%s: %s', underlying, exc)
+
     for feat_doc in active_docs:
+        # Atomically claim this doc — prevents duplicate processing when the function
+        # is called concurrently (e.g. FAST-FORWARD QUOTE CYCLE vs BROKER TICK handler).
+        _doc_id = feat_doc.get('_id')
+        _claimed = feature_col.find_one_and_update(
+            {'_id': _doc_id, 'status': 'active'},
+            {'$set': {'status': 'processing', 'processing_started_at': now_ts}},
+        )
+        if _claimed is None:
+            continue  # Another concurrent call already claimed this leg
+
         feat_id = str(feat_doc.get('_id') or '')
         leg_id = str(feat_doc.get('leg_id') or '')
         lazy_leg_ref = str(feat_doc.get('lazy_leg_ref') or leg_id or '')
@@ -2805,104 +2969,122 @@ def _process_momentum_pending_feature_legs(
         triggered_by = str(feat_doc.get('triggered_by') or '')
         leg_type_str = str(feat_doc.get('leg_type') or '')
 
+        # Entry time gate for original pending_entry legs in live/fast-forward mode.
+        # Re-entries (triggered_by is set) skip this check — they enter on their own conditions.
+        _feat_feature = str(feat_doc.get('feature') or '').strip()
+        if _feat_feature == 'pending_entry' and not triggered_by and activation_mode in {'live', 'fast-forward'}:
+            _raw_et = str(
+                (trade.get('config') or {}).get('entry_time')
+                or trade.get('entry_time')
+                or ''
+            ).strip()
+            _entry_hhmm = _raw_et[11:16] if len(_raw_et) >= 16 else _raw_et[:5]
+            _now_hhmm = now_ts[11:16] if len(now_ts) >= 16 else ''
+            if _entry_hhmm and _now_hhmm and _now_hhmm < _entry_hhmm:
+                feature_col.update_one(
+                    {'_id': _doc_id, 'status': 'processing'},
+                    {'$set': {'status': 'active', 'processing_started_at': None}},
+                )
+                print(f'[ENTRY TIME GATE] leg={leg_id} mode={activation_mode} now={_now_hhmm} entry_time={_entry_hhmm} — waiting')
+                continue
+
         # ── Resolve expiry / strike if not yet done ──────────────────────────
         expiry = str(feat_doc.get('expiry_date') or '')
         strike = feat_doc.get('strike')
         token = str(feat_doc.get('token') or '')
         symbol = str(feat_doc.get('symbol') or '')
         _needs_db_write = False
+        _strike_meta: dict = {}
+        _lazy_chain_iv: float | None = None
 
-        if not expiry or strike in (None, ''):
-            if activation_mode in {'live', 'fast-forward'}:
-                # Live / fast-forward: resolve directly from active_option_tokens,
-                # never touch historical chain_col.
-                try:
-                    from features.spot_atm_utils import resolve_atm_price as _resolve_atm
-                    opt_norm = option_type.upper()
-                    tok_col = db._db['active_option_tokens']
+        if activation_mode in {'live', 'fast-forward'}:
+            # Always fetch full live option chain — strike is always resolved from
+            # real-time Kite prices regardless of what was stored at queue time.
+            try:
+                from features.live_option_chain import fetch_full_chain, select_strike_live  # type: ignore
+                opt_norm = option_type.upper()
+                tok_col  = db._db['active_option_tokens']
 
-                    # 1. expiry based on expiry_kind
-                    live_expiry = _resolve_expiry_from_tokens(tok_col, underlying, opt_norm, trade_date, expiry_kind)
-                    if not live_expiry:
-                        print(f'[MOMENTUM PENDING] leg={leg_id} no expiry in active_option_tokens — skipping')
-                        continue
-
-                    # 2. ATM strike from spot price
-                    atm_strike = float(_resolve_atm(underlying, spot_price))
-                    if atm_strike <= 0:
-                        print(f'[MOMENTUM PENDING] leg={leg_id} ATM resolve failed spot={spot_price} — skipping')
-                        continue
-
-                    # 3. exact ATM strike lookup, fall back to nearest
-                    tok_doc = tok_col.find_one({
-                        'instrument': underlying,
-                        'option_type': opt_norm,
-                        'expiry': live_expiry,
-                        'strike': atm_strike,
-                    }) or {}
-                    if not tok_doc:
-                        above = tok_col.find_one({
-                            'instrument': underlying, 'option_type': opt_norm,
-                            'expiry': live_expiry, 'strike': {'$gte': atm_strike},
-                        }, sort=[('strike', 1)]) or {}
-                        below = tok_col.find_one({
-                            'instrument': underlying, 'option_type': opt_norm,
-                            'expiry': live_expiry, 'strike': {'$lte': atm_strike},
-                        }, sort=[('strike', -1)]) or {}
-                        a_diff = abs(float(above.get('strike') or 0) - atm_strike) if above else float('inf')
-                        b_diff = abs(float(below.get('strike') or 0) - atm_strike) if below else float('inf')
-                        tok_doc = above if a_diff <= b_diff else below
-
-                    if not tok_doc:
-                        print(f'[MOMENTUM PENDING] leg={leg_id} no token doc in active_option_tokens — skipping')
-                        continue
-
-                    expiry = live_expiry
-                    strike = float(tok_doc.get('strike') or atm_strike)
-                    kite_tok = str(tok_doc.get('token') or tok_doc.get('tokens') or '').strip()
-                    token = kite_tok or make_token(underlying, expiry, strike, option_type)
-                    symbol = str(tok_doc.get('symbol') or token)
-                    _needs_db_write = True
-                    print(
-                        f'[MOMENTUM TOKENS RESOLVED] leg={leg_id} underlying={underlying} '
-                        f'expiry={expiry} strike={strike} option={opt_norm} '
-                        f'token={token} symbol={symbol}'
-                    )
-                except Exception as exc:
-                    log.warning('momentum_pending active_option_tokens resolve error leg=%s: %s', leg_id, exc)
+                live_expiry = _resolve_expiry_from_tokens(tok_col, underlying, opt_norm, trade_date, expiry_kind)
+                if not live_expiry:
+                    print(f'[MOMENTUM PENDING] leg={leg_id} no expiry in active_option_tokens — skipping')
                     continue
-            else:
-                # Backtest: resolve from historical chain_col
-                try:
-                    expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, now_ts)
-                    if expiry_err:
-                        print(f'[MOMENTUM PENDING] leg={leg_id} expiry resolve error: {expiry_err}')
-                        continue
-                    sel = _resolve_strike_selector(
-                        chain_col=chain_col,
-                        underlying=underlying,
-                        option_type=option_type,
-                        entry_kind=entry_kind,
-                        strike_param_raw=strike_param_raw,
-                        position=position_str,
-                        spot_price=spot_price,
-                        expiry=expiry,
-                        trade_date=trade_date,
-                        snapshot_timestamp=now_ts,
-                        market_cache=market_cache,
-                        leg_id=leg_id,
+
+                _cache_key = (underlying, live_expiry)
+                if _cache_key not in _live_chain_cache:
+                    _live_chain_cache[_cache_key] = fetch_full_chain(
+                        db, underlying, live_expiry, spot_price, leg_id=leg_id
                     )
-                    if sel.error:
-                        print(f'[MOMENTUM PENDING] leg={leg_id} strike resolve error: {sel.error}')
-                        continue
-                    strike = sel.strike
-                    resolved_doc = _normalize_chain_market_fields(sel.chain_doc or {})
-                    token = str(resolved_doc.get('token') or token or make_token(underlying, expiry, strike, option_type))
-                    symbol = str(resolved_doc.get('symbol') or symbol or token)
-                    _needs_db_write = True
-                except Exception as exc:
-                    log.warning('momentum_pending strike resolve error leg=%s: %s', leg_id, exc)
+                else:
+                    print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {live_expiry}')
+                chain = _live_chain_cache[_cache_key]
+                if not chain.get('CE') and not chain.get('PE'):
+                    print(f'[MOMENTUM PENDING] leg={leg_id} empty chain {underlying} {live_expiry} — skipping')
                     continue
+
+                sel = select_strike_live(
+                    chain, entry_kind, strike_param_raw,
+                    opt_norm, position_str, spot_price, underlying, leg_id=leg_id,
+                )
+                if not sel:
+                    print(f'[MOMENTUM PENDING] leg={leg_id} no strike found entry_kind={entry_kind} — skipping')
+                    continue
+
+                expiry         = live_expiry
+                strike         = sel['strike']
+                token          = sel['token']
+                symbol         = sel['symbol']
+                _strike_meta   = sel.get('meta') or {}
+                _lazy_chain_iv = _safe_float(sel.get('iv')) or None
+                _needs_db_write = True
+                # Inject live LTP into ltp_map so current_price is available
+                # immediately this tick without waiting for WS subscription.
+                _chain_ltp = _safe_float(sel.get('ltp'))
+                if token and _chain_ltp > 0 and ltp_map is not None:
+                    ltp_map[token] = _chain_ltp
+                print(
+                    f'[LIVE CHAIN RESOLVED] leg={leg_id} underlying={underlying} '
+                    f'entry_kind={entry_kind} expiry={expiry} '
+                    f'strike={strike} ltp={_chain_ltp} token={token}'
+                )
+            except Exception as exc:
+                log.warning('live chain resolve error leg=%s: %s', leg_id, exc)
+                continue
+
+        elif not expiry or strike in (None, ''):
+            # Backtest: resolve from historical chain_col
+            try:
+                expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, now_ts)
+                if expiry_err:
+                    print(f'[MOMENTUM PENDING] leg={leg_id} expiry resolve error: {expiry_err}')
+                    continue
+                sel = _resolve_strike_selector(
+                    chain_col=chain_col,
+                    underlying=underlying,
+                    option_type=option_type,
+                    entry_kind=entry_kind,
+                    strike_param_raw=strike_param_raw,
+                    position=position_str,
+                    spot_price=spot_price,
+                    expiry=expiry,
+                    trade_date=trade_date,
+                    snapshot_timestamp=now_ts,
+                    market_cache=market_cache,
+                    leg_id=leg_id,
+                )
+                if sel.error:
+                    print(f'[MOMENTUM PENDING] leg={leg_id} strike resolve error: {sel.error}')
+                    continue
+                strike = sel.strike
+                _strike_meta = sel.meta or {}
+                resolved_doc = _normalize_chain_market_fields(sel.chain_doc or {})
+                token = str(resolved_doc.get('token') or token or make_token(underlying, expiry, strike, option_type))
+                symbol = str(resolved_doc.get('symbol') or symbol or token)
+                _lazy_chain_iv = _safe_float(resolved_doc.get('iv')) or None
+                _needs_db_write = True
+            except Exception as exc:
+                log.warning('momentum_pending strike resolve error leg=%s: %s', leg_id, exc)
+                continue
 
         # ── Once strike+expiry+option_type are final, look up the Kite integer
         #    token from active_option_tokens for live/fast-forward mode.
@@ -2935,6 +3117,25 @@ def _process_momentum_pending_feature_legs(
                 {'$set': {'expiry_date': expiry, 'strike': strike, 'token': token, 'symbol': symbol}},
             )
 
+        if activation_mode in {'live', 'fast-forward'} and token and str(token).isdigit():
+            try:
+                if activation_mode == 'fast-forward':
+                    from features.fast_forward_event import _subscribe_option_token
+                    _subscribe_option_token(token, symbol)
+                    print(
+                        f'[MOMENTUM TOKEN SUBSCRIBE] mode=fast-forward leg={leg_id} '
+                        f'token={token} symbol={symbol or "-"}'
+                    )
+                else:
+                    from features.live_event import _subscribe_live_option_token
+                    _subscribe_live_option_token(token, symbol)
+                    print(
+                        f'[MOMENTUM TOKEN SUBSCRIBE] mode=live leg={leg_id} '
+                        f'token={token} symbol={symbol or "-"}'
+                    )
+            except Exception as _sub_exc:
+                log.warning('momentum_pending token subscribe error leg=%s: %s', leg_id, _sub_exc)
+
         # ── Get current option price ─────────────────────────────────────────────
         # For live/fast-forward: prefer Kite ticker LTP (real-time).
         # For backtest: use historical chain data.
@@ -2948,6 +3149,8 @@ def _process_momentum_pending_feature_legs(
                     get_chain_at_time(chain_col, underlying, expiry, strike, option_type, now_ts, market_cache=market_cache)
                 )
                 current_price = _resolve_chain_market_price(current_chain_doc)
+                if _lazy_chain_iv is None:
+                    _lazy_chain_iv = _safe_float(current_chain_doc.get('iv')) or None
             except Exception as exc:
                 log.warning('momentum_pending chain fetch error leg=%s: %s', leg_id, exc)
                 continue
@@ -2960,6 +3163,13 @@ def _process_momentum_pending_feature_legs(
             # ── No-momentum lazy leg: enter immediately on current price ──────
             if current_price <= 0:
                 print(f'[PENDING ENTRY WAIT] leg={leg_id} waiting for price data')
+                try:
+                    feature_col.update_one(
+                        {'_id': feat_doc['_id'], 'status': 'processing'},
+                        {'$set': {'status': 'active', 'processing_started_at': None}},
+                    )
+                except Exception:
+                    pass
                 continue
             print(f'[PENDING ENTRY] leg={leg_id} current_price={current_price} strike={strike} option={option_type} — entering immediately')
         else:
@@ -2967,6 +3177,13 @@ def _process_momentum_pending_feature_legs(
             if base_price <= 0 or target_price <= 0:
                 if current_price <= 0:
                     print(f'[MOMENTUM PENDING] leg={leg_id} waiting for price data')
+                    try:
+                        feature_col.update_one(
+                            {'_id': feat_doc['_id'], 'status': 'processing'},
+                            {'$set': {'status': 'active', 'processing_started_at': None}},
+                        )
+                    except Exception:
+                        pass
                     continue
                 base_price = current_price
                 target_price = _resolve_simple_momentum_target(base_price, momentum_type, momentum_value)
@@ -2982,6 +3199,8 @@ def _process_momentum_pending_feature_legs(
                             'expiry_date': expiry,
                             'token': token,
                             'symbol': symbol,
+                            'status': 'active',
+                            'processing_started_at': None,
                         }},
                     )
                 except Exception as exc:
@@ -2998,6 +3217,13 @@ def _process_momentum_pending_feature_legs(
                     f'[MOMENTUM WAIT] leg={leg_id} type={momentum_type} value={momentum_value} '
                     f'base={base_price} target={target_price} current={current_price} strike={strike}'
                 )
+                try:
+                    feature_col.update_one(
+                        {'_id': feat_doc['_id'], 'status': 'processing'},
+                        {'$set': {'status': 'active', 'processing_started_at': None}},
+                    )
+                except Exception:
+                    pass
                 continue
 
             print(
@@ -3012,6 +3238,14 @@ def _process_momentum_pending_feature_legs(
         sl_price = calc_sl_price(entry_price, is_sell_pos, sl_config)
         actual_quantity = lot_config_value
 
+        _lazy_entry_vix: float | None = None
+        try:
+            from features.trading_core import get_vix_at_time as _get_vix  # type: ignore
+            _vix_val = _get_vix(db, now_ts, market_cache)
+            _lazy_entry_vix = _vix_val if _vix_val > 0 else None
+        except Exception:
+            pass
+
         exchange_ts = now_ts.replace('T', ' ')[:19] if 'T' in now_ts else now_ts[:19]
         entry_trade_payload = {
             'trigger_timestamp': exchange_ts,
@@ -3022,6 +3256,9 @@ def _process_momentum_pending_feature_legs(
             'underlying_at_trade': spot_price,
             'traded_timestamp': exchange_ts,
             'exchange_timestamp': exchange_ts,
+            'strike_meta': _strike_meta or {},
+            'entry_iv': _lazy_chain_iv,
+            'entry_vix': _lazy_entry_vix,
         }
 
         new_leg = _build_pending_leg(leg_id, leg_cfg or {
@@ -3082,6 +3319,13 @@ def _process_momentum_pending_feature_legs(
             entered_ids.append(leg_id)
         except Exception as exc:
             log.error('momentum_pending entry error leg=%s: %s', leg_id, exc)
+            try:
+                feature_col.update_one(
+                    {'_id': feat_doc['_id'], 'status': 'processing'},
+                    {'$set': {'status': 'active', 'processing_started_at': None}},
+                )
+            except Exception:
+                pass
 
     return entered_ids
 
@@ -3290,7 +3534,8 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                             now_ts: str, lot_size: int,
                             snapshot_timestamp: str | None = None,
                             index_spot_doc: dict | None = None,
-                            market_cache: dict | None = None) -> tuple[bool, str | None]:
+                            market_cache: dict | None = None,
+                            live_chain_cache: dict | None = None) -> tuple[bool, str | None]:
     """
     Try to fill a pending (is_lazy=True, entry_trade=None) leg.
     Resolves strike/expiry from option_chain ATM and sets entry_trade.
@@ -3366,8 +3611,36 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                     market_cache=market_cache,
                     activation_mode=activation_mode,
                 )
+                if not index_spot_doc.get('spot_price') and activation_mode == 'algo-backtest':
+                    from features.algo_backtest_event import get_spot_price_from_chain_col as _gspfc3
+                    _chain_col_fb = db._db[OPTION_CHAIN_COLLECTION]
+                    _fb_spot3 = _gspfc3(_chain_col_fb, underlying, snapshot_timestamp or now_ts)
+                    if _fb_spot3 > 0:
+                        index_spot_doc = {'underlying': underlying, 'spot_price': _fb_spot3, 'timestamp': snapshot_timestamp or now_ts, 'source': 'chain_col_fallback'}
 
     spot_price = _safe_float(index_spot_doc.get('spot_price'))
+
+    # Kite quote API fallback for spot price — handles post-3:30 PM entries where
+    # the socket is no longer streaming. Only for live/fast-forward mode.
+    if spot_price <= 0 and activation_mode in {'live', 'fast-forward'}:
+        try:
+            from features.fast_forward_event import QUOTE_INSTRUMENT_BY_UNDERLYING  # type: ignore
+            from features.kite_delta_chain import _get_kite_credentials  # type: ignore
+            from kiteconnect import KiteConnect  # type: ignore
+            _spot_instr = QUOTE_INSTRUMENT_BY_UNDERLYING.get(underlying.upper(), '')
+            if _spot_instr:
+                _api_key, _access_token = _get_kite_credentials(db)
+                if _api_key and _access_token:
+                    _kite = KiteConnect(api_key=_api_key)
+                    _kite.set_access_token(_access_token)
+                    _q = (_kite.quote([_spot_instr]) or {}).get(_spot_instr) or {}
+                    _qp = _safe_float(_q.get('last_price'))
+                    if _qp > 0:
+                        spot_price = _qp
+                        print(f'[SPOT QUOTE] leg={leg_id_log} underlying={underlying} spot={spot_price} source=kite_quote')
+        except Exception as _spot_exc:
+            log.warning('[SPOT QUOTE] leg=%s underlying=%s error: %s', leg_id_log, underlying, _spot_exc)
+
     print(
         f'[STRIKE CALC] leg={leg_id_log} type={option_type} '
         f'spot_price={spot_price} mode={activation_mode} '
@@ -3406,14 +3679,49 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
 
     if activation_mode in {'fast-forward', 'live'}:
         expiry = expiry[:10] if ' ' in expiry else expiry
-        if not expiry or strike in (None, ''):
-            miss_reason = 'fast_forward_snapshot_missing' if activation_mode == 'fast-forward' else 'live_snapshot_missing'
+        if not expiry:
+            _expiry_kind = str(leg.get('expiry_kind') or 'ExpiryType.Weekly')
+            tok_col = db._db['active_option_tokens']
+            expiry  = _resolve_expiry_from_tokens(tok_col, underlying, option_type.upper(), trade_date, _expiry_kind) or ''
+        # Always fetch full live option chain and select strike — no conditions.
+        from features.live_option_chain import fetch_full_chain, select_strike_live  # type: ignore
+        _chain_cache_key = (underlying, expiry)
+        if live_chain_cache is not None and _chain_cache_key in live_chain_cache:
+            _chain = live_chain_cache[_chain_cache_key]
+            print(f'[LIVE CHAIN] leg={leg_id_log} reusing cached chain {underlying} {expiry}')
+        else:
+            _chain = fetch_full_chain(db, underlying, expiry, spot_price, leg_id=leg_id_log)
+            if live_chain_cache is not None:
+                live_chain_cache[_chain_cache_key] = _chain
+        if not _chain.get('CE') and not _chain.get('PE'):
             print(
                 f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} '
-                f'mode={activation_mode} reason={miss_reason} '
-                f'expiry={expiry!r} strike={strike!r} — Kite live snapshot must supply contract details'
+                f'expiry={expiry} reason=empty_live_chain'
             )
-            return False, miss_reason
+            return False, 'empty_live_chain'
+        _sel = select_strike_live(
+            _chain, entry_kind, strike_param_raw,
+            option_type, str(leg.get('position') or ''),
+            spot_price, underlying, leg_id=leg_id_log,
+        )
+        if not _sel:
+            print(
+                f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} '
+                f'expiry={expiry} reason=no_strike_found entry_kind={entry_kind}'
+            )
+            return False, 'no_strike_found'
+        strike = _sel['strike']
+        token  = str(_sel['token'] or '')
+        symbol = str(_sel['symbol'] or '')
+        mode_entry_payload = {
+            **mode_entry_payload,
+            'strike': strike, 'token': token, 'symbol': symbol,
+            'entry_price': _sel['ltp'],
+            'current_option_price': _sel['ltp'],
+            'ltp': _sel['ltp'],
+            'chain_iv': _safe_float(_sel.get('iv')),
+            'chain_delta': _safe_float(_sel.get('delta')),
+        }
     elif not expiry or strike in (None, ''):
         expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, snapshot_timestamp)
         if expiry_err:
@@ -3749,6 +4057,28 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
 
     trade_date_str = str(trade_date or '')
     exchange_ts = now_ts.replace('T', ' ')[:19] if 'T' in now_ts else now_ts[:19]
+
+    # entry_iv: from live chain (fast-forward/live) or historical chain doc (backtest)
+    _chain_iv = _safe_float(mode_entry_payload.get('chain_iv')) or _safe_float((resolved_chain_doc or {}).get('iv')) or None
+    # entry_vix: from Kite WS token 264969 → fallback to india_vix DB
+    _entry_vix: float | None = None
+    try:
+        from features.trading_core import get_vix_at_time as _get_vix  # type: ignore
+        _vix_val = _get_vix(db, now_ts, market_cache)
+        _entry_vix = _vix_val if _vix_val > 0 else None
+    except Exception:
+        pass
+
+    log.warning(
+        '[ENTRY IV/VIX] leg=%s mode=%s chain_doc_iv=%s mode_payload_chain_iv=%s '
+        'entry_iv=%s entry_vix=%s chain_doc_keys=%s',
+        leg_id_log, activation_mode,
+        _safe_float((resolved_chain_doc or {}).get('iv')),
+        _safe_float(mode_entry_payload.get('chain_iv')),
+        _chain_iv, _entry_vix,
+        list((resolved_chain_doc or {}).keys()),
+    )
+
     entry_trade_payload = {
         'trigger_timestamp': exchange_ts,
         'trigger_price': entry_price,
@@ -3764,6 +4094,8 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
         'strike': strike,
         'option_type': option_type,
         'instrument_token': token,
+        'entry_iv': _chain_iv,
+        'entry_vix': _entry_vix,
     }
     _backtest_debug_log(
         f"[BACKTEST ENTRY SPOT] timestamp={exchange_ts} underlying={underlying} "
@@ -4640,6 +4972,8 @@ def _attach_leg_feature_statuses(db: 'MongoData', records: list[dict]) -> list[d
             return ''
 
         description = str(row.get('trigger_description') or '').strip()
+        if re.match(r'^Pending entry queued for .* leg .+\.$', description, re.IGNORECASE):
+            description = ''
         if description:
             return description
 
@@ -4807,7 +5141,16 @@ def _attach_leg_feature_statuses(db: 'MongoData', records: list[dict]) -> list[d
     feature_rows_by_key: dict[tuple[str, str], list[dict]] = {}
     try:
         feature_col = db._db['algo_leg_feature_status']
-        for doc in feature_col.find({'trade_id': {'$in': trade_ids}, 'enabled': True}):
+        # Keep normal active feature rows, but also include simpleMomentum rows
+        # even after they transition to triggered/disabled so execute_order socket
+        # payload still carries the simple momentum details for entered legs.
+        for doc in feature_col.find({
+            'trade_id': {'$in': trade_ids},
+            '$or': [
+                {'enabled': True},
+                {'feature': 'simpleMomentum'},
+            ],
+        }):
             trade_id = str(doc.get('trade_id') or '')
             leg_id = str(doc.get('leg_id') or '')
             if not trade_id or not leg_id:
@@ -5713,6 +6056,37 @@ def _fetch_spot_ticks(
     return ticks
 
 
+VIX_TOKEN = 'NSE_00'
+
+
+def _fetch_vix_ltp_item(
+    db: MongoData,
+    snapshot_timestamp: str,
+    market_cache: dict | None = None,
+) -> dict | None:
+    """Return India VIX as an LTP item (token=NSE_00) for inclusion in ltp_update payloads."""
+    try:
+        from features.trading_core import get_vix_at_time
+        vix = get_vix_at_time(db, snapshot_timestamp, market_cache)
+        if vix <= 0:
+            return None
+        return {
+            'token': VIX_TOKEN,
+            'underlying': 'INDIA VIX',
+            'option_type': 'SPOT',
+            'ltp': vix,
+            'iv': vix,
+            'timestamp': snapshot_timestamp,
+            'bb_qty': 0,
+            'bb_price': 0.0,
+            'ba_qty': 0,
+            'ba_price': 0.0,
+            'vol_in_day': 0,
+        }
+    except Exception:
+        return None
+
+
 def _is_original_leg(leg: dict, trade: dict) -> bool:
     leg_id = str(leg.get('id') or '')
     original_leg_configs = ((trade.get('config') or {}).get('LegConfigs') or {})
@@ -5819,13 +6193,19 @@ def _extract_running_positions(
             # ── Process momentum-pending legs from algo_leg_feature_status ────
             spot_cache_key_mt = (underlying, snapshot_timestamp)
             if spot_cache_key_mt not in index_spot_cache:
-                index_spot_cache[spot_cache_key_mt] = get_index_spot_at_time(
+                _spot_doc_mt = get_index_spot_at_time(
                     index_spot_col,
                     underlying,
                     snapshot_timestamp,
                     market_cache=market_cache,
                     activation_mode=activation_mode,
                 )
+                if not _spot_doc_mt.get('spot_price') and activation_mode == 'algo-backtest':
+                    from features.algo_backtest_event import get_spot_price_from_chain_col as _gspfc
+                    _fb_spot = _gspfc(chain_col, underlying, snapshot_timestamp)
+                    if _fb_spot > 0:
+                        _spot_doc_mt = {'underlying': underlying, 'spot_price': _fb_spot, 'timestamp': snapshot_timestamp, 'source': 'chain_col_fallback'}
+                index_spot_cache[spot_cache_key_mt] = _spot_doc_mt
             _entered_mt = _process_momentum_pending_feature_legs(
                 db, refreshed_trade, chain_col, selected_date, snapshot_timestamp,
                 default_lot_size,
@@ -5839,6 +6219,7 @@ def _extract_running_positions(
                     f"[BACKTEST MOMENTUM ENTERED] trade={trade_id} legs={_entered_mt} snapshot={snapshot_timestamp}"
                 )
         refreshed_legs = [l for l in (refreshed_trade.get('legs') or []) if isinstance(l, dict)]
+        _entry_live_chain_cache: dict = {}
         for leg_index, leg in enumerate(refreshed_legs):
             leg_started_at = perf_counter()
             if int(leg.get('status') or 0) != OPEN_LEG_STATUS:
@@ -5852,25 +6233,38 @@ def _extract_running_positions(
                         f"entry_time={entry_time_hhmm or '--:--'} market_time={snapshot_timestamp}"
                     )
                     continue
-                entry_lookup_snapshot = (
-                    entry_snapshot_timestamp
-                    if _is_original_leg(leg, refreshed_trade)
-                    else snapshot_timestamp
-                )
+                # algo-backtest: always use entry_snapshot_timestamp (strategy entry_time)
+                # so the spot lookup uses the correct candle regardless of leg_id format.
+                # live/fast-forward: keep _is_original_leg check (uses Kite socket spot anyway).
+                if activation_mode == 'algo-backtest':
+                    entry_lookup_snapshot = entry_snapshot_timestamp
+                else:
+                    entry_lookup_snapshot = (
+                        entry_snapshot_timestamp
+                        if _is_original_leg(leg, refreshed_trade)
+                        else snapshot_timestamp
+                    )
                 spot_cache_key = (underlying, entry_lookup_snapshot)
                 if spot_cache_key not in index_spot_cache:
-                    index_spot_cache[spot_cache_key] = get_index_spot_at_time(
+                    _spot_doc_entry = get_index_spot_at_time(
                         index_spot_col,
                         underlying,
                         entry_lookup_snapshot,
                         market_cache=market_cache,
                         activation_mode=activation_mode,
                     )
+                    if not _spot_doc_entry.get('spot_price') and activation_mode == 'algo-backtest':
+                        from features.algo_backtest_event import get_spot_price_from_chain_col as _gspfc2
+                        _fb_spot2 = _gspfc2(chain_col, underlying, entry_lookup_snapshot)
+                        if _fb_spot2 > 0:
+                            _spot_doc_entry = {'underlying': underlying, 'spot_price': _fb_spot2, 'timestamp': entry_lookup_snapshot, 'source': 'chain_col_fallback'}
+                    index_spot_cache[spot_cache_key] = _spot_doc_entry
                 lot_size = _safe_int(leg.get('quantity')) or default_lot_size
                 entered, wait_reason = _try_enter_pending_leg(
                     db, refreshed_trade, leg, leg_index, chain_col, selected_date,
                     entry_lookup_snapshot, lot_size, snapshot_timestamp=entry_lookup_snapshot,
                     index_spot_doc=index_spot_cache[spot_cache_key], market_cache=market_cache,
+                    live_chain_cache=_entry_live_chain_cache,
                 )
                 if wait_reason == 'spot_missing':
                     wait_for_spot_data = True
@@ -6132,26 +6526,28 @@ def _process_backtest_trade_tick(
         # ── Force-exit at exit_time ────────────────────────────────────────
         if past_exit:
             leg_token_str = str(leg.get('token') or '')
-            exit_price = ltp_map.get(leg_id) or get_option_ltp(
+            base_exit_price = ltp_map.get(leg_id) or get_option_ltp(
                 chain_col, underlying, expiry_date, strike, option_type, now_ts,
                 market_cache=market_cache, fallback=_safe_float(leg.get('last_saw_price')),
                 activation_mode=activation_mode,
             )
-            # For live/ff: if still no price, fall back to accumulated ticker LTP
-            if exit_price <= 0 and activation_mode in {'fast-forward', 'live'} and leg_token_str:
-                try:
-                    from features.live_monitor_socket import _get_active_ticker_manager
-                    _tm = _get_active_ticker_manager()
-                    _tkr_ltp = float(_tm.ltp_map.get(leg_token_str) or 0)
-                    if _tkr_ltp > 0:
-                        exit_price = _tkr_ltp
-                except Exception:
-                    pass
+            exit_price = _resolve_quote_first_option_price(
+                db, trade, leg, activation_mode=activation_mode, fallback_price=base_exit_price
+            )
+            _bt_exit_chain = get_chain_at_time(chain_col, underlying, expiry_date, strike, option_type, now_ts, market_cache=market_cache) or {}
+            _bt_exit_iv  = _safe_float(_bt_exit_chain.get('iv')) or None
+            _bt_exit_vix: float | None = None
+            try:
+                from features.trading_core import get_vix_at_time as _get_vix_bt  # type: ignore
+                _v = _get_vix_bt(db, now_ts, market_cache)
+                _bt_exit_vix = _v if _v > 0 else None
+            except Exception:
+                pass
             print(
                 f'[EXIT TIME] trade={trade_id} leg={leg_id} token={leg_token_str} '
                 f'exit_price={exit_price} mode={activation_mode}'
             )
-            close_leg_in_db(db, trade_id, leg_index, exit_price, 'exit_time', now_ts, leg_id=leg_id, activation_mode=activation_mode)
+            close_leg_in_db(db, trade_id, leg_index, exit_price, 'exit_time', now_ts, leg_id=leg_id, activation_mode=activation_mode, exit_iv=_bt_exit_iv, exit_vix=_bt_exit_vix)
             actions_taken.append(f'{trade_id}/{leg_id}: force-exit at {exit_price} (exit_time)')
             try:
                 record_force_exit(db._db, trade, leg, now_ts, exit_price, exit_reason='exit_time')
@@ -6162,8 +6558,21 @@ def _process_backtest_trade_tick(
 
         # ── Get LTP from pre-fetched map (via algo_backtest_event) ────────
         current_price = ltp_map.get(leg_id) or _safe_float(leg.get('last_saw_price'))
+        current_price = _resolve_quote_first_option_price(
+            db, trade, leg, activation_mode=activation_mode, fallback_price=current_price
+        )
         if current_price <= 0:
             continue
+
+        _bt_sl_tp_chain = get_chain_at_time(chain_col, underlying, expiry_date, strike, option_type, now_ts, market_cache=market_cache) or {}
+        _bt_sl_tp_iv  = _safe_float(_bt_sl_tp_chain.get('iv')) or None
+        _bt_sl_tp_vix: float | None = None
+        try:
+            from features.trading_core import get_vix_at_time as _get_vix_sltp  # type: ignore
+            _v = _get_vix_sltp(db, now_ts, market_cache)
+            _bt_sl_tp_vix = _v if _v > 0 else None
+        except Exception:
+            pass
 
         sl_config    = leg_cfg.get('LegStopLoss') or {}
         tp_config    = leg_cfg.get('LegTarget') or {}
@@ -6195,7 +6604,7 @@ def _process_backtest_trade_tick(
 
         # ── SL hit ────────────────────────────────────────────────────────
         if is_sl_hit(current_price, sl_price, is_sell_pos):
-            close_leg_in_db(db, trade_id, leg_index, current_price, 'stoploss', now_ts, leg_id=leg_id, activation_mode=activation_mode)
+            close_leg_in_db(db, trade_id, leg_index, current_price, 'stoploss', now_ts, leg_id=leg_id, activation_mode=activation_mode, exit_iv=_bt_sl_tp_iv, exit_vix=_bt_sl_tp_vix)
             actions_taken.append(f'{trade_id}/{leg_id}: SL hit @ {current_price}')
             record_sl_hit(db._db, trade, leg, now_ts, current_price, sl_price or 0.0)
             trigger_leg_feature(db._db, trade_id, leg_id, 'sl', current_price, now_ts)
@@ -6236,7 +6645,7 @@ def _process_backtest_trade_tick(
 
         # ── TP hit ────────────────────────────────────────────────────────
         if is_tp_hit(current_price, tp_price, is_sell_pos):
-            close_leg_in_db(db, trade_id, leg_index, current_price, 'target', now_ts, leg_id=leg_id, activation_mode=activation_mode)
+            close_leg_in_db(db, trade_id, leg_index, current_price, 'target', now_ts, leg_id=leg_id, activation_mode=activation_mode, exit_iv=_bt_sl_tp_iv, exit_vix=_bt_sl_tp_vix)
             actions_taken.append(f'{trade_id}/{leg_id}: TP hit @ {current_price}')
             record_target_hit(db._db, trade, leg, now_ts, current_price, tp_price or 0.0)
             trigger_leg_feature(db._db, trade_id, leg_id, 'target', current_price, now_ts)
@@ -6338,6 +6747,9 @@ def _process_backtest_trade_tick(
                     _leg.get('strike'), str(_leg.get('option') or ''), now_ts,
                     market_cache=market_cache, fallback=_safe_float(_leg.get('last_saw_price')),
                     activation_mode=activation_mode,
+                )
+                _ep = _resolve_quote_first_option_price(
+                    db, trade, _leg, activation_mode=activation_mode, fallback_price=_ep
                 )
                 close_leg_in_db(db, trade_id, _idx, _ep, exit_reason, now_ts, leg_id=_lid, activation_mode=activation_mode)
                 try:
@@ -7656,26 +8068,29 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
                 option_type = str(leg.get('option') or '')
                 leg_token = str(leg.get('token') or '')
 
-                # Primary: live ticker LTP
-                exit_price = 0.0
-                if leg_token:
-                    try:
-                        from features.live_monitor_socket import _get_active_ticker_manager
-                        _tm = _get_active_ticker_manager()
-                        exit_price = float(_tm.ltp_map.get(leg_token) or 0)
-                    except Exception:
-                        pass
+                exit_price = _resolve_quote_first_option_price(
+                    db, trade, leg, activation_mode='live', fallback_price=0.0
+                )
 
-                # Fallback: historical chain doc
+                _exit_time_chain_doc: dict = {}
                 if exit_price <= 0:
-                    chain_doc = get_latest_chain_doc(chain_col, underlying, expiry_date, strike, option_type, trade_date)
-                    exit_price = _safe_float(chain_doc.get('close'), leg.get('last_saw_price', 0.0))
+                    _exit_time_chain_doc = get_latest_chain_doc(chain_col, underlying, expiry_date, strike, option_type, trade_date)
+                    exit_price = _safe_float(_exit_time_chain_doc.get('close'), leg.get('last_saw_price', 0.0))
+
+                _etime_exit_iv  = _safe_float(_exit_time_chain_doc.get('iv')) or None
+                _etime_exit_vix: float | None = None
+                try:
+                    from features.trading_core import get_vix_at_time as _get_vix_etime  # type: ignore
+                    _v = _get_vix_etime(db, now_ts, market_cache)
+                    _etime_exit_vix = _v if _v > 0 else None
+                except Exception:
+                    pass
 
                 print(
                     f'[EXIT TIME] trade={trade_id} leg={leg_id} token={leg_token} '
                     f'exit_price={exit_price} exit_time={exit_time_hhmm} now={now_time}'
                 )
-                close_leg_in_db(db, trade_id, leg_index, exit_price, 'exit_time', now_ts, leg_id=leg_id, activation_mode='live')
+                close_leg_in_db(db, trade_id, leg_index, exit_price, 'exit_time', now_ts, leg_id=leg_id, activation_mode='live', exit_iv=_etime_exit_iv, exit_vix=_etime_exit_vix)
                 actions_taken.append(f'{trade_id}/{leg_id}: force-exit at {exit_price} (exit_time)')
                 try:
                     from features.notification_manager import record_force_exit, disable_leg_features
@@ -7690,19 +8105,12 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
                 continue
 
             # ── Try to enter pending (lazy/re-entry) legs ─────────────────
+            # Live mode: all entries go through process_momentum_pending_legs
+            # (fetch_full_chain → select_strike_live). Never enter directly here.
             is_pending = (leg_status == OPEN_LEG_STATUS
                           and (leg.get('is_lazy') or leg.get('entry_trade') is None))
             if is_pending:
-                entered, _ = _try_enter_pending_leg(
-                    db, trade, leg, leg_index, chain_col, trade_date, now_ts, lot_size
-                )
-                if entered:
-                    actions_taken.append(f'{trade_id}/{leg_id}: lazy/re-entry entered')
-                    refreshed = algo_trades_col.find_one({'_id': trade_id})
-                    if refreshed:
-                        trade = refreshed
-                else:
-                    continue
+                continue
 
             # ── Active open legs: SL/TP check ─────────────────────────────
             if not leg.get('entry_trade') or leg.get('exit_trade'):
@@ -7722,7 +8130,18 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
             # Fetch latest option_chain
             chain_doc = get_latest_chain_doc(chain_col, underlying, expiry_date, strike, option_type, trade_date)
             current_price = _safe_float(chain_doc.get('close'), _safe_float(leg.get('last_saw_price')))
+            current_price = _resolve_quote_first_option_price(
+                db, trade, leg, activation_mode='live', fallback_price=current_price
+            )
             spot_price = _safe_float(chain_doc.get('spot_price'))
+            _live_exit_iv  = _safe_float(chain_doc.get('iv')) or None
+            _live_exit_vix: float | None = None
+            try:
+                from features.trading_core import get_vix_at_time as _get_vix_exit  # type: ignore
+                _vix_val = _get_vix_exit(db, now_ts, market_cache)
+                _live_exit_vix = _vix_val if _vix_val > 0 else None
+            except Exception:
+                pass
 
             sl_config = leg_cfg.get('LegStopLoss') or {}
             tp_config = leg_cfg.get('LegTarget') or {}
@@ -7777,7 +8196,7 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
 
             # ── SL hit ────────────────────────────────────────────────────
             if is_sl_hit(current_price, sl_price, is_sell_pos):
-                close_leg_in_db(db, trade_id, leg_index, current_price, 'stoploss', now_ts, leg_id=leg_id, activation_mode='live')
+                close_leg_in_db(db, trade_id, leg_index, current_price, 'stoploss', now_ts, leg_id=leg_id, activation_mode='live', exit_iv=_live_exit_iv, exit_vix=_live_exit_vix)
                 actions_taken.append(f'{trade_id}/{leg_id}: SL hit @ {current_price} (sl={sl_price})')
                 record_sl_hit(db._db, trade, leg, now_ts, current_price, sl_price or 0.0)
                 # Feature status: mark sl=triggered, disable target+trailSL
@@ -7814,7 +8233,7 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
 
             # ── TP hit ────────────────────────────────────────────────────
             if is_tp_hit(current_price, tp_price, is_sell_pos):
-                close_leg_in_db(db, trade_id, leg_index, current_price, 'target', now_ts, leg_id=leg_id, activation_mode='live')
+                close_leg_in_db(db, trade_id, leg_index, current_price, 'target', now_ts, leg_id=leg_id, activation_mode='live', exit_iv=_live_exit_iv, exit_vix=_live_exit_vix)
                 actions_taken.append(f'{trade_id}/{leg_id}: TP hit @ {current_price} (tp={tp_price})')
                 record_target_hit(db._db, trade, leg, now_ts, current_price, tp_price or 0.0)
                 # Feature status: mark target=triggered, disable sl+trailSL
@@ -8557,11 +8976,25 @@ def _execute_backtest_entries(
             leg for leg in (enriched_trade.get('pending_feature_legs') or [])
             if isinstance(leg, dict)
         ]
-        existing_pending_ids = {str(leg.get('id') or '') for leg in legs if isinstance(leg, dict)}
-        for pending_leg in pending_feature_legs:
-            if str(pending_leg.get('id') or '') in existing_pending_ids:
-                continue
-            legs.append(pending_leg)
+        # For strict-history modes (fast-forward / live), original legs are bare configs
+        # — no spot_at_queue / token / strike resolved.  The enriched pending_feature_leg
+        # from DB has all that data.  Replace matching original legs so _try_enter_pending_leg
+        # gets the enriched version with spot_at_queue already populated.
+        _trade_activation_mode = str(trade.get('activation_mode') or '').strip()
+        if _is_strict_history_leg_mode(_trade_activation_mode):
+            pending_by_id = {str(pl.get('id') or ''): pl for pl in pending_feature_legs if isinstance(pl, dict)}
+            legs = [pending_by_id.get(str(leg.get('id') or ''), leg) for leg in legs]
+            for pending_leg in pending_feature_legs:
+                pid = str(pending_leg.get('id') or '')
+                if any(str(l.get('id') or '') == pid for l in legs):
+                    continue
+                legs.append(pending_leg)
+        else:
+            existing_pending_ids = {str(leg.get('id') or '') for leg in legs if isinstance(leg, dict)}
+            for pending_leg in pending_feature_legs:
+                if str(pending_leg.get('id') or '') in existing_pending_ids:
+                    continue
+                legs.append(pending_leg)
         for leg_index, leg in enumerate(legs):
             leg_status = int(leg.get('status') or 0)
             is_pending_feature_leg = bool(leg.get('is_pending_feature_leg'))
@@ -8570,6 +9003,11 @@ def _execute_backtest_entries(
             # Pending = open leg with no entry_trade yet
             entry_trade = leg.get('entry_trade')
             if entry_trade is not None:
+                continue
+
+            # Live/forward entries are handled exclusively by process_momentum_pending_legs.
+            # Calling _try_enter_pending_leg here would cause a duplicate entry.
+            if _trade_activation_mode in {'live', 'fast-forward'}:
                 continue
 
             entered, reason = _try_enter_pending_leg(
@@ -8594,11 +9032,11 @@ def _execute_backtest_entries(
                 f'reason={reason or "-"} '
                 f'listen_time={(listen_time_hhmmss or listen_time_hhmm)}'
             )
+            import json as _json
+            underlying = str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or '')
+            option_type = str(leg.get('option') or 'CE').split('.')[-1]
+            activation_mode = str(trade.get('activation_mode') or '').strip()
             if not entered:
-                import json as _json
-                underlying = str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or '')
-                option_type = str(leg.get('option') or 'CE')
-                activation_mode = str(trade.get('activation_mode') or '').strip()
                 print(f'[ENTRY FAILED DEBUG] ── Failed Leg Object ──')
                 print(_json.dumps(leg, indent=2, default=str))
                 print(f'[ENTRY FAILED DEBUG] ── Trade Legs entry_trade details ──')
@@ -8653,6 +9091,31 @@ def _execute_backtest_entries(
                             print(f'  nearest available chain doc: {_json.dumps(_nearby, indent=2, default=str) if _nearby else "None"}')
                     except Exception as _ce:
                         print(f'  [CHAIN QUERY ERROR] {_ce}')
+            # Failed legs stay in legs array for retry on next tick.
+            # Persist failure to entry_errors for tracking.
+            try:
+                import datetime as _dt_err
+                db._db['entry_errors'].insert_one({
+                    'trade_id':        trade_id,
+                    'strategy_name':   record.get('name') or '',
+                    'group_name':      (record.get('portfolio') or {}).get('group_name') or record.get('group_name') or '',
+                    'leg_id':          leg_id,
+                    'reason':          reason or 'unknown',
+                    'underlying':      underlying,
+                    'option_type':     option_type,
+                    'activation_mode': activation_mode,
+                    'entry_kind':      str(leg.get('entry_kind') or ''),
+                    'expiry_date':     str(leg.get('expiry_date') or ''),
+                    'strike':          leg.get('strike'),
+                    'token':           str(leg.get('token') or ''),
+                    'symbol':          str(leg.get('symbol') or ''),
+                    'listen_timestamp': listen_timestamp,
+                    'created_at':      _dt_err.datetime.utcnow().isoformat(),
+                })
+                print(f'[ENTRY ERROR LOG] saved to entry_errors: trade={trade_id} leg={leg_id} reason={reason or "unknown"}')
+            except Exception as _ins_e:
+                print(f'[ENTRY ERROR LOG] db write failed: {_ins_e}')
+
             entries_executed.append({
                 'trade_id': trade_id,
                 'strategy_name': record.get('name') or '',
@@ -8866,7 +9329,7 @@ def run_backtest_simulation_step(
         'entry_snapshots': entry_snapshots,
         'entries_executed': entries_executed,
         'actions_taken': list(bt_tick_result.get('actions_taken') or []),
-        'ltp': option_ltp + spot_ltp,
+        'ltp': option_ltp + spot_ltp + ([_vix] if (_vix := _fetch_vix_ltp_item(db, normalized_timestamp, market_cache)) else []),
         'open_positions': list(position_snapshot.get('open_positions') or []),
         'active_leg_tokens': list(position_snapshot.get('active_leg_tokens') or []),
         'count': len(records),
@@ -9680,21 +10143,39 @@ async def execute_orders_socket(
                     history_col = db._db['algo_trade_positions_history']
 
                     # Build query to find trade records to square off
-                    sq_query: dict[str, Any] = _build_trade_query(
-                        sq_trade_date, activation_mode=activation_mode, statuses=[RUNNING_STATUS]
-                    )
-                    sq_query['active_on_server'] = True
-                    if uid:
-                        sq_query['user_id'] = uid
-                    if sq_strategy_id:
-                        sq_query['$or'] = [{'_id': sq_strategy_id}, {'strategy_id': sq_strategy_id}]
-                    elif sq_group_id:
-                        sq_query['portfolio.group_id'] = sq_group_id
+                    def _build_sq_query(date: str) -> dict[str, Any]:
+                        q: dict[str, Any] = _build_trade_query(
+                            date, activation_mode=activation_mode, statuses=[RUNNING_STATUS]
+                        )
+                        q['active_on_server'] = True
+                        if uid:
+                            q['user_id'] = uid
+                        if sq_strategy_id:
+                            q['$or'] = [{'_id': sq_strategy_id}, {'strategy_id': sq_strategy_id}]
+                        elif sq_group_id:
+                            q['portfolio.group_id'] = sq_group_id
+                        return q
 
                     sq_records: list[dict] = []
                     affected_sq_group_id = sq_group_id
+                    resolved_sq_date = sq_trade_date or trade_date
                     try:
-                        trade_records = list(algo_trades_col.find(sq_query))
+                        trade_records = list(algo_trades_col.find(_build_sq_query(sq_trade_date)))
+
+                        # Fallback: listen_timestamp date may not match strategy creation date.
+                        # Retry without date filter so socket-added strategies are always found.
+                        if not trade_records and (sq_strategy_id or sq_group_id):
+                            print(
+                                f'[SQUARE OFF] date-filtered query found 0 records '
+                                f'(sq_trade_date={sq_trade_date!r}), retrying without date filter'
+                            )
+                            trade_records = list(algo_trades_col.find(_build_sq_query('')))
+                            if trade_records:
+                                resolved_sq_date = str(
+                                    trade_records[0].get('creation_ts') or sq_trade_date or trade_date
+                                )[:10]
+                                print(f'[SQUARE OFF] fallback found {len(trade_records)} record(s), resolved_date={resolved_sq_date!r}')
+
                         for trade_rec in trade_records:
                             _square_off_trade_like_manual(
                                 db,
@@ -9707,7 +10188,7 @@ async def execute_orders_socket(
                         affected_sq_group_id = sq_group_id or str(
                             (((trade_records[0].get('portfolio') or {}).get('group_id')) or '') if trade_records else ''
                         )
-                        sq_reload_query = _build_trade_query(sq_trade_date, activation_mode=activation_mode)
+                        sq_reload_query = _build_trade_query(resolved_sq_date, activation_mode=activation_mode)
                         sq_reload_query.pop('trade_status', None)
                         sq_reload_query.pop('status', None)
                         if uid:
@@ -9722,11 +10203,12 @@ async def execute_orders_socket(
                         log.error('squared-off error: %s', exc)
                         print(f'[SQUARE OFF] error: {exc}')
 
-                    if uid:
+                    emit_uid = uid or requested_user_id or str((parsed_message or {}).get('user_id') or '').strip()
+                    if emit_uid:
                         await emit_execute_order_for_user(
                             db,
-                            user_id=uid,
-                            trade_date=sq_trade_date or trade_date,
+                            user_id=emit_uid,
+                            trade_date=resolved_sq_date,
                             activation_mode=activation_mode,
                             group_id=sq_group_id or affected_sq_group_id,
                             trade_ids=[sq_strategy_id] if sq_strategy_id else [],
@@ -10263,7 +10745,8 @@ async def update_socket(
                             market_cache=market_cache,
                             activation_mode=activation_mode,
                         )
-                        ltp_list = option_ltp + spot_ltp
+                        _vix_item = _fetch_vix_ltp_item(db, manual_listen_timestamp, market_cache)
+                        ltp_list = option_ltp + spot_ltp + ([_vix_item] if _vix_item else [])
                     await _send_update_message(_build_message(
                         'ltp_update',
                         'LTP update for active positions',
@@ -10293,62 +10776,76 @@ async def update_socket(
                 # Only emit when monitor server is running (not needed for pure backtest)
                 try:
                     from features.live_monitor_socket import live_monitor_loop as _lml
-                    _monitor_running = _lml.running
+                    _live_monitor_running = _lml.running
                 except Exception:
-                    _monitor_running = False
-                if activation_mode in {'fast-forward', 'live'} and _monitor_running and not live_tick_listener:
-                    try:
-                        from features.live_monitor_socket import _get_active_ticker_manager, _SPOT_TOKEN_BY_UNDERLYING
-                        _live_tm = _get_active_ticker_manager()
-                        _now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-                        _listen_hhmm = _now_ts[11:16]
-                        _spot_token_set = set(_SPOT_TOKEN_BY_UNDERLYING.values())
-                        _spot_ltp = [
-                            {
-                                'token': _SPOT_TOKEN_BY_UNDERLYING.get(und, ''),
-                                'ltp': float(lp),
-                                'underlying': und,
-                                'option_type': 'SPOT',
-                                'timestamp': _now_ts,
-                            }
-                            for und, lp in _live_tm.spot_map.items()
-                            if lp and float(lp) > 0
-                        ]
-                        _option_ltp = [
-                            {
-                                'token': tok,
-                                'ltp': float(lp),
-                                'timestamp': _now_ts,
-                            }
-                            for tok, lp in _live_tm.ltp_map.items()
-                            if tok not in _spot_token_set and lp and float(lp) > 0
-                        ]
-                        await _send_update_message(_build_message(
-                            'ltp_update',
-                            'Live LTP tick',
-                            {
-                                'trade_date':       trade_date,
-                                'listen_time':      _listen_hhmm,
-                                'listen_timestamp': _now_ts,
-                                'ltp':              _spot_ltp + _option_ltp,
-                                'spot_map':         dict(_live_tm.spot_map),
-                                'broker_status':    _live_tm.status,
-                                'mode':             activation_mode,
-                            },
-                        ))
-                        _spot_summary = '  '.join(
-                            f'{s["underlying"]} = {s["ltp"]:.2f}' for s in _spot_ltp
-                        ) or 'no spot data'
-                        print(
-                            f'[EMIT → update socket]  {_now_ts}'
-                            f'  |  user: {uid or "-"}'
-                            f'  |  mode: {activation_mode}'
-                            f'  |  broker: {_live_tm.status}'
-                            f'  |  spot: {_spot_summary}'
-                            f'  |  option tokens: {len(_option_ltp)}'
-                        )
-                    except Exception as _ltp_exc:
-                        log.debug('live ltp_update error: %s', _ltp_exc)
+                    _live_monitor_running = False
+                try:
+                    from features.live_fast_monitor import live_fast_monitor_supervisor as _lffms
+                    _ff_monitor_running = _lffms._running
+                except Exception:
+                    _ff_monitor_running = False
+                _monitor_running = (
+                    _ff_monitor_running if activation_mode == 'fast-forward' else _live_monitor_running
+                )
+                # Fast-forward / live: _live_tick_sender handles LTP via tick listener.
+                # Timeout handler must not run the backtest simulation path for these modes.
+                # If no tick listener (Kite not connected), emit current IST time as fallback.
+                if activation_mode in {'fast-forward', 'live'}:
+                    if _monitor_running and not live_tick_listener:
+                        try:
+                            from features.live_monitor_socket import _get_active_ticker_manager, _SPOT_TOKEN_BY_UNDERLYING
+                            _live_tm = _get_active_ticker_manager()
+                            _ist = timezone(timedelta(hours=5, minutes=30))
+                            _now_ts = datetime.now(_ist).strftime('%Y-%m-%dT%H:%M:%S')
+                            _listen_hhmm = _now_ts[11:16]
+                            _spot_token_set = set(_SPOT_TOKEN_BY_UNDERLYING.values())
+                            _spot_ltp = [
+                                {
+                                    'token': _SPOT_TOKEN_BY_UNDERLYING.get(und, ''),
+                                    'ltp': float(lp),
+                                    'underlying': und,
+                                    'option_type': 'SPOT',
+                                    'timestamp': _now_ts,
+                                }
+                                for und, lp in _live_tm.spot_map.items()
+                                if lp and float(lp) > 0
+                            ]
+                            _option_ltp = [
+                                {
+                                    'token': tok,
+                                    'ltp': float(lp),
+                                    'timestamp': _now_ts,
+                                }
+                                for tok, lp in _live_tm.ltp_map.items()
+                                if tok not in _spot_token_set and lp and float(lp) > 0
+                            ]
+                            await _send_update_message(_build_message(
+                                'ltp_update',
+                                'Live LTP tick',
+                                {
+                                    'trade_date':       trade_date,
+                                    'listen_time':      _listen_hhmm,
+                                    'listen_timestamp': _now_ts,
+                                    'ltp':              _spot_ltp + _option_ltp,
+                                    'spot_map':         dict(_live_tm.spot_map),
+                                    'broker_status':    _live_tm.status,
+                                    'mode':             activation_mode,
+                                },
+                            ))
+                            _spot_summary = '  '.join(
+                                f'{s["underlying"]} = {s["ltp"]:.2f}' for s in _spot_ltp
+                            ) or 'no spot data'
+                            print(
+                                f'[EMIT → update socket]  {_now_ts}'
+                                f'  |  user: {uid or "-"}'
+                                f'  |  mode: {activation_mode}'
+                                f'  |  broker: {_live_tm.status}'
+                                f'  |  spot: {_spot_summary}'
+                                f'  |  option tokens: {len(_option_ltp)}'
+                            )
+                        except Exception as _ltp_exc:
+                            log.debug('live ltp_update error: %s', _ltp_exc)
+                    # Always skip backtest simulation for fast-forward / live mode
                     continue
                 # backtest simulation path — only runs when autorun is enabled
                 if not autorun_enabled:
@@ -10541,10 +11038,11 @@ async def update_socket(
                                 market_cache=market_cache,
                                 activation_mode=activation_mode,
                             )
-                            ltp_list = option_ltp + spot_ltp
+                            _vix_item = _fetch_vix_ltp_item(db, listen_timestamp, market_cache)
+                            ltp_list = option_ltp + spot_ltp + ([_vix_item] if _vix_item else [])
                             print(
                                 f'[LTP] listen_time={current_listen_hhmm} '
-                                f'option={len(option_ltp)} spot={len(spot_ltp)} total={len(ltp_list)}'
+                                f'option={len(option_ltp)} spot={len(spot_ltp)} vix={1 if _vix_item else 0} total={len(ltp_list)}'
                             )
                         # Always emit ltp_update every tick so frontend timestamp stays
                         # in sync even before any legs enter (ltp=[] keeps countdown ticking)

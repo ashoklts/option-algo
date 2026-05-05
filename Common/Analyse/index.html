@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Analyse</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #f5f7fb;
+            font-family: Arial, sans-serif;
+        }
+
+        #analyse-frame {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: #fff;
+        }
+
+        .analyse-state {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: 24px;
+            box-sizing: border-box;
+            color: #334155;
+            font-size: 16px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="analyse-root"></div>
+    <script>
+        (function () {
+            function getPathParams() {
+                var parts = String(window.location.pathname || '').replace(/\\/g, '/').split('/').filter(Boolean);
+                var analyseIndex = -1;
+                var index;
+
+                for (index = 0; index < parts.length; index += 1) {
+                    if (String(parts[index] || '').trim().toLowerCase() === 'analyse') {
+                        analyseIndex = index;
+                    }
+                }
+
+                if (analyseIndex === -1 || parts.length < analyseIndex + 3) {
+                    return { type: '', id: '' };
+                }
+
+                return {
+                    type: String(parts[analyseIndex + 1] || '').trim().toLowerCase(),
+                    id: decodeURIComponent(String(parts[analyseIndex + 2] || '').trim())
+                };
+            }
+
+            function renderMessage(message) {
+                document.getElementById('analyse-root').innerHTML = '<div class="analyse-state">' + message + '</div>';
+            }
+
+            var pathParams = getPathParams();
+            var searchParams = new URLSearchParams(window.location.search || '');
+            var entityType = pathParams.type || String(searchParams.get('type') || '').trim().toLowerCase();
+            var entityId = pathParams.id || String(searchParams.get('id') || '').trim();
+            var status = String(searchParams.get('status') || 'algo-backtest').trim() || 'algo-backtest';
+            var targetQuery = new URLSearchParams();
+
+            if (!entityType || !entityId) {
+                renderMessage('Analyse URL is missing the entity type or ID.');
+                return;
+            }
+
+            if (entityType === 'strategy') {
+                targetQuery.set('strategy_id', entityId);
+            } else if (entityType === 'group') {
+                targetQuery.set('group_id', entityId);
+            } else if (entityType === 'portfolio') {
+                targetQuery.set('portfolio', entityId);
+            } else {
+                renderMessage('Unsupported analyse type: ' + entityType);
+                return;
+            }
+
+            targetQuery.set('status', status);
+
+            document.getElementById('analyse-root').innerHTML =
+                '<iframe id="analyse-frame" title="Analyse" src="../../strategy-trade-simulator.html?' +
+                targetQuery.toString() +
+                '"></iframe>';
+        }());
+    </script>
+</body>
+</html>

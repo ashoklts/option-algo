@@ -118,7 +118,7 @@
 
       .chart-wrapper {
           position: relative;
-          height: 450px;
+          height: clamp(360px, 42vh, 400px);
           margin-bottom: 20px;
       }
 

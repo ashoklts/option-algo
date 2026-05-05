@@ -146,13 +146,11 @@ def resolve_pending_entry_snapshot_for_mode(
     *,
     now_ts: str,
 ) -> dict:
-    adapter = resolve_market_event_adapter(str(trade.get('activation_mode') or '').strip())
-    if str(trade.get('activation_mode') or '').strip() == 'fast-forward':
-        resolver = getattr(adapter, 'resolve_fast_forward_pending_entry_snapshot', None)
-        if callable(resolver):
-            return resolver(db, trade, leg_cfg, now_ts=now_ts) or {}
-    if str(trade.get('activation_mode') or '').strip() == 'live':
-        resolver = getattr(adapter, 'resolve_live_pending_entry_snapshot', None)
+    # Both live and fast-forward use the same live resolver.
+    # Order placement is the only difference — handled separately in execution_socket.py.
+    activation_mode = str(trade.get('activation_mode') or '').strip()
+    if activation_mode in ('live', 'fast-forward'):
+        resolver = getattr(live_event, 'resolve_live_pending_entry_snapshot', None)
         if callable(resolver):
             return resolver(db, trade, leg_cfg, now_ts=now_ts) or {}
     return {}
@@ -165,14 +163,11 @@ def resolve_entry_execution_payload_for_mode(
     *,
     now_ts: str,
 ) -> dict:
+    # Both live and fast-forward use the same live resolver.
+    # Order placement is the only difference — handled separately in execution_socket.py.
     activation_mode = str(trade.get('activation_mode') or '').strip()
-    adapter = resolve_market_event_adapter(activation_mode)
-    if activation_mode == 'fast-forward':
-        resolver = getattr(adapter, 'resolve_fast_forward_entry_execution_payload', None)
-        if callable(resolver):
-            return resolver(db, trade, leg, now_ts=now_ts) or {}
-    if activation_mode == 'live':
-        resolver = getattr(adapter, 'resolve_live_entry_execution_payload', None)
+    if activation_mode in ('live', 'fast-forward'):
+        resolver = getattr(live_event, 'resolve_live_entry_execution_payload', None)
         if callable(resolver):
             return resolver(db, trade, leg, now_ts=now_ts) or {}
     return {}
