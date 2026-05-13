@@ -1064,7 +1064,8 @@ def _build_leg_entry_description(
         return {}
 
     # ATM step to approximate ATM strike from spot
-    atm_step   = 50 if underlying.upper() == 'NIFTY' else 100
+    _step_map  = {'NIFTY': 50, 'BANKNIFTY': 100, 'FINNIFTY': 50, 'MIDCPNIFTY': 25, 'SENSEX': 100, 'BANKEX': 100}
+    atm_step   = _step_map.get(underlying.upper(), 100)
     atm_strike = int(round(spot / atm_step) * atm_step) if spot else '?'
 
     if 'PremiumCloseToStraddle' in entry_kind:

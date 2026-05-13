@@ -15,9 +15,11 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
+import math
 import multiprocessing
 import os
 import re
@@ -27,14 +29,15 @@ log = logging.getLogger(__name__)
 import time
 import uuid
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, APIRouter, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from features.backtest_engine import run_backtest
 from features.portfolio_worker import strategy_worker
@@ -49,6 +52,19 @@ from features.kite_broker import (
 )
 from features.kite_ticker import ticker_manager
 from features.mock_ticker import mock_ticker_manager
+from simulator.models import MiniStrangleRequest
+from simulator.monitor_service import get_simulator_monitor_service
+from simulator.monitor_ui import build_monitor_toggle_page
+from simulator.strategy_monitor_bridge import (
+    reentry_status as simulator_bridge_reentry_status,
+    start as simulator_bridge_start,
+    status as simulator_bridge_status,
+    stop as simulator_bridge_stop,
+)
+from simulator.strategy_engine import StrategyEngine
+from simulator.streaming_controller import StreamingController
+from simulator.zerodha_broker import ZerodhaBroker as SimulatorZerodhaBroker
+from simulator.api_server import router as simulator_router
 from features.spot_atm_utils import (
     _load_kite_instruments,
     KITE_INDEX_TOKENS,
@@ -99,6 +115,10 @@ _list_cache: dict[str, dict] = {}
 _list_cache_lock = threading.Lock()
 _ACTIVE_OPTION_CHAIN_CACHE: dict[str, dict[str, Any]] = {}
 _ACTIVE_OPTION_CHAIN_CACHE_LOCK = threading.Lock()
+_simulator_broker = SimulatorZerodhaBroker()
+_simulator_sessions: dict[str, StrategyEngine] = {}
+_shared_mongo = MongoData()
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _resolve_app_user_id(value: str | None = None) -> str:
@@ -452,6 +472,71 @@ def _safe_int(value, default: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _parse_datetime_string(value: Any) -> datetime | None:
+    normalized_value = str(value or "").strip()
+    if not normalized_value:
+        return None
+    normalized_value = normalized_value.replace("T", " ")
+    for pattern in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(normalized_value, pattern)
+        except ValueError:
+            continue
+    return None
+
+
+def _shift_datetime_string_by_minutes(value: Any, minutes: int) -> Any:
+    if not minutes:
+        return value
+    parsed_value = _parse_datetime_string(value)
+    if parsed_value is None:
+        return value
+    shifted_value = parsed_value - timedelta(minutes=minutes)
+    if "." in str(value or ""):
+        return shifted_value.strftime("%Y-%m-%d %H:%M:%S.%f")
+    return shifted_value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _load_strategy_time_difference_minutes(db: MongoData, activation_mode: str) -> int:
+    normalized_mode = str(activation_mode or "").strip()
+    if not normalized_mode:
+        return 0
+
+    query_candidates = [
+        {"activation_mode": normalized_mode, "status": 1},
+        {"activation_mode": normalized_mode, "is_active": True},
+        {"activation_mode": normalized_mode, "active": True},
+        {"activation_mode": normalized_mode},
+    ]
+
+    for query in query_candidates:
+        try:
+            config_doc = db._db["strategy_entry_time_difference"].find_one(
+                query,
+                {"difference_time_interval": 1},
+                sort=[("_id", -1)],
+            )
+        except Exception:
+            config_doc = None
+        if config_doc:
+            return max(0, _safe_int(config_doc.get("difference_time_interval"), 0))
+    return 0
+
+
+def _apply_strategy_time_difference_to_trade(trade_doc: dict, difference_minutes: int) -> dict:
+    if difference_minutes <= 0 or not isinstance(trade_doc, dict):
+        return trade_doc
+
+    adjusted_doc = dict(trade_doc)
+    for field_name in ("entry_time", "exit_time", "check_after_ts"):
+        if field_name in adjusted_doc:
+            adjusted_doc[field_name] = _shift_datetime_string_by_minutes(
+                adjusted_doc.get(field_name),
+                difference_minutes,
+            )
+    return adjusted_doc
 
 
 def _calc_leg_pnl(leg: dict) -> dict:
@@ -1037,6 +1122,49 @@ app    = FastAPI(title="Local Backtest API", version="2.0.0")
 router = APIRouter(prefix="/algo")
 
 
+class PTPortfolioIn(BaseModel):
+    name: str
+
+
+class ZerodhaConfigRequest(BaseModel):
+    api_key: str
+    api_secret: str
+
+
+class PTPositionIn(BaseModel):
+    type: str
+    option_type: str
+    strike: float
+    expiry: str
+    entry_price: float
+    entry_time: Optional[str] = None
+    lots: Optional[int] = 1
+    lot_size: Optional[int] = 75
+    quantity: Optional[float] = None
+    exited: Optional[bool] = False
+    exit_price: Optional[float] = None
+    exit_time: Optional[str] = None
+    pnl: Optional[float] = None
+    pnl_pct: Optional[float] = None
+
+
+class PTStrategyIn(BaseModel):
+    portfolio_name: str
+    strategy_name: str
+    instrument: Optional[str] = "nifty"
+    spot_price: Optional[float] = None
+    config: Optional[dict[str, Any]] = None
+    positions: Optional[list[PTPositionIn]] = []
+
+
+_DEFAULT_PAPER_TRADE_PORTFOLIOS = [
+    "Running Trades", "Exited Trades", "Archived Trades",
+    "Aditional Position Strategy", "Nifty Weekly Expiry BB Stra",
+    "Nifty Expiry Day BB Stra", "Banknifty Expiry Day BB Stra",
+    "Nifty Monthly Stra", "Week On Nct Mnth", "Small Strangle",
+]
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1461,7 +1589,54 @@ async def portfolio_get(portfolio_id: str):
 
     portfolio = db._db["saved_portfolios"].find_one({"_id": oid})
     if not portfolio:
-        raise HTTPException(status_code=404, detail="Portfolio not found")
+        paper_trade_portfolio = db._db["paper_trade_portfolio"].find_one({"_id": oid})
+        if not paper_trade_portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        portfolio_name = str(paper_trade_portfolio.get("name") or "").strip()
+        strategy_docs = list(
+            db._db["paper_trade_strategy"].find(
+                {"portfolio_id": str(oid)},
+                {
+                    "_id": 1,
+                    "strategy_name": 1,
+                    "instrument": 1,
+                    "config": 1,
+                    "positions": 1,
+                    "saved_at": 1,
+                    "updated_at": 1,
+                },
+            ).sort("saved_at", -1)
+        )
+
+        ordered_strategies = []
+        for item in strategy_docs:
+            config = item.get("config") if isinstance(item.get("config"), dict) else {}
+            positions = item.get("positions") if isinstance(item.get("positions"), list) else []
+            ordered_strategies.append({
+                "_id": str(item["_id"]),
+                "name": item.get("strategy_name") or "",
+                "underlying": item.get("instrument") or "",
+                "product": config.get("Product") or "INTRADAY",
+                "checked": True,
+                "dte": config.get("dte") or [0],
+                "qty_multiplier": 1,
+                "slippage": config.get("slippage", 0),
+                "weekdays": config.get("weekdays") or ["M", "T", "W", "Th", "F"],
+                "position_count": len(positions),
+                "saved_at": item.get("saved_at") or item.get("updated_at") or "",
+            })
+
+        return {
+            "_id": str(paper_trade_portfolio["_id"]),
+            "name": portfolio_name,
+            "strategy_ids": [item["_id"] for item in ordered_strategies],
+            "strategies": ordered_strategies,
+            "qty_multiplier": 1,
+            "is_weekdays": True,
+            "source": "paper_trade_portfolio",
+            "created_at": paper_trade_portfolio.get("created_at") or "",
+        }
 
     strategy_ids = portfolio.get("strategy_ids", [])
     saved_strategy_meta = portfolio.get("strategies", []) or []
@@ -2194,6 +2369,7 @@ async def portfolio_activate(payload: dict):
                 highest_group_index = max(highest_group_index, int(suffix_match.group(1)))
         resolved_portfolio_group_name = f"{base_portfolio_group_name} ({highest_group_index + 1})"
 
+    strategy_time_difference_minutes = _load_strategy_time_difference_minutes(db, activation_mode)
     docs_to_insert = []
 
     for index, item in enumerate(trades):
@@ -2280,6 +2456,8 @@ async def portfolio_activate(payload: dict):
         doc["_id"] = trade_id
         doc["strategy_id"] = strategy_id
         doc["activation_mode"] = activation_mode
+        if activation_mode == "fast-forward":
+            doc["live_sim_order"] = True
         doc["active_on_server"] = bool(doc.get("active_on_server", True))
         doc["trade_status"] = int(doc.get("trade_status", 1) or 1)
         doc.pop("config", None)
@@ -2325,6 +2503,7 @@ async def portfolio_activate(payload: dict):
         else:
             doc.setdefault("creation_ts", now_ts)
             doc.setdefault("last_activation_ts", now_ts)
+        doc = _apply_strategy_time_difference_to_trade(doc, strategy_time_difference_minutes)
         docs_to_insert.append(doc)
 
     existing_ids = {
@@ -2757,6 +2936,17 @@ def _build_trade_history_payload(db_obj, raw_trade: dict, normalized_status: str
         event_type = str(item.get("event_type") or item.get("type") or "unknown").strip() or "unknown"
         notification_status[event_type] = notification_status.get(event_type, 0) + 1
 
+    trade_notifications = []
+    for doc in (
+        db_obj["algo_trade_notification"]
+        .find({"$or": feature_filters})
+        .sort("timestamp", -1)
+        .limit(1000)
+    ):
+        normalized_doc = dict(doc)
+        normalized_doc["_id"] = str(doc.get("_id") or "")
+        trade_notifications.append(normalized_doc)
+
     return {
         "success": True,
         "view_type": "strategy",
@@ -2786,6 +2976,7 @@ def _build_trade_history_payload(db_obj, raw_trade: dict, normalized_status: str
         ],
         "notifications": notifications,
         "notification_status": notification_status,
+        "trade_notifications": trade_notifications,
         "execution_config_base": raw_trade.get("execution_config_base") if isinstance(raw_trade.get("execution_config_base"), dict) else {},
         "execution_config_extra": raw_trade.get("execution_config_extra") if isinstance(raw_trade.get("execution_config_extra"), dict) else {},
     }
@@ -2810,6 +3001,7 @@ def _aggregate_group_trade_history_payload(group_id: str, normalized_status: str
     pending_feature_legs = []
     broker_orders = []
     notifications = []
+    trade_notifications = []
     strategy_execution_configs = []
     notification_status = {}
     total_mtm = 0.0
@@ -2844,6 +3036,7 @@ def _aggregate_group_trade_history_payload(group_id: str, normalized_status: str
         pending_feature_legs.extend(legs.get("pending_feature_legs") if isinstance(legs.get("pending_feature_legs"), list) else [])
         broker_orders.extend(payload.get("broker_orders") if isinstance(payload.get("broker_orders"), list) else [])
         notifications.extend(payload.get("notifications") if isinstance(payload.get("notifications"), list) else [])
+        trade_notifications.extend(payload.get("trade_notifications") if isinstance(payload.get("trade_notifications"), list) else [])
 
         for key, value in (payload.get("notification_status") or {}).items():
             normalized_key = str(key or "").strip() or "unknown"
@@ -2867,6 +3060,7 @@ def _aggregate_group_trade_history_payload(group_id: str, normalized_status: str
         ),
         reverse=True,
     )
+    trade_notifications.sort(key=lambda item: str((item or {}).get("timestamp") or ""), reverse=True)
 
     strategy_count = len(valid_payloads)
     tickers_label = ", ".join(sorted(tickers)) if tickers else "Multiple"
@@ -2916,6 +3110,7 @@ def _aggregate_group_trade_history_payload(group_id: str, normalized_status: str
         ][:1000],
         "notifications": notifications[:1000],
         "notification_status": notification_status,
+        "trade_notifications": trade_notifications[:1000],
         "execution_config_base": (strategy_execution_configs[0].get("execution_config_base") if strategy_execution_configs else {}),
         "execution_config_extra": (strategy_execution_configs[0].get("execution_config_extra") if strategy_execution_configs else {}),
         "strategy_execution_configs": strategy_execution_configs,
@@ -3734,9 +3929,574 @@ async def algo_backtest_simulator(
     }
 
 
+def _ensure_default_paper_trade_portfolios() -> None:
+    col = _shared_mongo._db["paper_trade_portfolio"]
+    for portfolio_name in _DEFAULT_PAPER_TRADE_PORTFOLIOS:
+        if not col.find_one({"name": portfolio_name}, {"_id": 1}):
+            col.insert_one({
+                "name": portfolio_name,
+                "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+
+
+def _str_id(doc: dict | None) -> dict | None:
+    if doc and "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+def _sync_simulator_broker_with_market_session() -> bool:
+    try:
+        cfg = _shared_mongo._db["kite_market_config"].find_one(
+            {"enabled": True},
+            {"access_token": 1, "api_key": 1, "user_name": 1, "user_id": 1},
+        ) or {}
+        access_token = str(cfg.get("access_token") or "").strip()
+        api_key = str(cfg.get("api_key") or "").strip()
+
+        if access_token:
+            # Reuse the same Kite app/session used by /live/kite-callback.
+            _simulator_broker.kite = get_kite_instance(access_token)
+            _simulator_broker.config["api_key"] = api_key or str(_simulator_broker.config.get("api_key") or "").strip() or "market-session"
+            _simulator_broker.config["api_secret"] = str(_simulator_broker.config.get("api_secret") or "").strip() or "market-session"
+            return True
+
+        loaded = load_credentials_from_db(_shared_mongo)
+        if not loaded:
+            return False
+        api_key, access_token = get_common_credentials()
+        api_key = str(api_key or "").strip()
+        access_token = str(access_token or "").strip()
+        if not api_key or not access_token:
+            return False
+        _simulator_broker.kite = get_kite_instance(access_token)
+        _simulator_broker.config["api_key"] = api_key
+        _simulator_broker.config["api_secret"] = str(_simulator_broker.config.get("api_secret") or "").strip() or "market-session"
+        return True
+    except Exception:
+        return False
+
+
+@router.post("/simulator/mini-strangle/start")
+async def simulator_start_mini_strangle(request: MiniStrangleRequest) -> StreamingResponse:
+    session_id = str(uuid.uuid4())
+    stream = StreamingController(position_start_time=request.position_start_time)
+    engine = StrategyEngine(request, stream)
+    _simulator_sessions[session_id] = engine
+    asyncio.create_task(_run_simulator_session(session_id, engine))
+    return StreamingResponse(
+        stream.stream(),
+        media_type="text/event-stream",
+        headers={
+            "X-Session-ID": session_id,
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@router.post("/simulator/mini-strangle/stop/{session_id}")
+async def simulator_stop_mini_strangle(session_id: str) -> dict:
+    engine = _simulator_sessions.get(session_id)
+    if not engine:
+        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+    engine.stop()
+    _simulator_sessions.pop(session_id, None)
+    return {"status": "stopped", "session_id": session_id}
+
+
+@router.get("/simulator/mini-strangle/sessions")
+async def simulator_list_sessions() -> dict:
+    return {"active_sessions": list(_simulator_sessions.keys()), "count": len(_simulator_sessions)}
+
+
+@router.get("/simulator/monitor/start")
+async def simulator_monitor_start(
+    strategy_id: str = Query(default=""),
+    portfolio_name: str = Query(default=""),
+) -> HTMLResponse:
+    try:
+        market_ready = _sync_simulator_broker_with_market_session()
+        if not market_ready or getattr(_simulator_broker, "kite", None) is None:
+            return HTMLResponse(content=build_monitor_toggle_page(
+                running=False,
+                title="Simulator Monitor",
+                status_text="Zerodha market session is not ready.",
+                detail_text="Configure Zerodha market session first, then open this start page again.",
+                start_href="./start",
+                stop_href="./stop",
+                status_href="./status",
+            ))
+        payload = await simulator_bridge_start(
+            _simulator_broker.kite,
+            _shared_mongo._db["paper_trade_strategy"],
+            _shared_mongo._db,
+        )
+        detail_parts = []
+        if strategy_id:
+            detail_parts.append(f"strategy_id={strategy_id}")
+        if portfolio_name:
+            detail_parts.append(f"portfolio_name={portfolio_name}")
+        if payload.get("subscribed_tokens") is not None:
+            detail_parts.append(f"subscribed_tokens={payload.get('subscribed_tokens')}")
+        return HTMLResponse(content=build_monitor_toggle_page(
+            running=True,
+            title="Simulator Monitor",
+            status_text=str(payload.get("message") or payload.get("status") or "Monitor started"),
+            detail_text=" | ".join(detail_parts) or "Monitor is running. Click Stop to stop the background monitor.",
+            start_href="./start",
+            stop_href="./stop",
+            status_href="./status",
+        ))
+    except Exception as exc:
+        return HTMLResponse(content=build_monitor_toggle_page(
+            running=False,
+            title="Simulator Monitor",
+            status_text="Failed to start monitor.",
+            detail_text=str(exc),
+            start_href="./start",
+            stop_href="./stop",
+            status_href="./status",
+        ), status_code=500)
+
+
+@router.post("/simulator/monitor/start")
+async def simulator_monitor_start_post(
+    strategy_id: str = Query(default=""),
+    portfolio_name: str = Query(default=""),
+) -> dict:
+    try:
+        market_ready = _sync_simulator_broker_with_market_session()
+        if not market_ready or getattr(_simulator_broker, "kite", None) is None:
+            return {
+                "status": "error",
+                "message": "Simulator market session not ready. Configure Zerodha market session first.",
+            }
+        payload = await simulator_bridge_start(
+            _simulator_broker.kite,
+            _shared_mongo._db["paper_trade_strategy"],
+            _shared_mongo._db,
+        )
+        if strategy_id or portfolio_name:
+            payload["requested_strategy_id"] = strategy_id
+            payload["requested_portfolio_name"] = portfolio_name
+        return payload
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/monitor/stop")
+async def simulator_monitor_stop() -> HTMLResponse:
+    try:
+        _sync_simulator_broker_with_market_session()
+        payload = await simulator_bridge_stop(
+            getattr(_simulator_broker, "kite", None),
+            _shared_mongo._db["paper_trade_strategy"],
+            _shared_mongo._db,
+        )
+        return HTMLResponse(content=build_monitor_toggle_page(
+            running=False,
+            title="Simulator Monitor",
+            status_text=str(payload.get("message") or payload.get("status") or "Monitor stopped"),
+            detail_text="Monitor is stopped. Click Start to start it again.",
+            start_href="./start",
+            stop_href="./stop",
+            status_href="./status",
+        ))
+    except Exception as exc:
+        return HTMLResponse(content=build_monitor_toggle_page(
+            running=False,
+            title="Simulator Monitor",
+            status_text="Failed to stop monitor.",
+            detail_text=str(exc),
+            start_href="./start",
+            stop_href="./stop",
+            status_href="./status",
+        ), status_code=500)
+
+
+@router.post("/simulator/monitor/stop")
+async def simulator_monitor_stop_post() -> dict:
+    try:
+        _sync_simulator_broker_with_market_session()
+        return await simulator_bridge_stop(
+            getattr(_simulator_broker, "kite", None),
+            _shared_mongo._db["paper_trade_strategy"],
+            _shared_mongo._db,
+        )
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/monitor/status")
+async def simulator_monitor_status() -> dict:
+    _sync_simulator_broker_with_market_session()
+    return await simulator_bridge_status(
+        getattr(_simulator_broker, "kite", None),
+        _shared_mongo._db["paper_trade_strategy"],
+        _shared_mongo._db,
+    )
+
+
+@router.get("/simulator/monitor/reentry-status")
+async def simulator_monitor_reentry_status() -> dict:
+    _sync_simulator_broker_with_market_session()
+    return await simulator_bridge_reentry_status(
+        getattr(_simulator_broker, "kite", None),
+        _shared_mongo._db["paper_trade_strategy"],
+        _shared_mongo._db,
+    )
+
+
+@router.get("/simulator/health")
+async def simulator_health() -> dict:
+    return {"status": "ok"}
+
+
+@router.get("/simulator/zerodha/status")
+async def simulator_zerodha_status() -> dict:
+    cfg = _shared_mongo._db["kite_market_config"].find_one(
+        {"enabled": True},
+        {"access_token": 1, "api_key": 1, "user_name": 1, "user_id": 1},
+    ) or {}
+    market_ready = _sync_simulator_broker_with_market_session()
+    connected, profile = _simulator_broker.is_connected() if market_ready else (False, None)
+    stored_user_name = str(cfg.get("user_name") or "").strip() or None
+    stored_user_id = str(cfg.get("user_id") or "").strip() or None
+    return {
+        "connected": bool(connected or market_ready),
+        "has_config": bool(_simulator_broker.has_config() or market_ready),
+        "user_name": profile.get("user_name") if profile else stored_user_name,
+        "user_id": profile.get("user_id") if profile else stored_user_id,
+    }
+
+
+@router.post("/simulator/zerodha/config")
+async def simulator_zerodha_save_config(req: ZerodhaConfigRequest) -> dict:
+    try:
+        _simulator_broker.save_config(req.api_key, req.api_secret)
+        return {"status": "ok", "message": "Config saved"}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/zerodha/has-config")
+async def simulator_zerodha_has_config() -> dict:
+    market_ready = _sync_simulator_broker_with_market_session()
+    return {"has_config": bool(_simulator_broker.has_config() or market_ready)}
+
+
+@router.get("/simulator/zerodha/config")
+async def simulator_zerodha_get_config() -> dict:
+    return {
+        "status": "ok",
+        "api_key": _simulator_broker.config.get("api_key", ""),
+        "api_secret": _simulator_broker.config.get("api_secret", ""),
+    }
+
+
+@router.get("/simulator/zerodha/login-url")
+async def simulator_zerodha_login_url() -> dict:
+    try:
+        _sync_simulator_broker_with_market_session()
+        url = _simulator_broker.get_login_url()
+        return {"status": "ok", "login_url": url}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/zerodha/callback", response_class=HTMLResponse)
+async def simulator_zerodha_callback(request_token: str = "", action: str = "", status: str = ""):
+    if status == "success" and request_token:
+        try:
+            data = _simulator_broker.generate_session(request_token)
+            user = data.get("user_name", "User")
+            return HTMLResponse(f"""<!DOCTYPE html>
+<html><head><title>Zerodha Login</title></head>
+<body style="font-family:sans-serif;text-align:center;padding:40px;background:#f0f9f4;">
+  <h2 style="color:#1a7a3c;">&#10003; Login Successful!</h2>
+  <p>Welcome, <strong>{user}</strong></p>
+  <p>Fetching live option chain...</p>
+  <script>
+    if(window.opener) {{
+      window.opener.postMessage({{type:'zerodha_auth',success:true,user:'{user}'}}, '*');
+    }}
+    setTimeout(function(){{ window.close(); }}, 1500);
+  </script>
+</body></html>""")
+        except Exception as exc:
+            err_msg = str(exc)
+            hint = ""
+            if "invalid" in err_msg.lower() or "expired" in err_msg.lower():
+                hint = "<p style='font-size:12px;color:#888;'>Request token expires in ~2 minutes. Please login again fresh.</p>"
+            err_safe = err_msg.replace("'", "\\'")
+            return HTMLResponse(f"""<!DOCTYPE html>
+<html><head><title>Zerodha Login Failed</title></head>
+<body style="font-family:sans-serif;text-align:center;padding:40px;background:#fff4f4;">
+  <h2 style="color:#c0392b;">&#10007; Login Failed</h2>
+  <p><strong>{err_msg}</strong></p>
+  {hint}
+  <p style="margin-top:20px;"><a href="/algo/simulator/zerodha/login-url-redirect" style="color:#1a7a3c;font-weight:bold;">&#8594; Try Login Again</a></p>
+  <script>
+    if(window.opener) {{
+      window.opener.postMessage({{type:'zerodha_auth',success:false,error:'{err_safe}'}}, '*');
+    }}
+    setTimeout(function(){{ window.close(); }}, 5000);
+  </script>
+</body></html>""")
+    return HTMLResponse("""<!DOCTYPE html>
+<html><head><title>Zerodha</title></head>
+<body style="font-family:sans-serif;text-align:center;padding:40px;">
+  <p>Invalid callback. Please try again.</p>
+</body></html>""")
+
+
+@router.get("/simulator/zerodha/login-url-redirect")
+async def simulator_zerodha_login_url_redirect():
+    try:
+        url = _simulator_broker.get_login_url()
+        return RedirectResponse(url)
+    except Exception as exc:
+        return HTMLResponse(f"<p>Error: {exc}</p>")
+
+
+@router.get("/simulator/zerodha/market-stats")
+async def simulator_zerodha_market_stats(symbol: str = "nifty") -> dict:
+    try:
+        _sync_simulator_broker_with_market_session()
+        data = _simulator_broker.get_market_stats(symbol)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/zerodha/live-option-chain")
+async def simulator_zerodha_live_option_chain(symbol: str = "nifty", near: bool = False, expiries: str = "") -> dict:
+    try:
+        _sync_simulator_broker_with_market_session()
+        extra = [e.strip() for e in expiries.split(",") if e.strip()] if expiries else []
+        result = _simulator_broker.get_live_option_chain(symbol, near_expiry_only=near, extra_expiries=extra)
+        rows = result.get("rows", result) if isinstance(result, dict) else result
+        stats = result.get("market_stats") if isinstance(result, dict) else None
+        return {"status": "success", "count": len(rows), "data": rows, "market_stats": stats}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/get-market-holidays")
+async def simulator_get_market_holidays() -> dict:
+    try:
+        dates = [
+            doc["date"]
+            for doc in _shared_mongo._db["market_holidays"].find({}, {"_id": 0, "date": 1})
+            if "date" in doc
+        ]
+        return {"status": "success", "holidays": sorted(dates)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/get-option-chain")
+async def simulator_get_option_chain(timestamp: str = Query(...)) -> dict:
+    try:
+        data = list(_shared_mongo._db["option_chain"].find({"timestamp": timestamp}, {"_id": 0}))
+        return {"status": "success", "timestamp": timestamp, "count": len(data), "data": data}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/lot-size")
+async def simulator_get_lot_size(instrument: str = "nifty") -> dict:
+    try:
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+        symbol = str(instrument or "nifty").upper()
+        doc = _shared_mongo._db["lot_sizes"].find_one(
+            {
+                "instrument": symbol,
+                "effective_from": {"$lte": today},
+                "$or": [
+                    {"effective_to": None},
+                    {"effective_to": {"$exists": False}},
+                    {"effective_to": {"$gte": today}},
+                ],
+            },
+            sort=[("effective_from", -1)],
+        )
+        if doc:
+            return {"instrument": symbol, "lot_size": int(doc["lot_size"])}
+        defaults = {"NIFTY": 75, "BANKNIFTY": 15, "FINNIFTY": 40, "MIDCPNIFTY": 120, "SENSEX": 10}
+        return {"instrument": symbol, "lot_size": defaults.get(symbol, 75)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/paper-trade/portfolios")
+async def simulator_pt_list_portfolios() -> dict:
+    try:
+        _ensure_default_paper_trade_portfolios()
+        docs = list(_shared_mongo._db["paper_trade_portfolio"].find({}, {"_id": 1, "name": 1}))
+        for doc in docs:
+            doc["_id"] = str(doc["_id"])
+        return {"status": "success", "portfolios": docs}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/simulator/paper-trade/portfolios")
+async def simulator_pt_create_portfolio(body: PTPortfolioIn) -> dict:
+    try:
+        col = _shared_mongo._db["paper_trade_portfolio"]
+        existing = col.find_one({"name": body.name}, {"_id": 1})
+        if existing:
+            return {"status": "success", "id": str(existing["_id"]), "created": False}
+        result = col.insert_one({"name": body.name, "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")})
+        return {"status": "success", "id": str(result.inserted_id), "created": True}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/paper-trade/strategies")
+async def simulator_pt_list_strategies(portfolio_name: Optional[str] = None) -> dict:
+    try:
+        filt = {"portfolio_name": portfolio_name} if portfolio_name else {}
+        docs = list(_shared_mongo._db["paper_trade_strategy"].find(filt).sort("saved_at", -1))
+        result = []
+        for doc in docs:
+            doc["_id"] = str(doc["_id"])
+            positions = doc.pop("positions", [])
+            doc["position_count"] = len(positions)
+            doc["all_exited"] = all(p.get("exited", False) for p in positions) if positions else False
+            realized = 0.0
+            open_positions = []
+            for p in positions:
+                qty = p.get("quantity") or ((p.get("lots") or 1) * (p.get("lot_size") or 1))
+                is_sell = str(p.get("type", "")).lower() == "sell"
+                if p.get("exited"):
+                    if p.get("pnl") is not None:
+                        realized += p["pnl"]
+                    elif p.get("exit_price") is not None and p.get("entry_price") is not None:
+                        realized += (p["entry_price"] - p["exit_price"]) * qty if is_sell else (p["exit_price"] - p["entry_price"]) * qty
+                else:
+                    open_positions.append({
+                        "type": p.get("type", ""),
+                        "option_type": p.get("option_type", ""),
+                        "strike": p.get("strike", 0),
+                        "expiry": p.get("expiry", ""),
+                        "entry_price": p.get("entry_price", 0),
+                        "quantity": qty,
+                    })
+            doc["realized_pnl"] = round(realized, 2)
+            doc["open_positions"] = open_positions
+            result.append(doc)
+        return {"status": "success", "strategies": result}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/paper-trade/strategies/{strategy_id}")
+async def simulator_pt_get_strategy(strategy_id: str) -> dict:
+    try:
+        doc = _shared_mongo._db["paper_trade_strategy"].find_one({"_id": ObjectId(strategy_id)})
+        if not doc:
+            return {"status": "error", "message": "Not found"}
+        return {"status": "success", "strategy": _str_id(doc)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.put("/simulator/paper-trade/strategies/{strategy_id}")
+async def simulator_pt_update_strategy(strategy_id: str, body: PTStrategyIn) -> dict:
+    try:
+        portfolio_col = _shared_mongo._db["paper_trade_portfolio"]
+        strategy_col = _shared_mongo._db["paper_trade_strategy"]
+        portfolio = portfolio_col.find_one({"name": body.portfolio_name}, {"_id": 1})
+        if not portfolio:
+            result = portfolio_col.insert_one({"name": body.portfolio_name, "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")})
+            portfolio_id = result.inserted_id
+        else:
+            portfolio_id = portfolio["_id"]
+        positions = []
+        for position in (body.positions or []):
+            pos = position.dict()
+            if pos.get("quantity") is None:
+                pos["quantity"] = (pos.get("lots") or 1) * (pos.get("lot_size") or 1)
+            positions.append(pos)
+        result = strategy_col.update_one(
+            {"_id": ObjectId(strategy_id)},
+            {"$set": {
+                "portfolio_id": str(portfolio_id),
+                "portfolio_name": body.portfolio_name,
+                "strategy_name": body.strategy_name,
+                "instrument": body.instrument or "nifty",
+                "spot_price": body.spot_price,
+                "config": body.config or {},
+                "positions": positions,
+                "updated_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
+            }},
+        )
+        if result.matched_count == 0:
+            return {"status": "error", "message": "Strategy not found"}
+        return {"status": "success", "id": strategy_id}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/simulator/paper-trade/strategies")
+async def simulator_pt_save_strategy(body: PTStrategyIn) -> dict:
+    try:
+        portfolio_col = _shared_mongo._db["paper_trade_portfolio"]
+        strategy_col = _shared_mongo._db["paper_trade_strategy"]
+        portfolio = portfolio_col.find_one({"name": body.portfolio_name}, {"_id": 1})
+        if not portfolio:
+            result = portfolio_col.insert_one({"name": body.portfolio_name, "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")})
+            portfolio_id = result.inserted_id
+        else:
+            portfolio_id = portfolio["_id"]
+        positions = []
+        for position in (body.positions or []):
+            pos = position.dict()
+            if pos.get("quantity") is None:
+                pos["quantity"] = (pos.get("lots") or 1) * (pos.get("lot_size") or 1)
+            positions.append(pos)
+        now_iso = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        initial_pos_history = [{
+            "action": "INITIAL_SAVE",
+            "time": now_iso,
+            "strike": p.get("strike"),
+            "option_type": p.get("option_type") or p.get("type"),
+            "expiry": str(p.get("expiry", ""))[:10],
+            "entry_price": p.get("entry_price"),
+            "lots": p.get("lots"),
+            "lot_size": p.get("lot_size"),
+        } for p in positions if not p.get("exited")]
+        result = strategy_col.insert_one({
+            "portfolio_id": str(portfolio_id),
+            "portfolio_name": body.portfolio_name,
+            "strategy_name": body.strategy_name,
+            "instrument": body.instrument or "nifty",
+            "spot_price": body.spot_price,
+            "config": body.config or {},
+            "positions": positions,
+            "saved_at": now_iso,
+            "position_history": initial_pos_history,
+        })
+        return {"status": "success", "id": str(result.inserted_id)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+async def _run_simulator_session(session_id: str, engine: StrategyEngine) -> None:
+    try:
+        await engine.run()
+    finally:
+        _simulator_sessions.pop(session_id, None)
+
+
 app.include_router(router)
 app.include_router(socket_router)
 app.include_router(mock_kite_socket_router)
+app.include_router(simulator_router, prefix="/algo")
 
 
 # ─── Kite Broker Endpoints ────────────────────────────────────────────────────
@@ -4889,10 +5649,12 @@ def _build_live_ltp_payload(active_contracts: list[dict], now_ts: str) -> list[d
 
 def _save_market_kite_session(session: dict) -> None:
     update_fields = {
+        "api_key": session.get("api_key") or str(getattr(get_kite_instance(), "api_key", "") or "").strip(),
         "access_token": session.get("access_token"),
         "login_time": datetime.now().isoformat(),
         "user_id": session.get("user_id"),
         "user_name": session.get("user_name"),
+        "enabled": True,
     }
     local_db = MongoData()
     try:
@@ -5908,7 +6670,7 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
             sort=[("timestamp", -1)],
         )
         if not pivot:
-            raise HTTPException(status_code=404, detail=f"No option chain data found at or before {norm_ts}")
+            return _build_full_option_chain_response(normalized)
         pivot_ts = pivot["timestamp"]
 
         # Step 2: all rows at that exact timestamp
@@ -5951,7 +6713,7 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
 
             exp_bucket = grouped_option_chain.setdefault(expiry, {})
             strike_key = str(int(strike)) if float(strike) == int(float(strike)) else str(strike)
-            exp_bucket.setdefault(strike_key, {})[opt_type] = chain_row
+            exp_bucket.setdefault(strike_key, {"CE": None, "PE": None})[opt_type] = chain_row
 
         expiries_sorted = sorted(expiry_set)
         return {
@@ -5967,6 +6729,275 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
         }
     finally:
         db.close()
+
+
+_INDEX_KITE_SYMBOLS: dict[str, str] = {
+    "NIFTY":      "NSE:NIFTY 50",
+    "BANKNIFTY":  "NSE:NIFTY BANK",
+    "FINNIFTY":   "NSE:NIFTY FIN SERVICE",
+    "SENSEX":     "BSE:SENSEX",
+    "MIDCPNIFTY": "NSE:NIFTY MID SELECT",
+}
+
+
+def _get_kite_rest_client():
+    """Return a configured KiteConnect instance using DB credentials, or None."""
+    try:
+        from features.kite_broker_ws import get_common_credentials, is_configured  # type: ignore
+        if is_configured():
+            ak, at = get_common_credentials()
+        else:
+            _db = MongoData()
+            try:
+                doc = _db._db["kite_market_config"].find_one({"enabled": True}) or {}
+            finally:
+                _db.close()
+            ak = str(doc.get("api_key") or "").strip()
+            at = str(doc.get("access_token") or "").strip()
+        if not ak or not at:
+            return None
+        from kiteconnect import KiteConnect  # type: ignore
+        k = KiteConnect(api_key=ak)
+        k.set_access_token(at)
+        return k
+    except Exception:
+        return None
+
+
+def _resolve_chain_reference_spot(
+    rows_by_side: dict[str, dict[float, dict]],
+    spot_price: float,
+    T: float,
+    r: float,
+    q: float,
+) -> float:
+    """
+    Convert the ATM synthetic future into a spot-equivalent reference price.
+
+    This lines up Greeks more closely with broker option chains, which usually
+    anchor IV/Delta to the current forward/synthetic underlying rather than the
+    raw cash index tick alone.
+    """
+    if spot_price <= 0:
+        return 0.0
+
+    ce_by_strike = rows_by_side.get("CE") or {}
+    pe_by_strike = rows_by_side.get("PE") or {}
+    common_strikes = [
+        strike
+        for strike in set(ce_by_strike) & set(pe_by_strike)
+        if float((ce_by_strike.get(strike) or {}).get("ltp") or 0) > 0
+        and float((pe_by_strike.get(strike) or {}).get("ltp") or 0) > 0
+    ]
+    if not common_strikes:
+        return spot_price
+
+    atm_strike = min(common_strikes, key=lambda strike: abs(strike - spot_price))
+    ce_ltp = float((ce_by_strike.get(atm_strike) or {}).get("ltp") or 0)
+    pe_ltp = float((pe_by_strike.get(atm_strike) or {}).get("ltp") or 0)
+    synthetic_future = atm_strike + ce_ltp - pe_ltp
+    if synthetic_future <= 0:
+        return spot_price
+
+    # Convert forward/synthetic reference back to a BSM-compatible spot input.
+    return synthetic_future * math.exp(-(r - q) * max(T, 0.0))
+
+
+@app.get("/algo/live-greeks-chain/{instrument}")
+async def get_live_greeks_chain(
+    instrument: str,
+    expiry: str = Query(default=""),
+):
+    """
+    Live option chain with Black-Scholes Greeks (delta, IV, theta, vega, gamma).
+    Priority: WS ltp_map → Kite REST quotes.
+
+    Returns:
+        {instrument, expiry, expiries, spot_price, chain: {CE: [...], PE: [...]}}
+    Each row: {strike, ltp, iv, delta, gamma, theta, vega, oi, token, symbol}
+    """
+    normalized = str(instrument or "").strip().upper()
+    allowed = {"NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"}
+    if normalized not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported instrument '{normalized}'. Use one of: {', '.join(sorted(allowed))}",
+        )
+
+    from features.kite_delta_chain import (  # type: ignore
+        _calc_iv, _calc_greeks, _time_to_expiry, _RISK_FREE_RATE,
+        _DIVIDEND_YIELDS, _DEFAULT_DIVIDEND_YIELD,
+    )
+    from features.kite_broker_ws import get_ltp_map  # type: ignore
+    from features.spot_atm_utils import KITE_INDEX_TOKENS  # type: ignore
+
+    # ── Source 1: WebSocket ltp_map (zero-cost, already subscribed) ──────────
+    ltp_map: dict = get_ltp_map() or {}
+    index_token = str(KITE_INDEX_TOKENS.get(normalized, 0))
+    spot_price = float(ltp_map.get(index_token, 0) or 0)
+    use_ws = bool(ltp_map)  # non-empty = WS is live
+
+    # ── Load tokens from DB ───────────────────────────────────────────────────
+    db = MongoData()
+    try:
+        tok_col = db._db["active_option_tokens"]
+
+        raw_expiries = tok_col.distinct("expiry", {"instrument": normalized})
+        expiries_sorted: list[str] = sorted(
+            set(str(e)[:10] for e in raw_expiries if e)
+        )
+        if not expiries_sorted:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No active option tokens for '{normalized}'.",
+            )
+
+        req_expiry = str(expiry or "").strip()[:10]
+        if req_expiry and req_expiry not in expiries_sorted:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Expiry '{req_expiry}' not found. Available: {expiries_sorted}",
+            )
+
+        if not req_expiry:
+            from datetime import date as _date
+            today_str = _date.today().isoformat()
+            future = [e for e in expiries_sorted if e >= today_str]
+            live_expiry = future[0] if future else expiries_sorted[-1]
+        else:
+            live_expiry = req_expiry
+
+        contracts = list(tok_col.find(
+            {"instrument": normalized, "expiry": {"$regex": f"^{live_expiry}"}},
+            {"_id": 0, "strike": 1, "option_type": 1, "token": 1, "tokens": 1, "symbol": 1},
+        ))
+    finally:
+        db.close()
+
+    if not contracts:
+        return {
+            "instrument": normalized,
+            "expiry": live_expiry,
+            "expiries": expiries_sorted,
+            "spot_price": spot_price,
+            "chain": {"CE": [], "PE": []},
+        }
+
+    # ── Source 2: Kite REST snapshot for full-chain consistency ──────────────
+    kite_quote_map: dict[str, dict] = {}
+    kite = _get_kite_rest_client()
+    if kite:
+        try:
+            index_sym = _INDEX_KITE_SYMBOLS.get(normalized, "")
+            if index_sym:
+                idx_q = kite.quote([index_sym]) or {}
+                rest_spot_price = float(
+                    (idx_q.get(index_sym) or {}).get("last_price", 0) or 0
+                )
+                if rest_spot_price > 0:
+                    spot_price = rest_spot_price
+        except Exception as _e:
+            log.warning("[LIVE CHAIN API] spot fetch error: %s", _e)
+
+        all_tokens = [
+            int(str(c.get("token") or c.get("tokens") or 0))
+            for c in contracts
+            if c.get("token") or c.get("tokens")
+        ]
+        all_tokens = [t for t in all_tokens if t]
+        for _i in range(0, len(all_tokens), 500):
+            try:
+                batch_q = kite.quote(all_tokens[_i: _i + 500]) or {}
+                for _sym, _q in batch_q.items():
+                    _tok = str(_q.get("instrument_token") or "").strip()
+                    if _tok:
+                        kite_quote_map[_tok] = _q
+            except Exception as _e:
+                log.warning("[LIVE CHAIN API] quote batch error: %s", _e)
+
+    # ── Time to expiry ────────────────────────────────────────────────────────
+    T = _time_to_expiry(live_expiry)
+    r = _RISK_FREE_RATE
+    q = _DIVIDEND_YIELDS.get(normalized, _DEFAULT_DIVIDEND_YIELD)
+
+    raw_rows: list[dict[str, Any]] = []
+    rows_by_side: dict[str, dict[float, dict]] = {"CE": {}, "PE": {}}
+    for c in contracts:
+        opt_type = str(c.get("option_type") or "").strip().upper()
+        if opt_type not in ("CE", "PE"):
+            continue
+        token = str(c.get("token") or c.get("tokens") or "").strip()
+        symbol = str(c.get("symbol") or "").strip()
+        try:
+            strike = float(c.get("strike") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not strike:
+            continue
+
+        ws_ltp = float(ltp_map.get(token, 0) or 0) if use_ws else 0.0
+        kq = kite_quote_map.get(token) or {}
+        rest_ltp = float(kq.get("last_price") or 0)
+        if rest_ltp == 0:
+            rest_ltp = float((kq.get("ohlc") or {}).get("close") or 0)
+        ltp = ws_ltp if ws_ltp > 0 else rest_ltp
+        oi = int(kq.get("oi") or 0)
+
+        row = {
+            "opt_type": opt_type,
+            "strike": strike,
+            "ltp": round(ltp, 2),
+            "oi": oi,
+            "token": token,
+            "symbol": symbol,
+        }
+        raw_rows.append(row)
+        rows_by_side[opt_type][strike] = row
+
+    ref_spot_price = _resolve_chain_reference_spot(rows_by_side, spot_price, T, r, q)
+    pricing_spot = ref_spot_price if ref_spot_price > 0 else spot_price
+
+    # ── Compute Greeks per contract ───────────────────────────────────────────
+    chain: dict[str, list[dict]] = {"CE": [], "PE": []}
+    for row in raw_rows:
+        opt_type = str(row["opt_type"])
+        strike = float(row["strike"])
+        ltp = float(row["ltp"])
+        if pricing_spot > 0 and ltp > 0:
+            iv = _calc_iv(ltp, pricing_spot, strike, T, r, opt_type, q)
+            greeks = _calc_greeks(pricing_spot, strike, T, r, iv, opt_type, q)
+        else:
+            iv = 0.0
+            greeks = {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
+
+        chain[opt_type].append({
+            "strike": int(strike) if float(strike) == int(strike) else strike,
+            "ltp": row["ltp"],
+            "iv": round(iv * 100, 2),
+            "delta": greeks["delta"],
+            "gamma": greeks["gamma"],
+            "theta": greeks["theta"],
+            "vega": greeks["vega"],
+            "oi": int(row["oi"]),
+            "token": str(row["token"]),
+            "symbol": str(row["symbol"]),
+        })
+
+    chain["CE"].sort(key=lambda x: float(x["strike"]))
+    chain["PE"].sort(key=lambda x: float(x["strike"]))
+
+    # ── India VIX from WebSocket ltp_map (token 264969) ──────────────────────
+    from features.spot_atm_utils import INDIA_VIX_KITE_TOKEN  # type: ignore
+    india_vix = round(float(ltp_map.get(str(INDIA_VIX_KITE_TOKEN), 0) or 0), 2)
+
+    return {
+        "instrument": normalized,
+        "expiry": live_expiry,
+        "expiries": expiries_sorted,
+        "spot_price": round(pricing_spot or spot_price, 2),
+        "india_vix": india_vix,
+        "chain": chain,
+    }
 
 
 @app.get("/refresh-option-chain-cache")

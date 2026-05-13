@@ -395,9 +395,13 @@ def resolve_atm_price(underlying: str, spot_price: float) -> int:
     return int(round(spot_price / step) * step)
 
 
+_STRIKE_STEP_MAP = {
+    'NIFTY': 50, 'BANKNIFTY': 100, 'FINNIFTY': 50,
+    'MIDCPNIFTY': 25, 'SENSEX': 100, 'BANKEX': 100,
+}
+
 def get_strike_step(underlying: str) -> int:
-    normalized_underlying = str(underlying or '').upper()
-    return 100 if 'BANK' in normalized_underlying or 'MIDCP' in normalized_underlying else 50
+    return _STRIKE_STEP_MAP.get(str(underlying or '').strip().upper(), 100)
 
 
 def _normalize_underlyings(underlyings: list[str] | tuple[str, ...] | set[str] | None) -> list[str]:

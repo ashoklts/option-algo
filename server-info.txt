@@ -37,6 +37,8 @@ http://localhost:8000/monitor/start
 http://localhost:8000/monitor/stop
 
 
+https://finedgealgo.com/monitor/start
+
 
 http://localhost:8000/get_active_tokens/NIFTY
 
@@ -67,3 +69,6 @@ https://large-morally-ant.ngrok-free.app/broker/flattrade/postback
 
 
 ssh -i "finedgealgo.pem" ec2-user@ec2-13-202-184-58.ap-south-1.compute.amazonaws.com
+
+
+algotest redirect url - https://algotest.in/confirm_broker/flattrade/69cc8d70340c73617178943d?	

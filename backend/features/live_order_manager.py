@@ -71,6 +71,7 @@ _ORDER_STATUS_COMPLETE = 'COMPLETE'
 _ORDER_STATUS_OPEN     = 'OPEN'
 _ORDER_STATUS_REJECTED = 'REJECTED'
 _ORDER_STATUS_CANCELLED= 'CANCELLED'
+_ORDER_STATUS_TRIGGER_PENDING = 'TRIGGER_PENDING'
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -374,6 +375,345 @@ def _update_broker_order_status(
         log.debug('[BROKER ORDERS] update failed order_id=%s: %s', order_id, exc)
 
 
+def _load_trade_and_leg_context(
+    db,
+    trade_id: str,
+    leg_id: str,
+) -> tuple[dict, dict, dict, dict]:
+    trade = db._db['algo_trades'].find_one({'_id': trade_id}) or {}
+    if not trade:
+        return {}, {}, {}, {}
+    leg = next(
+        (
+            item for item in (trade.get('legs') or [])
+            if isinstance(item, dict) and str(item.get('id') or '').strip() == str(leg_id or '').strip()
+        ),
+        {},
+    )
+    if not leg:
+        hist_leg = db._db['algo_trade_positions_history'].find_one(
+            {'trade_id': trade_id, 'leg_id': leg_id},
+        ) or {}
+        if hist_leg:
+            leg = hist_leg
+    try:
+        from features.execution_socket import _resolve_trade_leg_configs, _resolve_leg_cfg
+
+        all_leg_cfgs = _resolve_trade_leg_configs(trade)
+        leg_cfg = _resolve_leg_cfg(str(leg.get('id') or leg_id), leg, all_leg_cfgs) if leg else {}
+    except Exception:
+        leg_cfg = {}
+    hist_doc = db._db['algo_trade_positions_history'].find_one(
+        {'trade_id': trade_id, 'leg_id': leg_id},
+    ) or {}
+    return trade, leg, leg_cfg, hist_doc
+
+
+def _get_open_exit_orders_for_leg(
+    db,
+    trade_id: str,
+    leg_id: str,
+) -> list[dict]:
+    return list(db._db[_BROKER_ORDERS_COL].find({
+        'trade_id': str(trade_id or '').strip(),
+        'leg_id': str(leg_id or '').strip(),
+        'order_side': 'exit',
+        'status': _ORDER_STATUS_OPEN,
+    }))
+
+
+def has_open_exit_order(
+    db,
+    trade_id: str,
+    leg_id: str,
+    exit_reason: str = '',
+) -> bool:
+    query = {
+        'trade_id': str(trade_id or '').strip(),
+        'leg_id': str(leg_id or '').strip(),
+        'order_side': 'exit',
+        'status': _ORDER_STATUS_OPEN,
+    }
+    if exit_reason:
+        query['exit_reason'] = str(exit_reason or '').strip()
+    return bool(db._db[_BROKER_ORDERS_COL].find_one(query, {'_id': 1}))
+
+
+def cancel_open_exit_orders_for_leg(
+    db,
+    trade: dict,
+    leg_id: str,
+    *,
+    keep_reason: str = '',
+) -> int:
+    trade_id = str((trade or {}).get('_id') or '').strip()
+    if not trade_id or not leg_id:
+        return 0
+    orders_to_cancel = _get_open_exit_orders_for_leg(db, trade_id, leg_id)
+    if keep_reason:
+        orders_to_cancel = [
+            row for row in orders_to_cancel
+            if str(row.get('exit_reason') or '').strip() != str(keep_reason or '').strip()
+        ]
+    if not orders_to_cancel:
+        return 0
+    broker = get_broker_for_trade(db, trade)
+    cancelled = 0
+    for row in orders_to_cancel:
+        order_id = str(row.get('order_id') or '').strip()
+        if not order_id:
+            continue
+        try:
+            if broker and _is_live_order_punch_enabled():
+                broker.cancel_order(variety=_VARIETY_REGULAR, order_id=order_id)
+            _update_broker_order_status(db, order_id, _ORDER_STATUS_CANCELLED)
+            cancelled += 1
+        except Exception as exc:
+            log.warning('[LIVE EXIT ORDER CANCEL] trade=%s leg=%s order=%s: %s', trade_id, leg_id, order_id, exc)
+    if cancelled:
+        print(
+            f'[LIVE EXIT ORDER CANCEL] trade={trade_id} leg={leg_id} '
+            f'cancelled={cancelled} keep_reason={keep_reason or "-"}'
+        )
+    return cancelled
+
+
+def _persist_protection_order_refs(
+    db,
+    trade_id: str,
+    leg_id: str,
+    *,
+    stoploss_order_id: str = '',
+    target_order_id: str = '',
+    protection_orders_placed: bool | None = None,
+) -> None:
+    set_fields_trade: dict[str, Any] = {}
+    set_fields_hist: dict[str, Any] = {}
+    if stoploss_order_id:
+        set_fields_trade['legs.$[elem].broker_stoploss_order_id'] = stoploss_order_id
+        set_fields_hist['broker_stoploss_order_id'] = stoploss_order_id
+    if target_order_id:
+        set_fields_trade['legs.$[elem].broker_target_order_id'] = target_order_id
+        set_fields_hist['broker_target_order_id'] = target_order_id
+    if protection_orders_placed is not None:
+        set_fields_trade['legs.$[elem].entry_trade.protection_orders_placed'] = bool(protection_orders_placed)
+        set_fields_hist['entry_trade.protection_orders_placed'] = bool(protection_orders_placed)
+    if set_fields_trade:
+        db._db['algo_trades'].update_one(
+            {'_id': trade_id},
+            {'$set': set_fields_trade},
+            array_filters=[{'elem.id': leg_id}],
+        )
+    if set_fields_hist:
+        db._db['algo_trade_positions_history'].update_one(
+            {'trade_id': trade_id, 'leg_id': leg_id},
+            {'$set': set_fields_hist},
+        )
+
+
+def _place_initial_protection_orders(
+    db,
+    trade_id: str,
+    leg_id: str,
+    fill_price: float,
+    fill_qty: int,
+) -> None:
+    if fill_price <= 0:
+        return
+    trade, leg, leg_cfg, hist_doc = _load_trade_and_leg_context(db, trade_id, leg_id)
+    if not trade or not leg:
+        return
+    if str(trade.get('activation_mode') or '').strip() != 'live':
+        return
+    if _get_open_exit_orders_for_leg(db, trade_id, leg_id):
+        return
+
+    symbol = str(leg.get('symbol') or hist_doc.get('symbol') or '').strip()
+    qty = int(fill_qty or leg.get('quantity') or hist_doc.get('quantity') or 0)
+    if not symbol or qty <= 0:
+        return
+
+    from features.position_manager import calc_sl_price, calc_tp_price  # type: ignore
+
+    position_str = str(leg.get('position') or hist_doc.get('position') or '')
+    is_sell = _is_sell(position_str)
+    sl_config = leg_cfg.get('LegStopLoss') or {}
+    tp_config = leg_cfg.get('LegTarget') or {}
+    sl_price = _safe_float(leg.get('current_sl_price') or hist_doc.get('current_sl_price'))
+    if not sl_price and sl_config:
+        sl_price = _safe_float(calc_sl_price(fill_price, is_sell, sl_config))
+    tp_price = _safe_float(calc_tp_price(fill_price, is_sell, tp_config)) if tp_config else 0.0
+
+    sl_order_id = ''
+    tgt_order_id = ''
+    leg_for_order = dict(leg)
+    leg_for_order['id'] = leg_id
+    if sl_price > 0:
+        result = place_live_exit_order(
+            db, trade, leg_for_order, leg_cfg, symbol, qty, sl_price, 'stoploss',
+            force_order_type=_ORDER_TYPE_SLM,
+            force_limit_price=0.0,
+            force_trigger_price=sl_price,
+        )
+        sl_order_id = str(result.get('order_id') or '').strip()
+    if tp_price > 0:
+        result = place_live_exit_order(
+            db, trade, leg_for_order, leg_cfg, symbol, qty, tp_price, 'target',
+            force_order_type=_ORDER_TYPE_LIMIT,
+            force_limit_price=tp_price,
+            force_trigger_price=0.0,
+        )
+        tgt_order_id = str(result.get('order_id') or '').strip()
+    if sl_order_id or tgt_order_id:
+        _persist_protection_order_refs(
+            db,
+            trade_id,
+            leg_id,
+            stoploss_order_id=sl_order_id,
+            target_order_id=tgt_order_id,
+            protection_orders_placed=True,
+        )
+        print(
+            f'[LIVE PROTECTION ARMED] trade={trade_id} leg={leg_id} '
+            f'sl_order={sl_order_id or "-"} tgt_order={tgt_order_id or "-"}'
+        )
+
+
+def _find_pending_live_leg_by_order_id(db, order_id: str) -> tuple[dict | None, dict | None]:
+    normalized_order_id = str(order_id or '').strip()
+    if not normalized_order_id:
+        return None, None
+    trade = db._db['algo_trades'].find_one(
+        {
+            'activation_mode': 'live',
+            'legs.entry_trade.order_id': normalized_order_id,
+        }
+    ) or None
+    if not trade:
+        return None, None
+    for leg in (trade.get('legs') or []):
+        if not isinstance(leg, dict):
+            continue
+        entry_trade = leg.get('entry_trade') if isinstance(leg.get('entry_trade'), dict) else {}
+        if str(entry_trade.get('order_id') or '').strip() == normalized_order_id:
+            return trade, leg
+    return trade, None
+
+
+def _promote_pending_live_leg_to_position_history(
+    db,
+    trade_id: str,
+    leg_id: str,
+) -> bool:
+    trade = db._db['algo_trades'].find_one({'_id': trade_id}) or {}
+    if not trade:
+        return False
+    leg = next(
+        (
+            item for item in (trade.get('legs') or [])
+            if isinstance(item, dict) and str(item.get('id') or '').strip() == str(leg_id or '').strip()
+        ),
+        None,
+    )
+    if not isinstance(leg, dict):
+        return False
+    try:
+        from features.execution_socket import _resolve_trade_leg_configs, _resolve_leg_cfg, _store_position_history
+
+        all_leg_cfgs = _resolve_trade_leg_configs(trade)
+        resolved_leg_cfg = _resolve_leg_cfg(str(leg.get('id') or ''), leg, all_leg_cfgs)
+        inserted, _history_doc = _store_position_history(
+            db, trade, leg, override_leg_cfg=resolved_leg_cfg
+        )
+        return bool(inserted)
+    except Exception as exc:
+        log.error(
+            '[LIVE ENTRY ACTIVATE] promote failed trade=%s leg=%s: %s',
+            trade_id,
+            leg_id,
+            exc,
+        )
+        return False
+
+
+def _iter_pending_live_entry_orders(db) -> list[dict]:
+    pending: list[dict] = []
+
+    for hist_doc in db._db['algo_trade_positions_history'].find(
+        {
+            'entry_trade.order_status': _ORDER_STATUS_OPEN,
+            'exit_trade': None,
+        },
+        {
+            'trade_id': 1,
+            'leg_id': 1,
+            'entry_trade': 1,
+        },
+    ):
+        pending.append({
+            'source': 'history',
+            'trade_id': str(hist_doc.get('trade_id') or ''),
+            'leg_id': str(hist_doc.get('leg_id') or ''),
+            'entry_trade': hist_doc.get('entry_trade') or {},
+            'history_id': hist_doc.get('_id'),
+        })
+
+    live_trades = db._db['algo_trades'].find(
+        {
+            'activation_mode': 'live',
+            'trade_status': 1,
+        },
+        {
+            '_id': 1,
+            'broker': 1,
+            'legs': 1,
+        },
+    )
+    for trade in live_trades:
+        trade_id = str(trade.get('_id') or '')
+        for leg in (trade.get('legs') or []):
+            if not isinstance(leg, dict):
+                continue
+            entry_trade = leg.get('entry_trade') if isinstance(leg.get('entry_trade'), dict) else {}
+            if str(entry_trade.get('order_status') or '').strip().upper() != _ORDER_STATUS_OPEN:
+                continue
+            if leg.get('exit_trade'):
+                continue
+            pending.append({
+                'source': 'embedded',
+                'trade_id': trade_id,
+                'leg_id': str(leg.get('id') or ''),
+                'entry_trade': entry_trade,
+                'history_id': None,
+            })
+    return pending
+
+
+def _iter_open_live_exit_orders(db) -> list[dict]:
+    return list(db._db[_BROKER_ORDERS_COL].find({
+        'order_side': 'exit',
+        'status': _ORDER_STATUS_OPEN,
+    }))
+
+
+def _sync_live_exit_fill(
+    db,
+    trade_id: str,
+    leg_id: str,
+    exit_reason: str,
+    fill_price: float,
+) -> None:
+    trade, leg, _leg_cfg, _hist_doc = _load_trade_and_leg_context(db, trade_id, leg_id)
+    if not trade:
+        return
+    cancel_open_exit_orders_for_leg(db, trade, leg_id, keep_reason=exit_reason)
+    try:
+        from features.live_monitor_service import _live_safe_close_leg_in_db
+        _live_safe_close_leg_in_db(db, trade_id, 0, fill_price, exit_reason, datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), leg_id=leg_id)
+    except Exception as exc:
+        log.error('[LIVE EXIT FILL SYNC] trade=%s leg=%s reason=%s: %s', trade_id, leg_id, exit_reason, exc)
+
+
 def process_broker_order_update(
     db,
     order_id: str,
@@ -411,38 +751,57 @@ def process_broker_order_update(
         {'entry_trade.order_id': order_id},
         {'_id': 1, 'trade_id': 1, 'leg_id': 1, 'entry_trade.order_status': 1},
     )
+    embedded_trade = None
+    embedded_leg = None
     if not hist_doc:
-        return False
+        embedded_trade, embedded_leg = _find_pending_live_leg_by_order_id(db, order_id)
+        if not embedded_trade or not embedded_leg:
+            return False
 
     # Skip if already processed to avoid double updates
-    current_status = str(
-        (hist_doc.get('entry_trade') or {}).get('order_status') or ''
-    ).upper()
+    current_entry_trade = (
+        (hist_doc.get('entry_trade') or {})
+        if hist_doc else
+        ((embedded_leg or {}).get('entry_trade') or {})
+    )
+    current_status = str(current_entry_trade.get('order_status') or '').upper()
     if current_status == status:
         return False
 
-    trade_id = str(hist_doc.get('trade_id') or '')
-    leg_id   = str(hist_doc.get('leg_id')   or '')
+    trade_id = str((hist_doc or {}).get('trade_id') or (embedded_trade or {}).get('_id') or '')
+    leg_id   = str((hist_doc or {}).get('leg_id')   or (embedded_leg or {}).get('id') or '')
 
     if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
-        hist_col.update_one(
-            {'_id': hist_doc['_id']},
-            {'$set': {
-                'entry_trade.price':        fill_price,
-                'entry_trade.order_status': _ORDER_STATUS_COMPLETE,
-                'entry_trade.fill_qty':     int(fill_qty),
-                'entry_trade.filled_at':    now_ts,
-            }},
-        )
+        if hist_doc:
+            hist_col.update_one(
+                {'_id': hist_doc['_id']},
+                {'$set': {
+                    'entry_trade.price':               fill_price,
+                    'entry_trade.order_status':        _ORDER_STATUS_COMPLETE,
+                    'entry_trade.fill_qty':            int(fill_qty),
+                    'entry_trade.filled_at':           now_ts,
+                    'entry_trade.traded_timestamp':    now_ts,
+                    'entry_trade.exchange_timestamp':  now_ts,
+                    'entry_trade.entry_lifecycle_status': 'active',
+                }},
+            )
         trades_col.update_one(
             {'_id': trade_id},
             {'$set': {
-                'legs.$[elem].last_saw_price':          fill_price,
-                'legs.$[elem].entry_trade.price':       fill_price,
-                'legs.$[elem].entry_trade.order_status':_ORDER_STATUS_COMPLETE,
+                'legs.$[elem].last_saw_price':                   fill_price,
+                'legs.$[elem].entry_trade.price':                fill_price,
+                'legs.$[elem].entry_trade.order_status':         _ORDER_STATUS_COMPLETE,
+                'legs.$[elem].entry_trade.fill_qty':             int(fill_qty),
+                'legs.$[elem].entry_trade.filled_at':            now_ts,
+                'legs.$[elem].entry_trade.traded_timestamp':     now_ts,
+                'legs.$[elem].entry_trade.exchange_timestamp':   now_ts,
+                'legs.$[elem].entry_trade.entry_lifecycle_status': 'active',
             }},
             array_filters=[{'elem.id': leg_id}],
         )
+        if not hist_doc:
+            _promote_pending_live_leg_to_position_history(db, trade_id, leg_id)
+        _place_initial_protection_orders(db, trade_id, leg_id, fill_price, fill_qty)
         try:
             from features.execution_socket import mark_execute_order_dirty_from_trade_id
             mark_execute_order_dirty_from_trade_id(db, trade_id)
@@ -455,13 +814,29 @@ def process_broker_order_update(
         return True
 
     elif status in (_ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
-        hist_col.update_one(
-            {'_id': hist_doc['_id']},
+        if hist_doc:
+            hist_col.update_one(
+                {'_id': hist_doc['_id']},
+                {'$set': {
+                    'entry_trade.order_status':     status,
+                    'entry_trade.rejection_reason': rejection_reason,
+                    'entry_trade.entry_lifecycle_status': 'entry_failed',
+                }},
+            )
+        trades_col.update_one(
+            {'_id': trade_id},
             {'$set': {
-                'entry_trade.order_status':     status,
-                'entry_trade.rejection_reason': rejection_reason,
+                'legs.$[elem].entry_trade.order_status': status,
+                'legs.$[elem].entry_trade.rejection_reason': rejection_reason,
+                'legs.$[elem].entry_trade.entry_lifecycle_status': 'entry_failed',
             }},
+            array_filters=[{'elem.id': leg_id}],
         )
+        try:
+            from features.execution_socket import mark_execute_order_dirty_from_trade_id
+            mark_execute_order_dirty_from_trade_id(db, trade_id)
+        except Exception:
+            pass
         print(
             f'[ORDER {status}][{source}] trade={trade_id} leg={leg_id} '
             f'order_id={order_id} reason={rejection_reason or "-"}'
@@ -559,7 +934,8 @@ def _resolve_entry_order_config(leg_cfg: dict) -> dict:
     trigger_buffer = _safe_float(buf_val.get('TriggerBuffer', 0))
 
     mod = value.get('Modification') or {}
-    convert_after = int(mod.get('MarketOrderAfter') or 40)
+    _raw_after = mod.get('MarketOrderAfter')
+    convert_after = int(_raw_after) if _raw_after is not None and str(_raw_after) != '' else 40
 
     if is_mpp:
         order_type = _ORDER_TYPE_MPP
@@ -602,7 +978,8 @@ def _resolve_exit_order_config(leg_cfg: dict) -> dict:
     trigger_buffer = _safe_float(buf_val.get('TriggerBuffer', 0))
 
     mod = value.get('Modification') or {}
-    convert_after = int(mod.get('MarketOrderAfter') or 40)
+    _raw_after = mod.get('MarketOrderAfter')
+    convert_after = int(_raw_after) if _raw_after is not None and str(_raw_after) != '' else 40
 
     if is_mpp:
         order_type = _ORDER_TYPE_MPP
@@ -639,6 +1016,9 @@ def place_live_entry_order(
     symbol: str,
     qty: int,
     ltp: float,
+    force_order_type: str = '',
+    force_limit_price: float = 0.0,
+    force_trigger_price: float = 0.0,
 ) -> dict:
     """
     Place an entry order for a live strategy leg.
@@ -710,9 +1090,15 @@ def place_live_entry_order(
 
     limit_price   = 0.0
     trigger_price = 0.0
-    kite_order_type = order_type
+    kite_order_type = str(force_order_type or order_type).strip() or order_type
 
-    if order_type == _ORDER_TYPE_MPP:
+    if force_order_type:
+        limit_price = _safe_float(force_limit_price)
+        trigger_price = _safe_float(force_trigger_price)
+
+    if force_order_type:
+        pass
+    elif order_type == _ORDER_TYPE_MPP:
         # Algotest MPP formula:
         #   BUY  → BID + pct%  (crosses ask → guaranteed fill, less overpay)
         #   SELL → ASK - pct%  (crosses bid → guaranteed fill, less slippage)
@@ -754,6 +1140,8 @@ def place_live_entry_order(
         if kite_order_type in (_ORDER_TYPE_LIMIT, _ORDER_TYPE_SL):
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
+            order_params['trigger_price'] = trigger_price
+        if kite_order_type == _ORDER_TYPE_SLM:
             order_params['trigger_price'] = trigger_price
 
         same_option_legs = _find_existing_trade_option_conflicts(
@@ -851,6 +1239,9 @@ def place_live_exit_order(
     qty: int,
     exit_price: float,
     exit_reason: str,
+    force_order_type: str = '',
+    force_limit_price: float = 0.0,
+    force_trigger_price: float = 0.0,
 ) -> dict:
     """
     Place an exit order for a live strategy leg.
@@ -891,9 +1282,15 @@ def place_live_exit_order(
 
     limit_price   = 0.0
     trigger_price = 0.0
-    kite_order_type = order_type
+    kite_order_type = str(force_order_type or order_type).strip() or order_type
 
-    if order_type == _ORDER_TYPE_MPP:
+    if force_order_type:
+        limit_price = _safe_float(force_limit_price)
+        trigger_price = _safe_float(force_trigger_price)
+
+    if force_order_type:
+        pass
+    elif order_type == _ORDER_TYPE_MPP:
         # Algotest MPP formula:
         #   BUY to close  → BID + pct%
         #   SELL to close → ASK - pct%
@@ -922,7 +1319,7 @@ def place_live_exit_order(
             limit_price = _apply_buffer(exit_price, limit_buffer, buffer_type, not is_buy_order)
             kite_order_type = _ORDER_TYPE_LIMIT
     elif exit_reason == 'target':
-        limit_price = _round_price(exit_price)
+        limit_price = _apply_buffer(exit_price, limit_buffer, buffer_type, not is_buy_order)
         kite_order_type = _ORDER_TYPE_LIMIT
     else:
         # exit_time / squared_off / overall_sl etc.
@@ -945,6 +1342,8 @@ def place_live_exit_order(
         if kite_order_type in (_ORDER_TYPE_LIMIT, _ORDER_TYPE_SL):
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
+            order_params['trigger_price'] = trigger_price
+        if kite_order_type == _ORDER_TYPE_SLM:
             order_params['trigger_price'] = trigger_price
 
         if not _is_live_order_punch_enabled():
@@ -1023,23 +1422,8 @@ def poll_pending_order_fills(db) -> int:
     updated = 0
     try:
         now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-        # Find open-status legs with pending broker orders
-        hist_col   = db._db['algo_trade_positions_history']
         trades_col = db._db['algo_trades']
-
-        pending_legs = list(hist_col.find(
-            {
-                'entry_trade.order_status': _ORDER_STATUS_OPEN,
-                'exit_trade': None,
-            },
-            {
-                'trade_id': 1, 'leg_id': 1,
-                'entry_trade.order_id': 1,
-                'entry_trade.order_placed_at': 1,
-                'entry_trade.last_modified_at': 1,
-                'entry_trade.convert_after': 1,
-            }
-        ))
+        pending_legs = _iter_pending_live_entry_orders(db)
 
         if not pending_legs:
             return 0
@@ -1054,17 +1438,19 @@ def poll_pending_order_fills(db) -> int:
         # Fetch kite orders once per unique broker
         broker_orders_cache: dict[str, list[dict]] = {}
 
-        for hist_doc in pending_legs:
-            trade_id = str(hist_doc.get('trade_id') or '')
-            leg_id   = str(hist_doc.get('leg_id') or '')
+        seen_order_ids: set[str] = set()
+        for pending_doc in pending_legs:
+            trade_id = str(pending_doc.get('trade_id') or '')
+            leg_id   = str(pending_doc.get('leg_id') or '')
             trade    = trades.get(trade_id)
             if not trade:
                 continue
 
-            entry_trade = hist_doc.get('entry_trade') or {}
+            entry_trade = pending_doc.get('entry_trade') or {}
             order_id    = str(entry_trade.get('order_id') or '').strip()
-            if not order_id:
+            if not order_id or order_id in seen_order_ids:
                 continue
+            seen_order_ids.add(order_id)
 
             broker_id = str(trade.get('broker') or '').strip()
             cache_key = broker_id or '_default'
@@ -1123,7 +1509,8 @@ def poll_pending_order_fills(db) -> int:
             else:
                 # Still pending — check convert_after and ContinuousMonitoring
                 placed_at     = str(entry_trade.get('order_placed_at') or '').strip()
-                convert_after = int(entry_trade.get('convert_after') or 40)
+                _raw_ca = entry_trade.get('convert_after')
+                convert_after = int(_raw_ca) if _raw_ca is not None and str(_raw_ca) != '' else 40
                 if not placed_at:
                     continue
                 try:
@@ -1135,7 +1522,7 @@ def poll_pending_order_fills(db) -> int:
                         kite = get_broker_for_trade(db, trade)
                         if kite:
                             _convert_to_aggressive_limit(
-                                db, kite, trade, hist_doc, order_id, kite_order, now_ts
+                                db, kite, trade, pending_doc, order_id, kite_order, now_ts
                             )
                     else:
                         # ContinuousMonitoring — re-place at ModificationFrequency intervals
@@ -1150,10 +1537,64 @@ def poll_pending_order_fills(db) -> int:
                                 kite = get_broker_for_trade(db, trade)
                                 if kite:
                                     _convert_to_aggressive_limit(
-                                        db, kite, trade, hist_doc, order_id, kite_order, now_ts
+                                        db, kite, trade, pending_doc, order_id, kite_order, now_ts
                                     )
                 except Exception as exc:
                     log.debug('order modification check error: %s', exc)
+
+        open_exit_orders = _iter_open_live_exit_orders(db)
+        seen_exit_ids: set[str] = set()
+        for exit_doc in open_exit_orders:
+            order_id = str(exit_doc.get('order_id') or '').strip()
+            trade_id = str(exit_doc.get('trade_id') or '').strip()
+            leg_id = str(exit_doc.get('leg_id') or '').strip()
+            if not order_id or order_id in seen_exit_ids:
+                continue
+            seen_exit_ids.add(order_id)
+            trade = trades.get(trade_id)
+            if not trade:
+                trade = trades_col.find_one({'_id': trade_id, 'activation_mode': 'live'}) or {}
+                if trade:
+                    trades[trade_id] = trade
+            if not trade:
+                continue
+
+            broker_id = str(trade.get('broker') or '').strip()
+            cache_key = f'exit::{broker_id or "_default"}'
+            if cache_key not in broker_orders_cache:
+                kite = get_broker_for_trade(db, trade)
+                if kite:
+                    try:
+                        broker_orders_cache[cache_key] = kite.orders() or []
+                    except Exception as exc:
+                        log.debug('kite.orders() exit error: %s', exc)
+                        broker_orders_cache[cache_key] = []
+                else:
+                    broker_orders_cache[cache_key] = []
+            orders_list = broker_orders_cache.get(cache_key) or []
+            kite_order = next((o for o in orders_list if str(o.get('order_id') or '') == order_id), None)
+            if not kite_order:
+                continue
+
+            status = str(kite_order.get('status') or '').upper()
+            fill_price = _safe_float(kite_order.get('average_price') or kite_order.get('price'))
+            fill_qty = int(kite_order.get('filled_quantity') or 0)
+
+            if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
+                _update_broker_order_status(db, order_id, _ORDER_STATUS_COMPLETE, fill_price, fill_qty)
+                _sync_live_exit_fill(
+                    db,
+                    trade_id,
+                    leg_id,
+                    str(exit_doc.get('exit_reason') or 'target').strip() or 'target',
+                    fill_price,
+                )
+                updated += 1
+            elif status in (_ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
+                status_msg = str(
+                    kite_order.get('status_message') or kite_order.get('status_message_raw') or ''
+                ).lower()
+                _update_broker_order_status(db, order_id, status, rejection_reason=status_msg)
 
     except Exception as exc:
         log.error('[ORDER POLL ERROR] %s', exc, exc_info=True)
@@ -1275,15 +1716,29 @@ def _convert_to_aggressive_limit(
         ) or '').strip()
 
         # Update DB so poller tracks the new order_id + reset modification timer
-        db._db['algo_trade_positions_history'].update_one(
-            {'_id': hist_doc['_id']},
+        history_id = hist_doc.get('_id')
+        if history_id is not None:
+            db._db['algo_trade_positions_history'].update_one(
+                {'_id': history_id},
+                {'$set': {
+                    'entry_trade.order_id':        new_order_id,
+                    'entry_trade.order_status':    _ORDER_STATUS_OPEN,
+                    'entry_trade.order_placed_at': now_ts,
+                    'entry_trade.last_modified_at': now_ts,
+                    'entry_trade.aggressive_retry': True,
+                }},
+            )
+        db._db['algo_trades'].update_one(
+            {'_id': trade_id},
             {'$set': {
-                'entry_trade.order_id':          new_order_id,
-                'entry_trade.order_status':       _ORDER_STATUS_OPEN,
-                'entry_trade.order_placed_at':    now_ts,
-                'entry_trade.last_modified_at':   now_ts,
-                'entry_trade.aggressive_retry':   True,
+                'legs.$[elem].entry_trade.order_id': new_order_id,
+                'legs.$[elem].entry_trade.order_status': _ORDER_STATUS_OPEN,
+                'legs.$[elem].entry_trade.order_placed_at': now_ts,
+                'legs.$[elem].entry_trade.last_modified_at': now_ts,
+                'legs.$[elem].entry_trade.aggressive_retry': True,
+                'legs.$[elem].entry_trade.entry_lifecycle_status': 'order_open',
             }},
+            array_filters=[{'elem.id': leg_id}],
         )
         print(
             f'[AGGRESSIVE LIMIT PLACED] trade={trade_id} leg={leg_id} '

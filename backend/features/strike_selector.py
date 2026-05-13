@@ -501,6 +501,7 @@ def _select_delta_range(
     snapshot_timestamp: str | None,
     leg_id: str,
     market_cache: dict | None = None,
+    spot_price: float = 0.0,
 ) -> StrikeResult:
     """
     EntryByDeltaRange — strike_param = {'LowerRange': 20, 'UpperRange': 40}.
@@ -526,7 +527,7 @@ def _select_delta_range(
     from features.delta_selector import print_delta_chain_table
     print_delta_chain_table(rows, underlying, expiry, option_type, 'EntryByDeltaRange', leg_id)
 
-    chosen = select_delta_range(rows, lower_pct, upper_pct, option_type, position, leg_id)
+    chosen = select_delta_range(rows, lower_pct, upper_pct, option_type, position, leg_id, spot_price)
     if not chosen:
         print(
             f'[STRIKE CALC FAILED] leg={leg_id} method=DeltaRange '
@@ -894,6 +895,7 @@ def resolve_strike(
             strike_param_raw, position,
             trade_date, snapshot_timestamp, leg_id,
             market_cache=market_cache,
+            spot_price=spot_price,
         )
 
     elif 'Delta' in entry_kind:

@@ -1,6 +1,25 @@
 /* ── Option Chain Time Navigation & API Fetch ─────────────────────── */
 (function () {
     var currentTimestamp = '2025-10-01T09:16:00';
+    var simulatorApiBaseUrl = resolveSimulatorApiBaseUrl();
+
+    function normalizeBaseUrl(value) {
+        return String(value || '').replace(/\/+$/, '');
+    }
+
+    function resolveSimulatorApiBaseUrl() {
+        var algoBaseUrl = normalizeBaseUrl(
+            (window.APP_CONFIG && window.APP_CONFIG.algoApiBaseUrl)
+            || window.APP_ALGO_API_BASE_URL
+            || window.APP_LOCAL_ALGO_API_BASE_URL
+            || 'http://localhost:8000/algo'
+        );
+        return algoBaseUrl + '/simulator';
+    }
+
+    function buildSimulatorApiUrl(path) {
+        return simulatorApiBaseUrl + '/' + String(path || '').replace(/^\/+/, '');
+    }
 
     function formatTimestamp(date) {
         var pad = function (n) { return String(n).padStart(2, '0'); };
@@ -102,7 +121,7 @@
     }
 
     function loadMarketHolidays() {
-        fetch('http://0.0.0.0:8000/simulator/get-market-holidays')
+        fetch(buildSimulatorApiUrl('get-market-holidays'))
             .then(function (r) { return r.json(); })
             .then(function (json) {
                 if (json && Array.isArray(json.holidays)) {
@@ -116,7 +135,7 @@
     }
 
     function fetchAndUpdateOptionChain(ts) {
-        fetch('http://0.0.0.0:8000/simulator/get-option-chain?timestamp=' + encodeURIComponent(ts))
+        fetch(buildSimulatorApiUrl('get-option-chain') + '?timestamp=' + encodeURIComponent(ts))
             .then(function (res) {
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 return res.json();

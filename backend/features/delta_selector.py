@@ -150,12 +150,13 @@ def select_delta_range(
     option_type: str,    # 'CE' or 'PE'
     position: str,       # 'PositionType.Sell' or 'PositionType.Buy'
     leg_id: str = '',
+    spot_price: float = 0.0,
 ) -> dict | None:
     """
     EntryByDeltaRange — pick strike whose delta is in [lower_pct/100, upper_pct/100].
 
-    Buy  → lowest  delta in range (most OTM)
-    Sell → highest delta in range (least OTM / closest to ATM)
+    Sell → primary: closest delta to upper bound (70); tiebreaker: nearest to ATM.
+    Buy  → primary: closest delta to lower bound (40); tiebreaker: nearest to ATM.
     PE deltas are negative — range is automatically inverted.
     Returns None if no strike falls in range (leg should be skipped).
     """
@@ -166,21 +167,19 @@ def select_delta_range(
     valid    = _valid_rows(rows)
 
     if is_pe:
-        # PE deltas: -upper ≤ delta ≤ -lower  (e.g. range 20–40 → -0.40 to -0.20)
+        # PE deltas: -upper ≤ delta ≤ -lower  (e.g. range 40–70 → -0.70 to -0.40)
         candidates = [r for r in valid if -upper <= _safe_float(r.get('delta')) <= -lower]
-        # Sell → most negative (highest |delta|) → sort ASC
-        # Buy  → least negative (lowest |delta|) → sort DESC
-        candidates.sort(key=lambda r: _safe_float(r.get('delta')), reverse=(not sell_pos))
+        # Sell → nearest to -upper (-0.70); Buy → nearest to -lower (-0.40)
+        target_delta = -upper if sell_pos else -lower
     else:
         candidates = [r for r in valid if lower <= _safe_float(r.get('delta')) <= upper]
-        # Sell → highest delta → sort DESC
-        # Buy  → lowest delta  → sort ASC
-        candidates.sort(key=lambda r: _safe_float(r.get('delta')), reverse=sell_pos)
+        # Sell → nearest to +upper (0.70); Buy → nearest to +lower (0.40)
+        target_delta = upper if sell_pos else lower
 
     print(
         f'[DELTA SELECT] leg={leg_id} method=DeltaRange opt={option_type.upper()} '
         f'range={lower_pct}%–{upper_pct}% pos={"Sell" if sell_pos else "Buy"} '
-        f'valid={len(valid)} candidates={len(candidates)}'
+        f'target_delta={target_delta:.4f} valid={len(valid)} candidates={len(candidates)}'
     )
 
     if not candidates:
@@ -189,6 +188,21 @@ def select_delta_range(
             leg_id, lower_pct, upper_pct,
         )
         return None
+
+    # Exclude deep ITM anomalies (high IV causing unexpectedly low delta far from ATM).
+    # Keep only strikes within 5% of spot; fall back to all candidates if none pass.
+    if spot_price > 0:
+        max_dist = spot_price * 0.05
+        near = [r for r in candidates if abs(_safe_float(r.get('strike')) - spot_price) <= max_dist]
+        if near:
+            candidates = near
+
+    # Primary: closest delta to target bound (upper for sell, lower for buy).
+    # Tiebreaker: nearest to ATM when two strikes are equidistant in delta.
+    candidates.sort(key=lambda r: (
+        abs(_safe_float(r.get('delta')) - target_delta),
+        abs(_safe_float(r.get('strike')) - spot_price) if spot_price > 0 else 0,
+    ))
 
     chosen = candidates[0]
     print(

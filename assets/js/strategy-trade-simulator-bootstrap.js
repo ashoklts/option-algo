@@ -27,12 +27,18 @@
         window.buildAlgoApiUrl = window.buildAlgoApiUrl || function (path) {
             return baseUrl + '/' + String(path || '').replace(/^\/+/, '');
         };
+        window.buildSimulatorApiUrl = window.buildSimulatorApiUrl || function (path) {
+            return window.buildAlgoApiUrl('simulator/' + String(path || '').replace(/^\/+/, ''));
+        };
         window.APP_CONFIG = window.APP_CONFIG || {};
         if (!window.APP_CONFIG.algoApiBaseUrl) {
             window.APP_CONFIG.algoApiBaseUrl = baseUrl;
         }
         if (typeof window.APP_CONFIG.buildAlgoApiUrl !== 'function') {
             window.APP_CONFIG.buildAlgoApiUrl = window.buildAlgoApiUrl;
+        }
+        if (typeof window.APP_CONFIG.buildSimulatorApiUrl !== 'function') {
+            window.APP_CONFIG.buildSimulatorApiUrl = window.buildSimulatorApiUrl;
         }
     }
 

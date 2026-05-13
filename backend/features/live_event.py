@@ -325,32 +325,73 @@ def resolve_live_pending_entry_snapshot(
         except Exception:
             pass
     expiry = _resolve_expiry(str(now_ts or '')[:10], expiry_kind, expiries) if expiries else None
-    if expiry and strike not in (None, ''):
-        token_doc = db._db['active_option_tokens'].find_one({
-            'instrument': underlying,
-            'expiry': expiry,
-            'strike': strike,
-            'option_type': option_type.upper(),
-        }) or {}
-        token = str(token_doc.get('token') or token_doc.get('tokens') or '').strip()
-        symbol = str(token_doc.get('symbol') or '').strip()
-        if not token:
-            try:
-                from features.spot_atm_utils import get_kite_chain_doc
-                _kcd = get_kite_chain_doc(underlying, expiry, strike, option_type.upper())
-                token = str(_kcd.get('token') or '').strip()
-                symbol = str(_kcd.get('symbol') or symbol or '').strip()
-                if token:
+
+    # Pre-resolve strike from cached chain (0ms when parent leg chain is cached in same tick).
+    # Next entry check finds _strike_locked=True → skips REST chain fetch entirely.
+    if expiry:
+        try:
+            from features.live_option_chain import fetch_full_chain, select_strike_live
+            entry_kind = str(
+                contract_cfg.get('EntryType')
+                or leg_cfg.get('EntryType')
+                or leg_cfg.get('entry_kind')
+                or ''
+            )
+            strike_param = str(
+                contract_cfg.get('StrikeParameter')
+                or leg_cfg.get('StrikeParameter')
+                or 'StrikeType.ATM'
+            )
+            position_str = str(leg_cfg.get('PositionType') or leg_cfg.get('position') or '')
+            chain = fetch_full_chain(db, underlying, expiry, spot_price)
+            if chain.get(option_type.upper()):
+                sel = select_strike_live(
+                    chain, entry_kind, strike_param,
+                    option_type.upper(), position_str, spot_price, underlying,
+                )
+                if sel:
+                    strike = sel.get('strike')
+                    token  = str(sel.get('token')  or '')
+                    symbol = str(sel.get('symbol') or '')
+                    ltp    = _safe_float(sel.get('ltp'))
+                    if token:
+                        _subscribe_live_option_token(token, symbol)
                     print(
-                        f'[LIVE ENTRY SNAPSHOT FALLBACK] '
+                        f'[SNAPSHOT PRE-RESOLVE] leg={str(leg_cfg.get("id") or "")} '
                         f'underlying={underlying} expiry={expiry} strike={strike} '
-                        f'option={option_type} token={token} symbol={symbol}'
+                        f'token={token} ltp={ltp}'
                     )
-            except Exception:
-                pass
-        if token:
-            _subscribe_live_option_token(token, symbol)
-        ltp = _safe_float(_get_live_ltp_map().get(token))
+        except Exception as _pre_exc:
+            print(f'[SNAPSHOT PRE-RESOLVE] error leg={str(leg_cfg.get("id") or "")} : {_pre_exc}')
+
+    if expiry and strike not in (None, ''):
+        if not token:
+            token_doc = db._db['active_option_tokens'].find_one({
+                'instrument': underlying,
+                'expiry': expiry,
+                'strike': strike,
+                'option_type': option_type.upper(),
+            }) or {}
+            token = str(token_doc.get('token') or token_doc.get('tokens') or '').strip()
+            symbol = str(token_doc.get('symbol') or '').strip()
+            if not token:
+                try:
+                    from features.spot_atm_utils import get_kite_chain_doc
+                    _kcd = get_kite_chain_doc(underlying, expiry, strike, option_type.upper())
+                    token = str(_kcd.get('token') or '').strip()
+                    symbol = str(_kcd.get('symbol') or symbol or '').strip()
+                    if token:
+                        print(
+                            f'[LIVE ENTRY SNAPSHOT FALLBACK] '
+                            f'underlying={underlying} expiry={expiry} strike={strike} '
+                            f'option={option_type} token={token} symbol={symbol}'
+                        )
+                except Exception:
+                    pass
+            if token:
+                _subscribe_live_option_token(token, symbol)
+        if not ltp and token:
+            ltp = _safe_float(_get_live_ltp_map().get(token))
 
     print(
         '[LIVE ENTRY SNAPSHOT] '

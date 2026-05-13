@@ -124,7 +124,11 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); legs = d.get\\('legs', d.get\\('open', []\\)\\); [print\\(f'qty={l.get\\(\\\\\"quantity\\\\\"\\)}, lot_size={l.get\\(\\\\\"lot_size\\\\\"\\)}, effective_qty={l.get\\(\\\\\"effective_quantity\\\\\"\\)}'\\) for l in legs[:5]]\")",
       "Bash(python3 -c \"from datetime import datetime, timezone, timedelta; IST = timezone\\(timedelta\\(hours=5, minutes=30\\)\\); print\\('IST now:', datetime.now\\(IST\\).strftime\\('%Y-%m-%dT%H:%M:%S'\\)\\); print\\('UTC now:', datetime.utcnow\\(\\).strftime\\('%Y-%m-%dT%H:%M:%S'\\)\\); print\\('Local now:', datetime.now\\(\\).strftime\\('%Y-%m-%dT%H:%M:%S'\\)\\)\")",
       "Bash(timedatectl)",
-      "Bash(python3 -c \"import datetime; print\\('datetime.now\\(\\):', datetime.datetime.now\\(\\).strftime\\('%H:%M:%S'\\)\\)\")"
+      "Bash(python3 -c \"import datetime; print\\('datetime.now\\(\\):', datetime.datetime.now\\(\\).strftime\\('%H:%M:%S'\\)\\)\")",
+      "Bash(npx --no-install tsc --noEmit)",
+      "Bash(curl -s \"http://localhost:8000/algo/live-greeks-chain/NIFTY\")",
+      "Bash(curl -s \"http://localhost:8001/algo/live-greeks-chain/NIFTY\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('expiry:', d.get\\('expiry'\\)\\); print\\('CE count:', len\\(d.get\\('chain',{}\\).get\\('CE',[]\\)\\)\\); print\\('PE count:', len\\(d.get\\('chain',{}\\).get\\('PE',[]\\)\\)\\); print\\('spot:', d.get\\('spot_price'\\)\\)\")"
     ],
     "additionalDirectories": [
       "/home/ashok-innoppl/Documents/algo-admin/src/pages",

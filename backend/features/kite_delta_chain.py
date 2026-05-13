@@ -31,6 +31,16 @@ _IST = timezone(timedelta(hours=5, minutes=30))
 _RISK_FREE_RATE = 0.068          # India 91-day T-bill ≈ 6.8% p.a.
 _MIN_T = 1 / (365 * 24 * 60)    # 1 minute minimum to avoid div-by-zero
 
+# Continuous dividend yields per index — same as Kite/Sensibull reference values
+_DIVIDEND_YIELDS: dict[str, float] = {
+    'NIFTY':      0.012,   # ~1.2%
+    'BANKNIFTY':  0.005,   # ~0.5%
+    'FINNIFTY':   0.015,   # ~1.5%
+    'SENSEX':     0.012,   # ~1.2%
+    'MIDCPNIFTY': 0.008,   # ~0.8%
+}
+_DEFAULT_DIVIDEND_YIELD = 0.01
+
 
 # ── Black-Scholes helpers ─────────────────────────────────────────────────────
 
@@ -42,19 +52,21 @@ def _norm_pdf(x: float) -> float:
     return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
 
 
-def _bs_price(S: float, K: float, T: float, r: float, sigma: float, opt: str) -> float:
-    """Black-Scholes option price.  opt = 'CE' or 'PE'."""
+def _bs_price(S: float, K: float, T: float, r: float, sigma: float, opt: str, q: float = 0.0) -> float:
+    """Black-Scholes-Merton option price with continuous dividend yield q."""
     if T <= 0 or sigma <= 0:
         return max(0.0, (S - K) if opt == 'CE' else (K - S))
     sqrt_T = math.sqrt(T)
-    d1 = (math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrt_T)
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * sqrt_T)
     d2 = d1 - sigma * sqrt_T
+    exp_qT = math.exp(-q * T)
+    exp_rT = math.exp(-r * T)
     if opt == 'CE':
-        return S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
-    return K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
+        return S * exp_qT * _norm_cdf(d1) - K * exp_rT * _norm_cdf(d2)
+    return K * exp_rT * _norm_cdf(-d2) - S * exp_qT * _norm_cdf(-d1)
 
 
-def _calc_iv(ltp: float, S: float, K: float, T: float, r: float, opt: str) -> float:
+def _calc_iv(ltp: float, S: float, K: float, T: float, r: float, opt: str, q: float = 0.0) -> float:
     """Implied volatility via bisection.  Returns annual vol (e.g. 0.15 = 15%)."""
     if ltp <= 0 or S <= 0 or K <= 0 or T <= 0:
         return 0.0
@@ -64,7 +76,7 @@ def _calc_iv(ltp: float, S: float, K: float, T: float, r: float, opt: str) -> fl
     lo, hi = 1e-5, 20.0    # 0.001 % to 2000 % annual vol
     for _ in range(120):
         mid = (lo + hi) * 0.5
-        price = _bs_price(S, K, T, r, mid, opt)
+        price = _bs_price(S, K, T, r, mid, opt, q)
         if abs(price - ltp) < 0.001:
             return mid
         if price < ltp:
@@ -74,25 +86,34 @@ def _calc_iv(ltp: float, S: float, K: float, T: float, r: float, opt: str) -> fl
     return (lo + hi) * 0.5
 
 
-def _calc_greeks(S: float, K: float, T: float, r: float, sigma: float, opt: str) -> dict:
-    """Return delta, gamma, theta, vega given annual vol sigma."""
+def _calc_greeks(S: float, K: float, T: float, r: float, sigma: float, opt: str, q: float = 0.0) -> dict:
+    """Return delta, gamma, theta, vega — Black-Scholes-Merton with dividend yield q."""
     if sigma <= 0 or T <= 0 or S <= 0 or K <= 0:
         return {'delta': 0.0, 'gamma': 0.0, 'theta': 0.0, 'vega': 0.0}
     sqrt_T = math.sqrt(T)
-    d1 = (math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrt_T)
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * sqrt_T)
     d2 = d1 - sigma * sqrt_T
     nd1 = _norm_pdf(d1)
     exp_rT = math.exp(-r * T)
+    exp_qT = math.exp(-q * T)
 
-    gamma = nd1 / (S * sigma * sqrt_T)
-    vega  = S * nd1 * sqrt_T / 100.0   # per 1% change in IV
+    gamma = exp_qT * nd1 / (S * sigma * sqrt_T)
+    vega  = S * exp_qT * nd1 * sqrt_T / 100.0   # per 1% change in IV
 
     if opt == 'CE':
-        delta = _norm_cdf(d1)
-        theta = (-(S * nd1 * sigma) / (2.0 * sqrt_T) - r * K * exp_rT * _norm_cdf(d2)) / 365.0
+        delta = exp_qT * _norm_cdf(d1)
+        theta = (
+            -(S * nd1 * sigma * exp_qT) / (2.0 * sqrt_T)
+            + q * S * exp_qT * _norm_cdf(d1)
+            - r * K * exp_rT * _norm_cdf(d2)
+        ) / 365.0
     else:
-        delta = _norm_cdf(d1) - 1.0
-        theta = (-(S * nd1 * sigma) / (2.0 * sqrt_T) + r * K * exp_rT * _norm_cdf(-d2)) / 365.0
+        delta = exp_qT * (_norm_cdf(d1) - 1.0)
+        theta = (
+            -(S * nd1 * sigma * exp_qT) / (2.0 * sqrt_T)
+            - q * S * exp_qT * _norm_cdf(-d1)
+            + r * K * exp_rT * _norm_cdf(-d2)
+        ) / 365.0
 
     return {
         'delta': round(delta, 4),
@@ -109,7 +130,7 @@ def _time_to_expiry(expiry_str: str) -> float:
         exp_close = exp_day.replace(hour=15, minute=30, tzinfo=_IST)
         now_ist   = datetime.now(_IST)
         secs = (exp_close - now_ist).total_seconds()
-        return max(_MIN_T, secs / (365.25 * 86400))
+        return max(_MIN_T, secs / (365.0 * 86400))
     except Exception:
         return _MIN_T
 
@@ -316,6 +337,7 @@ def _select_from_rows(
     option_type: str,
     position: str,
     leg_id: str,
+    spot_price: float = 0.0,
 ) -> dict:
     """
     Select a strike from pre-computed rows based on delta range or closest delta.
@@ -329,7 +351,7 @@ def _select_from_rows(
     if 'DeltaRange' in entry_kind:
         lower_pct = float(sp.get('LowerRange') or 0)
         upper_pct = float(sp.get('UpperRange') or 0)
-        chosen = select_delta_range(rows, lower_pct, upper_pct, option_type, position, leg_id)
+        chosen = select_delta_range(rows, lower_pct, upper_pct, option_type, position, leg_id, spot_price)
     else:
         # EntryByDelta — closest delta
         target_pct = float(sp.get('DeltaValue') or sp.get('Value') or strike_param_raw or 0)
@@ -428,6 +450,7 @@ def fetch_log_and_select_delta_strike(
             option_type=opt,
             position=position,
             leg_id=leg_id,
+            spot_price=float(spot_price or 0),
         )
     except Exception as exc:
         log.warning('[DELTA CHAIN] leg=%s select error: %s', leg_id, exc)
