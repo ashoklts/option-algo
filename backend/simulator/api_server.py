@@ -107,7 +107,7 @@ class PTStrategyIn(BaseModel):
     positions: Optional[List[PTPositionIn]] = []
 
 
-def _str_id(doc: dict | None) -> dict | None:
+def _str_id(doc: Optional[dict]) -> Optional[dict]:
     if doc and "_id" in doc:
         doc["_id"] = str(doc["_id"])
     return doc
