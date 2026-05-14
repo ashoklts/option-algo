@@ -7169,6 +7169,7 @@ async def option_chain_historical_iv(
 
 
 @app.get("/algo/system/status")
+@app.get("/system/status")
 async def system_status():
     """Check live order status and system configuration."""
     from features.live_order_manager import _is_live_order_punch_enabled
