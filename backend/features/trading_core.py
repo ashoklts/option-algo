@@ -2340,6 +2340,12 @@ def queue_original_legs_if_needed(
 
     Returns True if legs were queued, False if already present or no configs.
     """
+    # live / fast-forward use algo_leg_feature_status for entry tracking.
+    # Full leg dicts must never be pushed to legs[] — only string history IDs.
+    activation_mode = str(trade.get('activation_mode') or '').strip()
+    if activation_mode in {'live', 'fast-forward'}:
+        return False
+
     existing_legs = [l for l in (trade.get('legs') or []) if isinstance(l, dict)]
     if existing_legs:
         return False
@@ -3526,6 +3532,11 @@ def process_broker_tick(
         legs: list[dict] = []
         for hdoc in hist_col.find({'trade_id': trade_id}):
             if not isinstance(hdoc.get('entry_trade'), dict) or hdoc.get('exit_trade'):
+                continue
+            # Skip legs where broker order is still pending (not yet filled)
+            # MTM / SL / TP must only run on confirmed filled positions
+            _lifecycle = str((hdoc.get('entry_trade') or {}).get('entry_lifecycle_status') or '').strip()
+            if _lifecycle == 'order_open':
                 continue
             h_leg_id = str(hdoc.get('leg_id') or hdoc.get('id') or '')
             if not h_leg_id:

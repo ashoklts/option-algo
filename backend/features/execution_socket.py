@@ -2055,23 +2055,34 @@ def _store_position_history(
     # Replace the original dict leg (same leg_id) with the history string _id.
     # This keeps legs as pure string IDs — no mixed dict/string state.
     leg_id_val = history_doc.get('leg_id', '')
+    trade_id_val = history_doc['trade_id']
     try:
-        result_pull = db._db['algo_trades'].update_one(
-            {'_id': history_doc['trade_id']},
+        # Remove ALL dict-type legs with matching id (pending placeholders + any stale dicts)
+        db._db['algo_trades'].update_one(
+            {'_id': trade_id_val},
             {'$pull': {'legs': {'id': leg_id_val}}},
         )
-        if result_pull.modified_count == 0:
-            # Leg dict not found (already removed or never added) — just push the id
-            pass
     except Exception as exc:
-        log.error('_store_position_history legs pull error trade=%s leg=%s: %s', history_doc['trade_id'], leg_id_val, exc)
+        log.error('_store_position_history legs pull error trade=%s leg=%s: %s', trade_id_val, leg_id_val, exc)
+    try:
+        # Safety: remove any remaining non-string dict objects from legs[]
+        # legs[] must contain only string history IDs for live/fast-forward trades
+        current_trade = db._db['algo_trades'].find_one({'_id': trade_id_val}, {'legs': 1, 'activation_mode': 1}) or {}
+        if str(current_trade.get('activation_mode') or '').strip() in {'live', 'fast-forward'}:
+            clean_legs = [l for l in (current_trade.get('legs') or []) if isinstance(l, str)]
+            db._db['algo_trades'].update_one(
+                {'_id': trade_id_val},
+                {'$set': {'legs': clean_legs}},
+            )
+    except Exception as exc:
+        log.error('_store_position_history legs clean error trade=%s: %s', trade_id_val, exc)
     try:
         db._db['algo_trades'].update_one(
-            {'_id': history_doc['trade_id']},
+            {'_id': trade_id_val},
             {'$push': {'legs': inserted_id}},
         )
     except Exception as exc:
-        log.error('_store_position_history legs push error trade=%s: %s', history_doc['trade_id'], exc)
+        log.error('_store_position_history legs push error trade=%s: %s', trade_id_val, exc)
     print(
         f"[POSITION ENTRY] trade={history_doc['trade_id']} "
         f"leg={history_doc['leg_id']} "
@@ -3555,6 +3566,8 @@ def _process_momentum_pending_feature_legs(
             'strike_meta': _strike_meta or {},
             'entry_iv': _lazy_chain_iv,
             'entry_vix': _lazy_entry_vix,
+            # fast-forward: active immediately; live: order_open until broker confirms
+            'entry_lifecycle_status': 'active' if activation_mode != 'live' else 'order_open',
         }
 
         new_leg = _build_pending_leg(leg_id, leg_cfg or {
@@ -3591,11 +3604,50 @@ def _process_momentum_pending_feature_legs(
             'spot_at_queue': _safe_float(feat_doc.get('spot_at_queue')),
         })
 
+        # ── Live mode: place broker order BEFORE writing leg to DB ──────────────
+        if activation_mode == 'live':
+            try:
+                from features.live_order_manager import place_live_entry_order as _place_entry
+                broker_result = _place_entry(
+                    db, trade, new_leg, leg_cfg, symbol,
+                    actual_quantity * lot_size, entry_price,
+                )
+                order_id = str(broker_result.get('order_id') or '').strip()
+                if not order_id:
+                    log.warning(
+                        '[LIVE ENTRY] order placement failed leg=%s trade=%s: %s',
+                        leg_id, trade_id, broker_result.get('error'),
+                    )
+                    feature_col.update_one(
+                        {'_id': feat_doc['_id'], 'status': 'processing'},
+                        {'$set': {'status': 'active', 'processing_started_at': None}},
+                    )
+                    continue
+                # Attach order details to entry_trade payload
+                new_leg['entry_trade'].update({
+                    'order_id':       order_id,
+                    'order_type':     broker_result.get('order_type', ''),
+                    'order_status':   broker_result.get('order_status', 'OPEN'),
+                    'limit_price':    broker_result.get('limit_price', entry_price),
+                    'trigger_price':  broker_result.get('trigger_price', 0),
+                    'order_placed_at': exchange_ts,
+                    'convert_after':  broker_result.get('convert_after', 40),
+                })
+                print(
+                    f'[LIVE ENTRY ORDER PLACED] trade={trade_id} leg={leg_id} '
+                    f'order_id={order_id} strike={strike} option={option_type} '
+                    f'entry_price={entry_price} sl={sl_price}'
+                )
+            except Exception as _oe:
+                log.error('[LIVE ENTRY] order error leg=%s trade=%s: %s', leg_id, trade_id, _oe)
+                feature_col.update_one(
+                    {'_id': feat_doc['_id'], 'status': 'processing'},
+                    {'$set': {'status': 'active', 'processing_started_at': None}},
+                )
+                continue
+
         try:
-            db._db['algo_trades'].update_one(
-                {'_id': trade_id},
-                {'$push': {'legs': new_leg}},
-            )
+            # Mark feature as triggered
             feature_col.update_one(
                 {'_id': feat_doc['_id']},
                 {'$set': {'status': 'triggered', 'triggered_at': now_ts}},
@@ -3605,13 +3657,12 @@ def _process_momentum_pending_feature_legs(
                 f'[{entry_label}] trade={trade_id} leg={leg_id} entry_price={entry_price} '
                 f'sl={sl_price} strike={strike} option={option_type}'
             )
-            # Store position history — pass leg_cfg explicitly so SL/TrailSL
-            # feature records are created correctly for momentum idle legs.
-            refreshed_trade = db._db['algo_trades'].find_one({'_id': trade_id}) or trade
-            refreshed_legs = [l for l in (refreshed_trade.get('legs') or []) if isinstance(l, dict)]
-            entered_leg = next((l for l in refreshed_legs if str(l.get('id') or '') == leg_id), None)
-            if entered_leg:
-                _store_position_history(db, refreshed_trade, entered_leg, override_leg_cfg=leg_cfg)
+            # _store_position_history handles everything:
+            #   1. Insert full leg data → algo_trade_positions_history
+            #   2. $pull any dict with matching leg_id from legs[] (removes pending placeholder)
+            #   3. $push string history_id to legs[]
+            # Result: legs[] has only string IDs, no full dicts
+            _store_position_history(db, trade, new_leg, override_leg_cfg=leg_cfg)
             entered_ids.append(leg_id)
         except Exception as exc:
             log.error('momentum_pending entry error leg=%s: %s', leg_id, exc)

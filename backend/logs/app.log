@@ -208,3 +208,762 @@
 2026-05-14 14:46:30  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
 2026-05-14 14:46:30  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=14.61 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_e9df6a78-bf3f-46e0-95ec-7579c18a806d:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
 2026-05-14 14:46:30  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: e9df6a78-bf3f-46e0-95ec-7579c18a806d: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: e9df6a78-bf3f-46e0-95ec-7579c18a806d: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
+2026-05-14 14:57:48  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-05-14 14:57:48  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=28.54 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_a1365fe8-39d9-472c-b159-40e52e178635:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
+2026-05-14 14:57:48  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: a1365fe8-39d9-472c-b159-40e52e178635: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: a1365fe8-39d9-472c-b159-40e52e178635: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
+2026-05-14 14:58:21  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.28 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
+2026-05-14 14:58:21  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
+2026-05-14 14:58:21  INFO      features.kite_ticker                 KiteTicker connected
+2026-05-14 14:58:21  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
+2026-05-14 14:58:23  INFO      features.spot_atm_utils              [kite_instruments] loaded 49748 option instruments for 2026-05-14
+2026-05-14 14:58:23  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
+2026-05-14 14:58:23  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +2 token(s): [13150722, 13150978]
+2026-05-14 14:58:24  INFO      features.kite_broker_ws              [KiteWSManager] connected
+2026-05-14 14:58:25  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 14:58:25  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 14:58:25  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-05-14 14:58:25  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-05-14 14:59:47  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
+2026-05-14 14:59:47  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_index__ +6 token(s): [256265, 260105, 265, 257801, 288009, 264969]
+2026-05-14 14:59:47  INFO      features.trading_core                queue_original_legs trade=exec_19e25d1dcda607da20b6d17 queued=2
+2026-05-14 14:59:47  INFO      features.kite_ticker                 KiteTicker connected
+2026-05-14 14:59:47  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +2 token(s): [13149698, 13149954]
+2026-05-14 14:59:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 14:59:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 14:59:50  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-05-14 14:59:50  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-05-14 15:03:04  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-05-14 15:03:04  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=32.21 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_7c9c99ce-d029-463a-b632-86f28e272c11:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
+2026-05-14 15:03:04  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 7c9c99ce-d029-463a-b632-86f28e272c11: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 7c9c99ce-d029-463a-b632-86f28e272c11: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
+2026-05-14 15:06:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-05-14 15:06:59  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.22 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_a3b1157a-9896-48ab-b9f4-3bcefad9d937:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
+2026-05-14 15:06:59  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: a3b1157a-9896-48ab-b9f4-3bcefad9d937: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: a3b1157a-9896-48ab-b9f4-3bcefad9d937: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
+2026-05-14 15:07:45  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.33 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
+2026-05-14 15:07:45  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
+2026-05-14 15:07:45  INFO      features.kite_ticker                 KiteTicker connected
+2026-05-14 15:07:45  INFO      features.trading_core                queue_original_legs trade=exec_19e25d94c6852f7a20b6d17 queued=2
+2026-05-14 15:07:46  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
+2026-05-14 15:07:47  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
+2026-05-14 15:07:47  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13149698]
+2026-05-14 15:07:47  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13149954]
+2026-05-14 15:07:48  INFO      features.kite_broker_ws              [KiteWSManager] connected
+2026-05-14 15:07:48  INFO      features.spot_atm_utils              [kite_instruments] loaded 49748 option instruments for 2026-05-14
+2026-05-14 15:07:48  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:48  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:48  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:48  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:48  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:48  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:48  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:48  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:48  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:49  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 15:07:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 15:07:50  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-05-14 15:07:50  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-05-14 15:07:51  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:51  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:51  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:51  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:51  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:51  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:53  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:53  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:53  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:53  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:53  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:53  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:54  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:54  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:54  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:54  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:54  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:54  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:56  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:56  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:56  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:56  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:56  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:56  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:58  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:58  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:58  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:58  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:58  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:58  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:59  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:59  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:59  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:59  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:59  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:07:59  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:01  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:01  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:01  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:01  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:01  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:01  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:03  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:03  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:03  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:03  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:03  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:03  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:04  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:04  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:04  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:04  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:04  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:04  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:06  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:06  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:06  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:06  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:06  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:06  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:07  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:07  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:07  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:07  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:07  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:07  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:09  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:09  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:09  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:09  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:09  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:09  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:11  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:11  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:11  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:11  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:11  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:11  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:13  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:13  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:13  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:13  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:13  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:13  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:14  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:14  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:14  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:14  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:14  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:14  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:16  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:16  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:16  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:16  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:16  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:16  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:20  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:20  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:20  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:20  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:20  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:08:20  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:11:58  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-05-14 15:11:58  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=20.45 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_f5b37a4a-7d2c-4d1d-8f6b-e6efd9896e31:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
+2026-05-14 15:11:58  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: f5b37a4a-7d2c-4d1d-8f6b-e6efd9896e31: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: f5b37a4a-7d2c-4d1d-8f6b-e6efd9896e31: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
+2026-05-14 15:12:22  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
+2026-05-14 15:12:22  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=20.12 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_68c62088-f82e-4b1c-beef-189349b892a0:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
+2026-05-14 15:12:22  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 68c62088-f82e-4b1c-beef-189349b892a0: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 68c62088-f82e-4b1c-beef-189349b892a0: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
+2026-05-14 15:16:15  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.46 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
+2026-05-14 15:16:15  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
+2026-05-14 15:16:15  INFO      features.kite_ticker                 KiteTicker connected
+2026-05-14 15:16:16  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
+2026-05-14 15:16:17  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
+2026-05-14 15:16:17  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13149698]
+2026-05-14 15:16:17  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13149442]
+2026-05-14 15:16:17  INFO      features.kite_broker_ws              [KiteWSManager] connected
+2026-05-14 15:16:18  INFO      features.spot_atm_utils              [kite_instruments] loaded 49748 option instruments for 2026-05-14
+2026-05-14 15:16:18  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +1 token(s): [13149954]
+2026-05-14 15:16:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923650PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:19  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:19  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:19  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:19  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:19  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:19  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:19  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 15:16:19  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 15:16:19  ERROR     kiteconnect.ticker                   Connection closed: None - None
+2026-05-14 15:16:19  INFO      features.kite_ticker                 KiteTicker closed: None None
+2026-05-14 15:16:21  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:21  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:21  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:22  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:22  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:22  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:24  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:24  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:24  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:24  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:24  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:24  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:26  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:26  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:26  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:26  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:26  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:26  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:27  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:27  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:27  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:27  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:27  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:27  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:29  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:29  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:29  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:29  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:29  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:29  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:31  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:31  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:31  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:31  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:31  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:31  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:33  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:33  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:33  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:34  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:34  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:34  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:35  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:35  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:35  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:35  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:35  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:35  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:37  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:37  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:37  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:37  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:37  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:37  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:38  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 15:16:38  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-05-14 15:16:38  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:38  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:38  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:38  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:38  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:38  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:41  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:41  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:41  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:41  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:41  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:41  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:42  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:42  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:42  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:42  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:42  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:42  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:44  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:44  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:44  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:44  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:44  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+Traceback (most recent call last):
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
+    order_id = kite.place_order(**order_params)
+  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
+    raise Exception(
+Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
+2026-05-14 15:16:44  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
