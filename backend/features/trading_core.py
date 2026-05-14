@@ -73,6 +73,7 @@ SHOW_PRINT_STATEMENT = False
 
 # MongoData wrapper  (thin pymongo helper — db._db is the raw pymongo Database)
 from features.mongo_data import MongoData  # type: ignore
+from features.debug_flags import runtime_print
 
 # Market data cache helpers (shared with execution_socket.py)
 from features.spot_atm_utils import (     # type: ignore
@@ -640,26 +641,39 @@ def resolve_leg_strike(
     """
     try:
         from features.strike_selector import resolve_strike  # type: ignore
-        strike_param = str(
+        strike_param_raw = str(
             leg_cfg.get('StrikeParameter')
             or leg_cfg.get('strike_parameter')
             or leg_cfg.get('StrikeType')
             or 'ATM'
         ).strip()
-        strike_value = safe_float(
-            leg_cfg.get('StrikeValue') or leg_cfg.get('strike_value') or 0
-        )
+        entry_kind = str(
+            leg_cfg.get('EntryType')
+            or leg_cfg.get('entry_kind')
+            or leg_cfg.get('entry_type')
+            or ''
+        ).strip()
+        position = str(
+            leg_cfg.get('PositionType')
+            or leg_cfg.get('position')
+            or 'PositionType.Sell'
+        ).strip()
+        chain_col = db._db['option_chain_historical_data']
+        trade_date = str(now_ts or '')[:10]
         result = resolve_strike(
-            db._db,
+            chain_col,
             underlying=underlying,
-            expiry=expiry,
             option_type=option_type,
-            strike_parameter=strike_param,
-            strike_value=strike_value,
+            entry_kind=entry_kind,
+            strike_param_raw=strike_param_raw,
+            position=position,
             spot_price=spot_price,
+            expiry=expiry,
+            trade_date=trade_date,
+            snapshot_timestamp=now_ts,
             market_cache=market_cache,
         )
-        return int(result) if result else None
+        return int(result.strike) if result and result.strike else None
     except Exception as exc:
         log.warning('resolve_leg_strike error underlying=%s expiry=%s: %s', underlying, expiry, exc)
         return None
@@ -1193,7 +1207,7 @@ def compute_strategy_mtm(
             'entry_price': entry_price,
         })
 
-    print('[MTM TOTAL]', {
+    runtime_print('[MTM TOTAL]', {
         'trade_id': normalized_id,
         'timestamp': now_ts,
         'current_mtm': round(total_mtm, 2),
@@ -1616,7 +1630,7 @@ def check_broker_sl_target(
         _uid, _bkr, _mode = gkey.split('|', 2)
 
         # ── Broker group border — easy cross-verification in logs ─────────
-        print(
+        runtime_print(
             f'\n{"━" * 65}\n'
             f'  [BROKER GROUP]  broker={_bkr}  |  mode={_mode}  |  user={_uid}\n'
             f'{"━" * 65}'
@@ -3487,7 +3501,7 @@ def process_broker_tick(
         underlying       = str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or '')
         strategy_cfg     = trade.get('strategy') or trade.get('config') or {}
         all_leg_configs  = resolve_trade_leg_configs(trade)
-        print('[BROKER TRADE LOOP]', {
+        runtime_print('[BROKER TRADE LOOP]', {
             'mode': ctx.activation_mode,
             'trade_id': trade_id,
             'strategy_id': strategy_id,

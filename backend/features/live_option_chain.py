@@ -27,6 +27,8 @@ import threading
 import time
 from typing import Any
 
+from features.debug_flags import entry_print
+
 log = logging.getLogger(__name__)
 
 # ── module-level TTL cache shared across all callers ──────────────────────────
@@ -183,7 +185,7 @@ def fetch_full_chain(
     # Fast path: valid cache hit (no lock needed for read)
     _cached = _cache_get(_cache_key)
     if _cached is not None:
-        print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {expiry}')
+        entry_print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {expiry}')
         return _cached
 
     # Serialize concurrent fetches for the same (underlying, expiry) key.
@@ -191,7 +193,7 @@ def fetch_full_chain(
         # Re-check under lock — another thread may have just populated the cache.
         _cached = _cache_get(_cache_key)
         if _cached is not None:
-            print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {expiry}')
+            entry_print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {expiry}')
             return _cached
         if _cache_key in _CHAIN_FETCHING:
             _wait_ev = _CHAIN_FETCHING[_cache_key]
@@ -202,7 +204,7 @@ def fetch_full_chain(
             _is_fetcher = True
 
     if not _is_fetcher:
-        print(f'[LIVE CHAIN] leg={leg_id} waiting for in-flight chain {underlying} {expiry}')
+        entry_print(f'[LIVE CHAIN] leg={leg_id} waiting for in-flight chain {underlying} {expiry}')
         _wait_ev.wait(timeout=10.0)
         _cached = _cache_get(_cache_key)
         if _cached is not None:
@@ -266,7 +268,7 @@ def _fetch_full_chain_from_kite(
     ce_count = sum(1 for c in contracts if str(c.get('option_type') or '').strip().upper() == 'CE')
     pe_count = sum(1 for c in contracts if str(c.get('option_type') or '').strip().upper() == 'PE')
     total    = ce_count + pe_count
-    print(
+    entry_print(
         f'[LIVE CHAIN] leg={leg_id} ⟶  Getting option chain ...'
         f'  underlying={underlying}  expiry={expiry}  spot={spot_price}'
         f'  CE_strikes={ce_count}  PE_strikes={pe_count}  total_tokens={total}'
@@ -312,7 +314,7 @@ def _fetch_full_chain_from_kite(
                 log.warning('[LIVE CHAIN] leg=%s quote batch[%d] error: %s', leg_id, i, exc)
 
     _elapsed_ms = round((_time.perf_counter() - _t0) * 1000, 1)
-    print(
+    entry_print(
         f'[LIVE CHAIN] leg={leg_id} ✓  Got option chain'
         f'  quotes_received={len(token_to_quote)}  elapsed={_elapsed_ms}ms'
     )
@@ -495,22 +497,22 @@ def _print_combined_table(
     all_strikes  = sorted(set(ce_by_strike) | set(pe_by_strike))
 
     sep = '[LIVE CHAIN] ' + '─' * 110
-    print(
+    entry_print(
         f'\n[LIVE CHAIN] leg={leg_id}  {underlying}  expiry={expiry}  '
         f'spot={spot_price}  strikes={len(all_strikes)}'
     )
-    print(sep)
-    print(
+    entry_print(sep)
+    entry_print(
         f'[LIVE CHAIN] {"CE_LTP":>9}  {"CE_IV%":>7}  {"CE_Delta":>9}  │'
         f'  {"STRIKE":>7}  │  {"PE_Delta":>9}  {"PE_IV%":>7}  {"PE_LTP":>9}'
     )
-    print(sep)
+    entry_print(sep)
     atm = _atm_from_spot(spot_price, underlying)
     for s in all_strikes:
         ce = ce_by_strike.get(s, {})
         pe = pe_by_strike.get(s, {})
         atm_marker = ' ←ATM' if int(s) == atm else ''
-        print(
+        entry_print(
             f'[LIVE CHAIN] {_safe_float(ce.get("ltp")):>9.2f}  '
             f'{_safe_float(ce.get("iv")):>7.2f}  '
             f'{_safe_float(ce.get("delta")):>9.4f}  │'
@@ -520,7 +522,7 @@ def _print_combined_table(
             f'{_safe_float(pe.get("ltp")):>9.2f}'
             f'{atm_marker}'
         )
-    print(sep + '\n')
+    entry_print(sep + '\n')
 
 
 # ── strike selection from live chain ─────────────────────────────────────────
@@ -583,7 +585,7 @@ def select_strike_live(
             return None
         target = straddle * multiplier
         row = min(rows, key=lambda r: abs(_safe_float(r.get('ltp')) - target))
-        print(
+        entry_print(
             f'[LIVE SELECT] leg={leg_id} method=StraddlePct '
             f'atm={atm} ce={ce_ltp} pe={pe_ltp} straddle={round(straddle,2)} '
             f'target={round(target,2)} → strike={row.get("strike")} ltp={row.get("ltp")}'
@@ -607,7 +609,7 @@ def select_strike_live(
         row = _row_for_strike(final_str)
         if not row:
             return None
-        print(
+        entry_print(
             f'[LIVE SELECT] leg={leg_id} method=StraddlePrice '
             f'straddle={round(straddle,2)} offset={round(offset,2)} '
             f'{"+" if is_plus else "-"} → strike={final_str}'
@@ -642,7 +644,7 @@ def select_strike_live(
         if not row:
             return None
         _syn_label = f'OTM{abs(_raw_offset)}' if _raw_offset > 0 else (f'ITM{abs(_raw_offset)}' if _raw_offset < 0 else 'ATM')
-        print(
+        entry_print(
             f'[LIVE SELECT] leg={leg_id} method=SyntheticFuture+{_syn_label} '
             f'ce={ce_ltp} pe={pe_ltp} syn={round(syn_future,2)} '
             f'syn_atm={syn_atm} offset={offset_n} → strike={final_str}'
@@ -659,17 +661,17 @@ def select_strike_live(
         final_str   = int(round(raw_strike / step) * step)
         row = _row_for_strike(final_str)
         if not row:
-            print(f'[LIVE SELECT] leg={leg_id} method=AtmMultiplier no chain row for strike={final_str} — skipped')
+            entry_print(f'[LIVE SELECT] leg={leg_id} method=AtmMultiplier no chain row for strike={final_str} — skipped')
             return None
         actual_strike = _safe_float(row.get('strike'))
         if abs(actual_strike - final_str) > step:
-            print(
+            entry_print(
                 f'[LIVE SELECT] leg={leg_id} method=AtmMultiplier '
                 f'target={final_str} nearest={actual_strike} gap={abs(actual_strike - final_str)} > step={step} — skipped'
             )
             return None
         pct = round((multiplier - 1) * 100, 4)
-        print(f'[LIVE SELECT] leg={leg_id} method=AtmMultiplier atm={atm} mult={multiplier} pct={pct:+.4g}% → strike={final_str}')
+        entry_print(f'[LIVE SELECT] leg={leg_id} method=AtmMultiplier atm={atm} mult={multiplier} pct={pct:+.4g}% → strike={final_str}')
         return _result(row, {'atm_strike': atm, 'multiplier': multiplier})
 
     # ── PremiumRange ──────────────────────────────────────────────────────────
@@ -679,10 +681,10 @@ def select_strike_live(
         mid   = (lower + upper) / 2
         valid = [r for r in rows if lower <= _safe_float(r.get('ltp')) <= upper]
         if not valid:
-            print(f'[LIVE SELECT] leg={leg_id} method=PremiumRange no strikes in [{lower},{upper}] — skipped')
+            entry_print(f'[LIVE SELECT] leg={leg_id} method=PremiumRange no strikes in [{lower},{upper}] — skipped')
             return None
         row = min(valid, key=lambda r: abs(_safe_float(r.get('ltp')) - mid))
-        print(f'[LIVE SELECT] leg={leg_id} method=PremiumRange [{lower},{upper}] mid={mid} → strike={row.get("strike")} ltp={row.get("ltp")}')
+        entry_print(f'[LIVE SELECT] leg={leg_id} method=PremiumRange [{lower},{upper}] mid={mid} → strike={row.get("strike")} ltp={row.get("ltp")}')
         return _result(row, {'lower_range': lower, 'upper_range': upper})
 
     # ── PremiumGEQ / PremiumLTE / Premium ─────────────────────────────────────
@@ -706,7 +708,7 @@ def select_strike_live(
             b = below[0] if below else None
             a = above[0] if above else None
             if not b and not a:
-                print(f'[LIVE SELECT] leg={leg_id} method=ClosestPremium target={target_val} — no strikes found, skipped')
+                entry_print(f'[LIVE SELECT] leg={leg_id} method=ClosestPremium target={target_val} — no strikes found, skipped')
                 return None
             if not b:
                 row = a
@@ -716,27 +718,27 @@ def select_strike_live(
                 diff_b = abs(_safe_float(b.get('ltp')) - target_val)
                 diff_a = abs(_safe_float(a.get('ltp')) - target_val)
                 row = b if diff_b <= diff_a else a  # on tie pick below (conservative)
-            print(f'[LIVE SELECT] leg={leg_id} method=ClosestPremium target={target_val} → strike={row.get("strike")} ltp={row.get("ltp")} diff={round(abs(_safe_float(row.get("ltp")) - target_val), 2)}')
+            entry_print(f'[LIVE SELECT] leg={leg_id} method=ClosestPremium target={target_val} → strike={row.get("strike")} ltp={row.get("ltp")} diff={round(abs(_safe_float(row.get("ltp")) - target_val), 2)}')
         elif is_geq:
             candidates = sorted(
                 [r for r in rows if _safe_float(r.get('ltp')) >= target_val],
                 key=lambda r: _safe_float(r.get('ltp'))
             )
             if not candidates:
-                print(f'[LIVE SELECT] leg={leg_id} method=Premium no strike ≥ {target_val} — skipped')
+                entry_print(f'[LIVE SELECT] leg={leg_id} method=Premium no strike ≥ {target_val} — skipped')
                 return None
             row = candidates[0]
-            print(f'[LIVE SELECT] leg={leg_id} method=Premium ≥{target_val} → strike={row.get("strike")} ltp={row.get("ltp")}')
+            entry_print(f'[LIVE SELECT] leg={leg_id} method=Premium ≥{target_val} → strike={row.get("strike")} ltp={row.get("ltp")}')
         else:
             candidates = sorted(
                 [r for r in rows if _safe_float(r.get('ltp')) <= target_val],
                 key=lambda r: _safe_float(r.get('ltp')), reverse=True
             )
             if not candidates:
-                print(f'[LIVE SELECT] leg={leg_id} method=Premium no strike ≤ {target_val} — skipped')
+                entry_print(f'[LIVE SELECT] leg={leg_id} method=Premium no strike ≤ {target_val} — skipped')
                 return None
             row = candidates[0]
-            print(f'[LIVE SELECT] leg={leg_id} method=Premium ≤{target_val} → strike={row.get("strike")} ltp={row.get("ltp")}')
+            entry_print(f'[LIVE SELECT] leg={leg_id} method=Premium ≤{target_val} → strike={row.get("strike")} ltp={row.get("ltp")}')
         return _result(row)
 
     # ── DeltaRange ────────────────────────────────────────────────────────────
@@ -778,16 +780,16 @@ def select_strike_live(
         [_safe_float(r.get('strike')) for r in rows
          if abs(_safe_float(r.get('strike')) - final_str) <= step * 2],
     )
-    print(f'[LIVE SELECT] leg={leg_id} method={label} spot={spot_price} atm={atm} target={final_str} strikes_near_target={near}')
+    entry_print(f'[LIVE SELECT] leg={leg_id} method={label} spot={spot_price} atm={atm} target={final_str} strikes_near_target={near}')
 
     row = _row_for_strike(final_str)
     if not row:
         return None
     actual_strike = _safe_float(row.get('strike'))
     if actual_strike != final_str:
-        print(
+        entry_print(
             f'[LIVE SELECT] leg={leg_id} method={label} WARNING: '
             f'target={final_str} NOT in chain → nearest={actual_strike} selected instead'
         )
-    print(f'[LIVE SELECT] leg={leg_id} method={label} → strike={actual_strike} ltp={_safe_float(row.get("ltp"))}')
+    entry_print(f'[LIVE SELECT] leg={leg_id} method={label} → strike={actual_strike} ltp={_safe_float(row.get("ltp"))}')
     return _result(row, {'atm_strike': atm, 'offset': offset_n})

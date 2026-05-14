@@ -28,6 +28,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pymongo import DESCENDING
 
 from features.mongo_data import MongoData
+from features.debug_flags import entry_print, runtime_print
 from features.spot_atm_utils import (
     build_entry_spot_snapshots,
     clear_market_data_cache,
@@ -3236,7 +3237,7 @@ def _process_momentum_pending_feature_legs(
 
                 live_expiry = _resolve_expiry_from_tokens(tok_col, underlying, opt_norm, trade_date, expiry_kind)
                 if not live_expiry:
-                    print(f'[MOMENTUM PENDING] leg={leg_id} no expiry in active_option_tokens — skipping')
+                    entry_print(f'[MOMENTUM PENDING] leg={leg_id} no expiry in active_option_tokens — skipping')
                     continue
 
                 _cache_key = (underlying, live_expiry)
@@ -3245,10 +3246,10 @@ def _process_momentum_pending_feature_legs(
                         db, underlying, live_expiry, spot_price, leg_id=leg_id
                     )
                 else:
-                    print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {live_expiry}')
+                    entry_print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {live_expiry}')
                 chain = _live_chain_cache[_cache_key]
                 if not chain.get('CE') and not chain.get('PE'):
-                    print(f'[MOMENTUM PENDING] leg={leg_id} empty chain {underlying} {live_expiry} — skipping')
+                    entry_print(f'[MOMENTUM PENDING] leg={leg_id} empty chain {underlying} {live_expiry} — skipping')
                     continue
 
                 if _strike_locked:
@@ -3263,7 +3264,7 @@ def _process_momentum_pending_feature_legs(
                     _chain_ltp = _safe_float((_locked_row or {}).get('ltp'))
                     if token and _chain_ltp > 0 and ltp_map is not None:
                         ltp_map[token] = _chain_ltp
-                    print(
+                    runtime_print(
                         f'[LIVE CHAIN LOCKED] leg={leg_id} strike={strike} '
                         f'base={base_price} target={target_price} ltp={_chain_ltp}'
                     )
@@ -3274,7 +3275,7 @@ def _process_momentum_pending_feature_legs(
                         opt_norm, position_str, spot_price, underlying, leg_id=leg_id,
                     )
                     if not sel:
-                        print(f'[MOMENTUM PENDING] leg={leg_id} no strike found — skipping')
+                        entry_print(f'[MOMENTUM PENDING] leg={leg_id} no strike found — skipping')
                         continue
 
                     expiry         = live_expiry
@@ -3300,7 +3301,7 @@ def _process_momentum_pending_feature_legs(
             try:
                 expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, now_ts)
                 if expiry_err:
-                    print(f'[MOMENTUM PENDING] leg={leg_id} expiry resolve error: {expiry_err}')
+                    entry_print(f'[MOMENTUM PENDING] leg={leg_id} expiry resolve error: {expiry_err}')
                     continue
                 sel = _resolve_strike_selector(
                     chain_col=chain_col,
@@ -3317,7 +3318,7 @@ def _process_momentum_pending_feature_legs(
                     leg_id=leg_id,
                 )
                 if sel.error:
-                    print(f'[MOMENTUM PENDING] leg={leg_id} strike resolve error: {sel.error}')
+                    entry_print(f'[MOMENTUM PENDING] leg={leg_id} strike resolve error: {sel.error}')
                     continue
                 strike = sel.strike
                 _strike_meta = sel.meta or {}
@@ -3366,14 +3367,14 @@ def _process_momentum_pending_feature_legs(
                 if activation_mode == 'fast-forward':
                     from features.fast_forward_event import _subscribe_option_token
                     _subscribe_option_token(token, symbol)
-                    print(
+                    runtime_print(
                         f'[MOMENTUM TOKEN SUBSCRIBE] mode=fast-forward leg={leg_id} '
                         f'token={token} symbol={symbol or "-"}'
                     )
                 else:
                     from features.live_event import _subscribe_live_option_token
                     _subscribe_live_option_token(token, symbol)
-                    print(
+                    runtime_print(
                         f'[MOMENTUM TOKEN SUBSCRIBE] mode=live leg={leg_id} '
                         f'token={token} symbol={symbol or "-"}'
                     )
@@ -3404,7 +3405,7 @@ def _process_momentum_pending_feature_legs(
         if is_instant_entry:
             # ── No-momentum lazy leg: enter immediately on current price ──────
             if current_price <= 0:
-                print(f'[PENDING ENTRY WAIT] leg={leg_id} waiting for price data')
+                entry_print(f'[PENDING ENTRY WAIT] leg={leg_id} waiting for price data')
                 try:
                     feature_col.update_one(
                         {'_id': feat_doc['_id'], 'status': 'processing'},
@@ -3413,12 +3414,12 @@ def _process_momentum_pending_feature_legs(
                 except Exception:
                     pass
                 continue
-            print(f'[PENDING ENTRY] leg={leg_id} current_price={current_price} strike={strike} option={option_type} — entering immediately')
+            entry_print(f'[PENDING ENTRY] leg={leg_id} current_price={current_price} strike={strike} option={option_type} — entering immediately')
         else:
             # ── Arm: set base/target price on first tick ──────────────────────
             if base_price <= 0 or target_price <= 0:
                 if current_price <= 0:
-                    print(f'[MOMENTUM PENDING] leg={leg_id} waiting for price data')
+                    entry_print(f'[MOMENTUM PENDING] leg={leg_id} waiting for price data')
                     try:
                         feature_col.update_one(
                             {'_id': feat_doc['_id'], 'status': 'processing'},
@@ -3504,7 +3505,7 @@ def _process_momentum_pending_feature_legs(
 
             # ── Check if momentum target is reached ───────────────────────────
             if not _is_simple_momentum_triggered(current_price, target_price, momentum_type):
-                print(
+                runtime_print(
                     f'[MOMENTUM WAIT] leg={leg_id} type={momentum_type} value={momentum_value} '
                     f'base={base_price} target={target_price} current={current_price} strike={strike}'
                 )
@@ -3852,7 +3853,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
     strike_param_raw = leg.get('strike_parameter')
 
     if not underlying:
-        print(f'[ENTRY MISS] leg={leg_id_log} reason=no_underlying trade_id={trade.get("_id")}')
+        entry_print(f'[ENTRY MISS] leg={leg_id_log} reason=no_underlying trade_id={trade.get("_id")}')
         return False, 'no_underlying'
 
     mode_entry_payload = {}
@@ -3943,7 +3944,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
     )
 
     if spot_price <= 0:
-        print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} snapshot={snapshot_timestamp} reason=spot_price_missing_or_zero')
+        entry_print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} snapshot={snapshot_timestamp} reason=spot_price_missing_or_zero')
         return False, 'spot_missing'
 
     # ── Resolve leg config early (needed for momentum gate) ──────────────────
@@ -3983,7 +3984,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
         _chain_cache_key = (underlying, expiry)
         if live_chain_cache is not None and _chain_cache_key in live_chain_cache:
             _chain = live_chain_cache[_chain_cache_key]
-            print(f'[LIVE CHAIN] leg={leg_id_log} reusing cached chain {underlying} {expiry}')
+            entry_print(f'[LIVE CHAIN] leg={leg_id_log} reusing cached chain {underlying} {expiry}')
         else:
             _chain = fetch_full_chain(db, underlying, expiry, spot_price, leg_id=leg_id_log)
             if live_chain_cache is not None:
@@ -4020,9 +4021,9 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
     elif not expiry or strike in (None, ''):
         expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, snapshot_timestamp)
         if expiry_err:
-            print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} trade_date={trade_date} reason={expiry_err}')
+            entry_print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} trade_date={trade_date} reason={expiry_err}')
             return False, expiry_err
-        print(f'[STRIKE CALC] leg={leg_id_log} type={option_type} expiry_resolved={expiry}')
+        entry_print(f'[STRIKE CALC] leg={leg_id_log} type={option_type} expiry_resolved={expiry}')
 
         sel = _resolve_strike_selector(
             chain_col=chain_col,
@@ -4039,7 +4040,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
             leg_id=leg_id_log,
         )
         if sel.error:
-            print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} expiry={expiry} reason={sel.error}')
+            entry_print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} expiry={expiry} reason={sel.error}')
             return False, sel.error
         strike = sel.strike
         resolved_chain_doc = _normalize_chain_market_fields(sel.chain_doc or {})
@@ -4062,7 +4063,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                 if _kite_tok and _kite_tok.isdigit():
                     token = _kite_tok
                     symbol = str(_atok.get('symbol') or symbol or token)
-                    print(f'[ENTRY KITE TOKEN] leg={leg_id_log} underlying={underlying} strike={strike} option={option_type} kite_tok={token}')
+                    entry_print(f'[ENTRY KITE TOKEN] leg={leg_id_log} underlying={underlying} strike={strike} option={option_type} kite_tok={token}')
             except Exception:
                 pass
 
@@ -4112,7 +4113,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
 
         if base_price <= 0 or target_price <= 0:
             if current_option_price <= 0:
-                print(f'[MOMENTUM WAIT] leg={leg_id_log} type={_momentum_type} reason=base_price_missing')
+                entry_print(f'[MOMENTUM WAIT] leg={leg_id_log} type={_momentum_type} reason=base_price_missing')
                 return False, 'momentum_wait'
             base_price = current_option_price
             target_price = _resolve_simple_momentum_target(base_price, _momentum_type, _momentum_value)
@@ -4177,14 +4178,14 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
             return False, 'momentum_wait'
 
         if not _is_simple_momentum_triggered(current_option_price, target_price, _momentum_type):
-            print(
+            runtime_print(
                 f'[MOMENTUM WAIT] leg={leg_id_log} type={_momentum_type} '
                 f'value={_momentum_value} base={base_price} target={target_price} '
                 f'current={current_option_price} strike={strike}'
             )
             return False, 'momentum_wait'
 
-        print(
+        runtime_print(
             f'[MOMENTUM OK] leg={leg_id_log} type={_momentum_type} value={_momentum_value} '
             f'base={base_price} target={target_price} current={current_option_price} — proceeding to entry'
         )
@@ -4289,14 +4290,14 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                     entry_price = _safe_float(mode_entry_payload.get('entry_price'))
                     if entry_price <= 0:
                         miss_reason = 'fast_forward_ltp_missing' if activation_mode == 'fast-forward' else 'live_ltp_missing'
-                        print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} reason={miss_reason}')
+                        entry_print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} reason={miss_reason}')
                         return False, miss_reason
                 else:
                     expiry, expiry_err = resolve_expiry(chain_col, underlying, option_type, trade_date, snapshot_timestamp)
                     if expiry_err:
-                        print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} trade_date={trade_date} reason={expiry_err}')
+                        entry_print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} trade_date={trade_date} reason={expiry_err}')
                         return False, expiry_err
-                    print(f'[STRIKE CALC] leg={leg_id_log} type={option_type} expiry_resolved={expiry}')
+                    entry_print(f'[STRIKE CALC] leg={leg_id_log} type={option_type} expiry_resolved={expiry}')
 
                     sel = _resolve_strike_selector(
                         chain_col=chain_col,
@@ -4313,7 +4314,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
                         leg_id=leg_id_log,
                     )
                     if sel.error:
-                        print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} expiry={expiry} reason={sel.error}')
+                        entry_print(f'[ENTRY MISS] leg={leg_id_log} underlying={underlying} option={option_type} expiry={expiry} reason={sel.error}')
                         return False, sel.error
                     strike = sel.strike
                     entry_price = sel.entry_price
@@ -4662,7 +4663,7 @@ def apply_resolved_live_entries(
 
         entry_price = _safe_float(info.get('ltp'))
         if entry_price <= 0:
-            print(f'[LIVE ENTRY SKIP] trade={trade_id} leg={leg_id} reason=ltp_zero')
+            entry_print(f'[LIVE ENTRY SKIP] trade={trade_id} leg={leg_id} reason=ltp_zero')
             continue
 
         spot_price = _safe_float(info.get('spot_price'))
@@ -7440,7 +7441,7 @@ def _process_broker_level_events(
         except Exception:
             pass
 
-        print(
+        runtime_print(
             f'\n{"━" * 65}\n'
             f'  [BROKER GROUP]  broker={_broker_name}  |  mode={_mode}  |  user={_uid}\n'
             f'{"━" * 65}'

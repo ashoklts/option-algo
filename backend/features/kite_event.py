@@ -18,6 +18,7 @@ execution_socket.py is NOT imported here — no circular dependency.
 from __future__ import annotations
 
 from features.mongo_data import MongoData
+from features.debug_flags import runtime_print
 
 
 # ─── Constants (mirror execution_socket.py) ───────────────────────────────────
@@ -154,7 +155,7 @@ def broker_live_tick(
             if tok and tok not in subscribe_tokens:
                 subscribe_tokens.append(tok)
 
-    print('[BROKER TICK]', {
+    runtime_print('[BROKER TICK]', {
         'mode':            activation_mode,
         'timestamp':       now_ts,
         'ticks_received':  len(broker_ltp_map),

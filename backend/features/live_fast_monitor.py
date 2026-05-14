@@ -27,6 +27,9 @@ log = logging.getLogger(__name__)
 SUPPORTED_MODES = ('live', 'fast-forward')
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Set True to show verbose monitor loop print statements
+SHOW_MONITOR_LOGS = False
+
 
 def _now_iso() -> str:
     return datetime.now(IST).strftime('%Y-%m-%dT%H:%M:%S')
@@ -181,44 +184,46 @@ class _LiveFastMonitorSupervisor:
                         from features.live_event import sync_live_open_position_subscriptions
                         synced = sync_live_open_position_subscriptions(self.trade_date)
                         if synced:
-                            print(
-                                '[LIVE+FF TOKEN SYNC] '
-                                f'trade_date={self.trade_date} '
-                                f'synced={synced}'
-                            )
+                            if SHOW_MONITOR_LOGS:
+                                print(
+                                    '[LIVE+FF TOKEN SYNC] '
+                                    f'trade_date={self.trade_date} '
+                                    f'synced={synced}'
+                                )
                 except Exception as exc:
                     log.warning('[LIVE+FF TOKEN SYNC] error: %s', exc)
-                print(
-                    '[LIVE+FF MONITOR] '
-                    f'trade_date={self.trade_date} '
-                    f'live={len(records_by_mode.get("live") or [])} '
-                    f'fast_forward={len(records_by_mode.get("fast-forward") or [])} '
-                    f'ticker_tick_count={ticker_tick_count}'
-                )
-                for activation_mode in SUPPORTED_MODES:
-                    for record in (records_by_mode.get(activation_mode) or []):
-                        _raw_et = str(record.get('entry_time') or '').strip()
-                        _et_hhmm = _raw_et[11:16] if len(_raw_et) >= 16 else _raw_et[:5]
-                        _open = int(record.get('open_legs') or 0)
-                        _total = int(record.get('total_legs') or 0)
-                        if _open > 0:
-                            _entry_status = 'entered'
-                        elif _et_hhmm and current_hhmm and current_hhmm < _et_hhmm:
-                            _entry_status = f'waiting — entry_at={_et_hhmm} now={current_hhmm}'
-                        elif _et_hhmm:
-                            _entry_status = f'ready_to_enter — entry_at={_et_hhmm} now={current_hhmm}'
-                        else:
-                            _entry_status = 'no_entry_time'
-                        print(
-                            '[LIVE+FF CHECK] '
-                            f'mode={activation_mode} '
-                            f'group={str(record.get("group_name") or "-")} '
-                            f'strategy={str(record.get("name") or "-")} '
-                            f'entry_time={_et_hhmm or "--:--"} '
-                            f'current_time={current_hhmm or "--:--"} '
-                            f'legs={_open}/{_total} '
-                            f'status={_entry_status}'
-                        )
+                if SHOW_MONITOR_LOGS:
+                    print(
+                        '[LIVE+FF MONITOR] '
+                        f'trade_date={self.trade_date} '
+                        f'live={len(records_by_mode.get("live") or [])} '
+                        f'fast_forward={len(records_by_mode.get("fast-forward") or [])} '
+                        f'ticker_tick_count={ticker_tick_count}'
+                    )
+                    for activation_mode in SUPPORTED_MODES:
+                        for record in (records_by_mode.get(activation_mode) or []):
+                            _raw_et = str(record.get('entry_time') or '').strip()
+                            _et_hhmm = _raw_et[11:16] if len(_raw_et) >= 16 else _raw_et[:5]
+                            _open = int(record.get('open_legs') or 0)
+                            _total = int(record.get('total_legs') or 0)
+                            if _open > 0:
+                                _entry_status = 'entered'
+                            elif _et_hhmm and current_hhmm and current_hhmm < _et_hhmm:
+                                _entry_status = f'waiting — entry_at={_et_hhmm} now={current_hhmm}'
+                            elif _et_hhmm:
+                                _entry_status = f'ready_to_enter — entry_at={_et_hhmm} now={current_hhmm}'
+                            else:
+                                _entry_status = 'no_entry_time'
+                            print(
+                                '[LIVE+FF CHECK] '
+                                f'mode={activation_mode} '
+                                f'group={str(record.get("group_name") or "-")} '
+                                f'strategy={str(record.get("name") or "-")} '
+                                f'entry_time={_et_hhmm or "--:--"} '
+                                f'current_time={current_hhmm or "--:--"} '
+                                f'legs={_open}/{_total} '
+                                f'status={_entry_status}'
+                            )
                 try:
                     live_records = records_by_mode.get('live') or []
                     if live_records:
@@ -226,13 +231,14 @@ class _LiveFastMonitorSupervisor:
                         from features.kite_ticker import ticker_manager
                         from features.live_tick_dispatcher import _run_entries_for_mode
 
-                        print(
-                            '[LIVE AUTO CYCLE] '
-                            f'trade_date={self.trade_date} '
-                            f'timestamp={now_ts} '
-                            f'ticker_tick_count={ticker_tick_count} '
-                            f'records={len(live_records)}'
-                        )
+                        if SHOW_MONITOR_LOGS:
+                            print(
+                                '[LIVE AUTO CYCLE] '
+                                f'trade_date={self.trade_date} '
+                                f'timestamp={now_ts} '
+                                f'ticker_tick_count={ticker_tick_count} '
+                                f'records={len(live_records)}'
+                            )
                         _run_entries_for_mode(
                             db,
                             self.trade_date,
@@ -265,17 +271,18 @@ class _LiveFastMonitorSupervisor:
                         from features.live_tick_dispatcher import _run_entries_for_mode
                         from features.kite_ticker import ticker_manager
 
-                        print(
-                            '[FAST-FORWARD QUOTE CYCLE] '
-                            f'trade_date={self.trade_date} '
-                            f'timestamp={now_ts} '
-                            f'ticker_tick_count={ticker_tick_count} '
-                            f'quote_trades={has_quote_trades} '
-                            f'records={len(fast_forward_records)} '
-                            f'ticker_status={ticker_manager.status} '
-                            f'spot_keys={list((ticker_manager.spot_map or {}).keys())[:10]} '
-                            f'ltp_count={len(ticker_manager.ltp_map or {})}'
-                        )
+                        if SHOW_MONITOR_LOGS:
+                            print(
+                                '[FAST-FORWARD QUOTE CYCLE] '
+                                f'trade_date={self.trade_date} '
+                                f'timestamp={now_ts} '
+                                f'ticker_tick_count={ticker_tick_count} '
+                                f'quote_trades={has_quote_trades} '
+                                f'records={len(fast_forward_records)} '
+                                f'ticker_status={ticker_manager.status} '
+                                f'spot_keys={list((ticker_manager.spot_map or {}).keys())[:10]} '
+                                f'ltp_count={len(ticker_manager.ltp_map or {})}'
+                            )
                         _run_entries_for_mode(
                             db,
                             self.trade_date,
@@ -341,12 +348,13 @@ class _LiveFastMonitorSupervisor:
                     _spot_parts = '  '.join(
                         f'{s["underlying"]}={s["ltp"]:.2f}' for s in _spot_ltp_list
                     ) or 'no spot'
-                    print(
-                        f'[FF LTP EMIT]  {now_ts}'
-                        f'  |  spot: {_spot_parts}'
-                        f'  |  option tokens: {len(_option_ltp_list)}'
-                        f'  |  vix: {_vix_ltp:.2f}' if _vix_ltp > 0 else ''
-                    )
+                    if SHOW_MONITOR_LOGS:
+                        print(
+                            f'[FF LTP EMIT]  {now_ts}'
+                            f'  |  spot: {_spot_parts}'
+                            f'  |  option tokens: {len(_option_ltp_list)}'
+                            f'  |  vix: {_vix_ltp:.2f}' if _vix_ltp > 0 else ''
+                        )
                 except Exception as _ltp_exc:
                     log.debug('[FF LTP EMIT] error: %s', _ltp_exc)
 

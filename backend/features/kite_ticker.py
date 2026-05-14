@@ -27,6 +27,7 @@ from kiteconnect import KiteTicker
 from features.kite_event import build_broker_ltp_map
 from features.live_tick_dispatcher import live_tick_dispatcher
 from features.mongo_data import MongoData
+from features.debug_flags import runtime_print
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +202,7 @@ class _TickerManager:
                             continue
                         tick_label = self.token_labels.get(token_str, token_str)
                         tick_parts.append(f"{tick_label}({token_str})={float(last_price):.2f}")
-                    print(
+                    runtime_print(
                         "[KITE TICK STREAM] "
                         f"modes={','.join(active_modes)} "
                         f"subscribed_total={len(self.subscribed_tokens)} "

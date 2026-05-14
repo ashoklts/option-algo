@@ -42,12 +42,14 @@ import time
 from collections import defaultdict
 from typing import Callable
 
+from features.debug_flags import runtime_print
+
 log = logging.getLogger(__name__)
 
 
 def _trace_stdout(message: str) -> None:
     """Print websocket/runtime diagnostics immediately to backend stdout."""
-    print(message, flush=True)
+    runtime_print(message, flush=True)
 
 KITE_CONFIG_COLLECTION = 'kite_market_config'
 

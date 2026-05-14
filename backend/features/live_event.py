@@ -22,6 +22,7 @@ from typing import Any
 from bson import ObjectId
 
 from features.mongo_data import MongoData
+from features.debug_flags import entry_print
 from features.algo_backtest_event import (
     INDEX_SPOT_COLLECTION,
     OPEN_LEG_STATUS,
@@ -80,7 +81,7 @@ def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
         if not is_configured():
             return
         register_user_tokens(_LIVE_KITE_OWNER, [int(normalized_token)])
-        print(f'[LIVE OPTION SUBSCRIBE] token={normalized_token} symbol={symbol or "-"}')
+        entry_print(f'[LIVE OPTION SUBSCRIBE] token={normalized_token} symbol={symbol or "-"}')
     except Exception:
         return
 
@@ -207,7 +208,7 @@ def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
                                 {'_id': row['_id']},
                                 {'$set': {'token': kite_tok, 'symbol': new_sym}},
                             )
-                            print(
+                            entry_print(
                                 f'[LIVE TOKEN PATCH] leg_id={row.get("leg_id")} '
                                 f'chain={token} → kite={kite_tok} sym={new_sym}'
                             )
@@ -247,13 +248,13 @@ def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
             msymbol = str(mrow.get('symbol') or '').strip()
             _subscribe_live_option_token(mtoken, msymbol)
             momentum_subscribed += 1
-            print(
+            entry_print(
                 f'[LIVE MOMENTUM PENDING SUBSCRIBE] '
                 f'leg_id={str(mrow.get("leg_id") or "-")} '
                 f'token={mtoken}'
             )
 
-        print(
+        entry_print(
             f'[LIVE OPEN POSITION SUBSCRIBE] trade_date={normalized_trade_date or "-"} '
             f'trades={len(trade_ids)} subscribed_tokens={subscribed} momentum_tokens={momentum_subscribed}'
         )
@@ -356,13 +357,13 @@ def resolve_live_pending_entry_snapshot(
                     ltp    = _safe_float(sel.get('ltp'))
                     if token:
                         _subscribe_live_option_token(token, symbol)
-                    print(
+                    entry_print(
                         f'[SNAPSHOT PRE-RESOLVE] leg={str(leg_cfg.get("id") or "")} '
                         f'underlying={underlying} expiry={expiry} strike={strike} '
                         f'token={token} ltp={ltp}'
                     )
         except Exception as _pre_exc:
-            print(f'[SNAPSHOT PRE-RESOLVE] error leg={str(leg_cfg.get("id") or "")} : {_pre_exc}')
+            entry_print(f'[SNAPSHOT PRE-RESOLVE] error leg={str(leg_cfg.get("id") or "")} : {_pre_exc}')
 
     if expiry and strike not in (None, ''):
         if not token:
@@ -381,7 +382,7 @@ def resolve_live_pending_entry_snapshot(
                     token = str(_kcd.get('token') or '').strip()
                     symbol = str(_kcd.get('symbol') or symbol or '').strip()
                     if token:
-                        print(
+                        entry_print(
                             f'[LIVE ENTRY SNAPSHOT FALLBACK] '
                             f'underlying={underlying} expiry={expiry} strike={strike} '
                             f'option={option_type} token={token} symbol={symbol}'
@@ -393,7 +394,7 @@ def resolve_live_pending_entry_snapshot(
         if not ltp and token:
             ltp = _safe_float(_get_live_ltp_map().get(token))
 
-    print(
+    entry_print(
         '[LIVE ENTRY SNAPSHOT] '
         f'trade={str(trade.get("_id") or "")} '
         f'leg={str(leg_cfg.get("id") or "")} '
@@ -449,7 +450,7 @@ def resolve_live_entry_execution_payload(
         if ltp <= 0:
             # Token not yet subscribed or no tick received — subscribe now so next tick delivers LTP
             _subscribe_live_option_token(leg_token, leg_symbol)
-            print(f'[LIVE FAST PATH SUBSCRIBE] token={leg_token} symbol={leg_symbol or "-"} ltp_missing=True')
+            entry_print(f'[LIVE FAST PATH SUBSCRIBE] token={leg_token} symbol={leg_symbol or "-"} ltp_missing=True')
         return {
             'spot_price': spot_price,
             'strike': leg_strike,

@@ -25,6 +25,10 @@ import os
 import re
 import threading
 
+import pathlib as _pathlib
+from dotenv import load_dotenv
+load_dotenv(_pathlib.Path(__file__).resolve().parent / ".env")
+
 log = logging.getLogger(__name__)
 import time
 import uuid

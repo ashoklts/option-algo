@@ -46,7 +46,7 @@ log = logging.getLogger(__name__)
 
 def _trace_stdout(message: str) -> None:
     """Print entry-monitor traces immediately to the Python terminal."""
-    print(message, flush=True)
+    runtime_print(message, flush=True)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -57,6 +57,7 @@ PRE_SUBSCRIBE_MINUTES = 5         # subscribe option tokens this many min before
 
 # Index token mapping lives in spot_atm_utils (shared across all modules)
 from features.spot_atm_utils import KITE_INDEX_TOKENS as INDEX_TOKENS  # type: ignore
+from features.debug_flags import runtime_print
 
 # Virtual user_id used for kite subscriptions owned by this monitor
 _KITE_USER_ID_INDEX  = '__live_entry_index__'
@@ -155,7 +156,7 @@ class LiveEntryMonitor:
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         if self._running:
-            print('[LiveEntryMonitor] already running — start() ignored')
+            runtime_print('[LiveEntryMonitor] already running — start() ignored')
             return
 
         self._loop    = loop
@@ -172,7 +173,7 @@ class LiveEntryMonitor:
         if self._db is None:
             from features.mongo_data import MongoData
             self._db = MongoData()
-            print('[LiveEntryMonitor] DB connection opened')
+            runtime_print('[LiveEntryMonitor] DB connection opened')
 
         # Cancel any stale task left from a previous stop()
         if self._task and not self._task.done():
@@ -181,7 +182,7 @@ class LiveEntryMonitor:
         self._task = loop.create_task(
             self._monitor_loop(), name='live-entry-monitor'
         )
-        print('[LiveEntryMonitor] started — checking every second from current time')
+        runtime_print('[LiveEntryMonitor] started — checking every second from current time')
 
         # Subscribe Kite index tokens immediately (for live spot price)
         self._subscribe_index_tokens()
@@ -214,7 +215,7 @@ class LiveEntryMonitor:
                 pass
             self._db = None
 
-        print('[LiveEntryMonitor] stopped — state cleared')
+        runtime_print('[LiveEntryMonitor] stopped — state cleared')
 
     def attach_kite_listener(self) -> None:
         """Re-subscribe index tokens after Kite credentials are updated."""
@@ -224,7 +225,7 @@ class LiveEntryMonitor:
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     async def _monitor_loop(self) -> None:
-        print('[LiveEntryMonitor] loop started — waiting for Live_Running strategies')
+        runtime_print('[LiveEntryMonitor] loop started — waiting for Live_Running strategies')
         while self._running:
             try:
                 await self._loop.run_in_executor(
@@ -235,7 +236,7 @@ class LiveEntryMonitor:
             except Exception as exc:
                 log.exception('[LiveEntryMonitor] loop error: %s', exc)
             await asyncio.sleep(1.0)
-        print('[LiveEntryMonitor] loop exited')
+        runtime_print('[LiveEntryMonitor] loop exited')
 
     # ── Core: check every strategy every second ───────────────────────────────
 
@@ -260,7 +261,7 @@ class LiveEntryMonitor:
         if not trades:
             # Print once every 30s so we know the monitor is alive but idle
             if int(time.monotonic()) % 30 == 0:
-                print(
+                runtime_print(
                     f'[ENTRY MONITOR]  no active live/fast-forward strategies found'
                     f'  ({now_hhmm} IST)'
                 )
@@ -620,9 +621,9 @@ class LiveEntryMonitor:
             with self._lock:
                 self._entered_trade_ids.add(trade_id)
 
-            print(f'[ENTRY SUCCESS]  strategy={strategy_name}  entries={len(entries)}')
+            runtime_print(f'[ENTRY SUCCESS]  strategy={strategy_name}  entries={len(entries)}')
             for e in entries:
-                print(
+                runtime_print(
                     f'  [LEG ENTRY]  leg={e.get("leg_id")}  '
                     f'strike={e.get("strike")}  '
                     f'expiry={e.get("expiry")}  '
@@ -636,7 +637,7 @@ class LiveEntryMonitor:
             self._cache_loaded_at = 0.0
 
         else:
-            print(
+            runtime_print(
                 f'[ENTRY PENDING]  strategy={strategy_name}  '
                 f'no entries taken (price not available / legs already queued)  '
                 f'— will retry next second'
@@ -667,7 +668,7 @@ class LiveEntryMonitor:
         if tokens:
             try:
                 register_user_tokens(_KITE_USER_ID_OPTION, tokens)
-                print(
+                runtime_print(
                     f'[LiveEntryMonitor]  subscribed {len(tokens)} entry token(s) '
                     f'to Kite for live SL/TP monitoring'
                 )
@@ -684,13 +685,13 @@ class LiveEntryMonitor:
         from features.kite_broker_ws import register_user_tokens, is_configured  # type: ignore
 
         if not is_configured():
-            print('[LiveEntryMonitor] Kite not configured — index tokens not subscribed yet')
+            runtime_print('[LiveEntryMonitor] Kite not configured — index tokens not subscribed yet')
             return
 
         tokens = list(INDEX_TOKENS.values())
         try:
             register_user_tokens(_KITE_USER_ID_INDEX, tokens)
-            print(
+            runtime_print(
                 f'[LiveEntryMonitor]  index tokens subscribed: '
                 f'{list(INDEX_TOKENS.keys())}'
             )
@@ -871,14 +872,14 @@ class LiveEntryMonitor:
             self._trades_cache    = trades
             self._cache_loaded_at = time.monotonic()
 
-            print(
+            runtime_print(
                 f'[LiveEntryMonitor]  cache loaded: {len(trades)} active trade(s) '
                 f'(live + fast-forward)  trade_date={trade_date}'
             )
             for t in trades:
                 entry_raw = str(t.get('entry_time') or '')
                 entry_hhmm = entry_raw[11:16] if len(entry_raw) >= 16 else entry_raw[:5]
-                print(
+                runtime_print(
                     f'  [TRADE] strategy={str(t.get("name") or "")}  '
                     f'mode={str(t.get("activation_mode") or "")}  '
                     f'entry_time={entry_hhmm or "-"}'
