@@ -72,3 +72,18 @@ ssh -i "finedgealgo.pem" ec2-user@ec2-13-202-184-58.ap-south-1.compute.amazonaws
 
 
 algotest redirect url - https://algotest.in/confirm_broker/flattrade/69cc8d70340c73617178943d?	
+
+
+
+Command	VITE_WS_BASE_URL	WebSocket
+npm run dev	ws://localhost:8000	ws:// ✅
+npm run dev:live	wss://finedgealgo.com	wss:// ✅
+npm run build	wss://finedgealgo.com	wss:// ✅
+npm run build:local	ws://localhost:8000	ws:// ✅
+npm run build panni deploy pannunga — error 
+
+
+Algotest redirect url
+
+https://algotest.in/confirm_broker/flattrade/69cc8d70340c73617178943d?
+

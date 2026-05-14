@@ -7166,3 +7166,15 @@ async def option_chain_historical_iv(
         db.close()
 
     return data
+
+
+@app.get("/algo/system/status")
+async def system_status():
+    """Check live order status and system configuration."""
+    from features.live_order_manager import _is_live_order_punch_enabled
+    live_order_enabled = _is_live_order_punch_enabled()
+    return {
+        "live_order_status": live_order_enabled,
+        "live_order_status_label": "REAL ORDERS" if live_order_enabled else "SIMULATED ORDERS",
+        "env_LIVE_ORDER_STATUS": os.getenv("LIVE_ORDER_STATUS", "not set"),
+    }

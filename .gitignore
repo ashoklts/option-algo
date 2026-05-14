@@ -9,3 +9,5 @@ __pycache__/
 *.log.*
 logs/
 **/logs/
+backend/logs/app.log
+backend/__pycache__

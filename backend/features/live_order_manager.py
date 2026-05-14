@@ -43,7 +43,11 @@ import os
 import re
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # ── broker_orders collection name ─────────────────────────────────────────────
 _BROKER_ORDERS_COL = 'broker_orders'
