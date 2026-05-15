@@ -3574,7 +3574,7 @@ async def save_broker_configuration(payload: dict):
                 if not fields.get("redirect_url") and not (existing or {}).get("redirect_url"):
                     fields["redirect_url"] = f"{base_url}/broker/flattrade/callback/{doc_id}"
                 if not (existing or {}).get("postback_url"):
-                    fields["postback_url"] = f"{base_url}/algo/broker/flattrade/postback"
+                    fields["postback_url"] = f"{base_url}/algo/broker/flattrade/postback/{doc_id}"
             result = col.update_one({"_id": ObjectId(doc_id)}, {"$set": fields})
             return {"success": True, "action": "updated", "_id": doc_id,
                     "redirect_url": fields.get("redirect_url") or str((existing or {}).get("redirect_url") or ""),
@@ -3587,7 +3587,7 @@ async def save_broker_configuration(payload: dict):
             bname = fields.get("broker_name", "flattrade").lower()
             if "flattrade" in bname:
                 redirect_url = f"{base_url}/broker/flattrade/callback/{new_id}"
-                postback_url = f"{base_url}/algo/broker/flattrade/postback"
+                postback_url = f"{base_url}/algo/broker/flattrade/postback/{new_id}"
                 col.update_one({"_id": result.inserted_id}, {"$set": {
                     "redirect_url": redirect_url,
                     "postback_url": postback_url,
@@ -4797,6 +4797,11 @@ async def kite_get_access_token(broker_doc_id: str):
 
 # ─── FlatTrade postback (order status push) ──────────────────────────────────
 
+@router.get("/broker/flattrade/postback")
+async def flattrade_postback_get():
+    return {"stat": "Ok"}
+
+
 @router.post("/broker/flattrade/postback")
 async def flattrade_postback(request: Request):
     """
@@ -4890,12 +4895,18 @@ async def flattrade_postback(request: Request):
     return {"stat": "Ok"}
 
 
-@app.post("/broker/flattrade/postback/{broker_doc_id}")
+@router.get("/broker/flattrade/postback/{broker_doc_id}")
+async def flattrade_postback_dynamic_get(broker_doc_id: str):
+    """GET handler so FlatTrade URL validation passes (they ping the URL before saving)."""
+    return {"stat": "Ok", "broker": broker_doc_id}
+
+
+@router.post("/broker/flattrade/postback/{broker_doc_id}")
 async def flattrade_postback_dynamic(request: Request, broker_doc_id: str):
     """
-    Dynamic per-broker postback: /broker/flattrade/postback/{broker_doc_id}
-    Identical to the generic postback but logs broker_doc_id for traceability.
-    Set this as Order Notification URL in FlatTrade developer console.
+    Dynamic postback per broker account.
+    URL: https://finedgealgo.com/algo/broker/flattrade/postback/{broker_doc_id}
+    FlatTrade sends order updates here (fill / reject / cancel).
     """
     from features.live_order_manager import process_broker_order_update
 
@@ -4905,9 +4916,8 @@ async def flattrade_postback_dynamic(request: Request, broker_doc_id: str):
         body_str   = body_bytes.decode("utf-8", errors="replace")
         if body_str.startswith("jData="):
             import urllib.parse
-            parsed    = urllib.parse.parse_qs(body_str)
-            jdata_str = (parsed.get("jData") or ["{}"])[0]
-            data      = json.loads(jdata_str)
+            jdata_str = (urllib.parse.parse_qs(body_str).get("jData") or ["{}"])[0]
+            data = json.loads(jdata_str)
         else:
             data = json.loads(body_str) if body_str.strip() else {}
     except Exception as exc:
@@ -4919,11 +4929,10 @@ async def flattrade_postback_dynamic(request: Request, broker_doc_id: str):
     fill_price = float(data.get("avgprc")   or data.get("flprc") or 0)
     fill_qty   = int(data.get("fillshares") or 0)
     rej_reason = str(data.get("rejreason")  or "").lower()
+    uid        = str(data.get("uid")        or "").strip()
 
-    log.info(
-        "[POSTBACK/%s] order_id=%s status=%s fill=%.2f qty=%d",
-        broker_doc_id, order_id, status_raw, fill_price, fill_qty,
-    )
+    log.info("[POSTBACK/%s] uid=%s order_id=%s status=%s fill=%.2f qty=%d",
+             broker_doc_id, uid or "-", order_id, status_raw, fill_price, fill_qty)
 
     if not order_id:
         return {"stat": "Ok"}
@@ -4933,15 +4942,13 @@ async def flattrade_postback_dynamic(request: Request, broker_doc_id: str):
         "CANCELLED": "CANCELLED", "OPEN": "OPEN", "TRIGGER_PENDING": "OPEN",
     }
     status = _status_map.get(status_raw, status_raw)
-
     if status not in ("COMPLETE", "REJECTED", "CANCELLED"):
         return {"stat": "Ok"}
 
     local_db = MongoData()
     try:
         process_broker_order_update(
-            local_db,
-            order_id=order_id, status=status,
+            local_db, order_id=order_id, status=status,
             fill_price=fill_price, fill_qty=fill_qty,
             rejection_reason=rej_reason, source="postback",
         )
