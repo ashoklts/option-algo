@@ -553,10 +553,13 @@ def _place_initial_protection_orders(
     leg_for_order = dict(leg)
     leg_for_order['id'] = leg_id
     if sl_price > 0:
+        # SL-LMT: limit price is 5% beyond trigger so order fills even with slippage
+        # SELL exit (close long): limit below trigger;  BUY exit (close short): limit above
+        sl_limit_price = round(sl_price * (0.95 if is_sell else 1.05), 2)
         result = place_live_exit_order(
             db, trade, leg_for_order, leg_cfg, symbol, qty, sl_price, 'stoploss',
-            force_order_type=_ORDER_TYPE_SLM,
-            force_limit_price=0.0,
+            force_order_type=_ORDER_TYPE_SL,
+            force_limit_price=sl_limit_price,
             force_trigger_price=sl_price,
         )
         sl_order_id = str(result.get('order_id') or '').strip()
@@ -1153,11 +1156,15 @@ def place_live_entry_order(
             'product':         product,
             'variety':         _VARIETY_REGULAR,
         }
+        # FlatTrade blocks SL-MKT for API orders — convert to SL-LMT automatically
+        if kite_order_type == _ORDER_TYPE_SLM:
+            kite_order_type = _ORDER_TYPE_SL
+            order_params['order_type'] = _ORDER_TYPE_SL
+            if not limit_price:
+                limit_price = round(trigger_price * (1.05 if txn_type == _TXN_BUY else 0.95), 2)
         if kite_order_type in (_ORDER_TYPE_LIMIT, _ORDER_TYPE_SL):
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
-            order_params['trigger_price'] = trigger_price
-        if kite_order_type == _ORDER_TYPE_SLM:
             order_params['trigger_price'] = trigger_price
 
         same_option_legs = _find_existing_trade_option_conflicts(
@@ -1355,11 +1362,15 @@ def place_live_exit_order(
             'product':          product,
             'variety':          _VARIETY_REGULAR,
         }
+        # FlatTrade blocks SL-MKT for API orders — convert to SL-LMT automatically
+        if kite_order_type == _ORDER_TYPE_SLM:
+            kite_order_type = _ORDER_TYPE_SL
+            order_params['order_type'] = _ORDER_TYPE_SL
+            if not limit_price:
+                limit_price = round(trigger_price * (1.05 if is_buy_order else 0.95), 2)
         if kite_order_type in (_ORDER_TYPE_LIMIT, _ORDER_TYPE_SL):
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
-            order_params['trigger_price'] = trigger_price
-        if kite_order_type == _ORDER_TYPE_SLM:
             order_params['trigger_price'] = trigger_price
 
         if not _is_live_order_punch_enabled():

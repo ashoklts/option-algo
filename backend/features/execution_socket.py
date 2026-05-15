@@ -2945,9 +2945,16 @@ def _queue_live_broker_pending_momentum_entry(
         (not is_sell_pos and target_price > current_price)
         or (is_sell_pos and target_price < current_price)
     )
-    forced_order_type = 'SL-M' if use_stop_order else 'LIMIT'
-    forced_limit_price = 0.0 if use_stop_order else target_price
-    forced_trigger_price = target_price if use_stop_order else 0.0
+    if use_stop_order:
+        # SL-LMT: FlatTrade blocks SL-MKT for API orders
+        # limit price 2% beyond trigger to guarantee fill on momentum burst
+        forced_order_type   = 'SL'
+        forced_trigger_price = target_price
+        forced_limit_price  = round(target_price * (1.02 if not is_sell_pos else 0.98), 2)
+    else:
+        forced_order_type   = 'LIMIT'
+        forced_limit_price  = target_price
+        forced_trigger_price = 0.0
     actual_quantity = lot_config_value
     exchange_ts = now_ts.replace('T', ' ')[:19] if 'T' in now_ts else now_ts[:19]
 
