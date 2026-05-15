@@ -3515,6 +3515,7 @@ async def list_broker_configurations(broker_type: str = ""):
                 "user_id": str(item.get("user_id") or "").strip(),
                 "login_time": str(item.get("login_time") or "").strip(),
                 "redirect_url": str(item.get("redirect_url") or "").strip(),
+                "postback_url": str(item.get("postback_url") or "").strip(),
                 "is_logged_in": has_token,
             })
     except Exception as exc:
@@ -3567,31 +3568,34 @@ async def save_broker_configuration(payload: dict):
         base_url = str(payload.get("base_url") or "https://finedgealgo.com").rstrip("/")
 
         if doc_id:
-            # Auto-generate redirect_url if not provided
-            if not fields.get("redirect_url"):
-                bname = fields.get("broker_name", "")
-                if not bname:
-                    existing = col.find_one({"_id": ObjectId(doc_id)}, {"broker_name": 1})
-                    bname = str((existing or {}).get("broker_name") or "flattrade")
-                if "flattrade" in bname.lower():
+            existing = col.find_one({"_id": ObjectId(doc_id)}, {"broker_name": 1, "redirect_url": 1, "postback_url": 1})
+            bname = fields.get("broker_name") or str((existing or {}).get("broker_name") or "flattrade")
+            if "flattrade" in bname.lower():
+                if not fields.get("redirect_url") and not (existing or {}).get("redirect_url"):
                     fields["redirect_url"] = f"{base_url}/broker/flattrade/callback/{doc_id}"
-            result = col.update_one(
-                {"_id": ObjectId(doc_id)},
-                {"$set": fields},
-            )
-            return {"success": True, "action": "updated", "_id": doc_id, "matched": result.matched_count}
+                if not (existing or {}).get("postback_url"):
+                    fields["postback_url"] = f"{base_url}/broker/flattrade/postback/{doc_id}"
+            result = col.update_one({"_id": ObjectId(doc_id)}, {"$set": fields})
+            return {"success": True, "action": "updated", "_id": doc_id,
+                    "redirect_url": fields.get("redirect_url") or str((existing or {}).get("redirect_url") or ""),
+                    "postback_url": fields.get("postback_url") or str((existing or {}).get("postback_url") or ""),
+                    "matched": result.matched_count}
         else:
             fields["created_at"] = fields["updated_at"]
             result = col.insert_one(fields)
             new_id = str(result.inserted_id)
-            # Auto-generate redirect_url with the new doc id
             bname = fields.get("broker_name", "flattrade").lower()
             if "flattrade" in bname:
                 redirect_url = f"{base_url}/broker/flattrade/callback/{new_id}"
-                col.update_one({"_id": result.inserted_id}, {"$set": {"redirect_url": redirect_url}})
+                postback_url = f"{base_url}/broker/flattrade/postback/{new_id}"
+                col.update_one({"_id": result.inserted_id}, {"$set": {
+                    "redirect_url": redirect_url,
+                    "postback_url": postback_url,
+                }})
             else:
-                redirect_url = ""
-            return {"success": True, "action": "created", "_id": new_id, "redirect_url": redirect_url}
+                redirect_url = postback_url = ""
+            return {"success": True, "action": "created", "_id": new_id,
+                    "redirect_url": redirect_url, "postback_url": postback_url}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
@@ -4875,6 +4879,72 @@ async def flattrade_postback(request: Request):
         )
     except Exception as exc:
         log.error("[FLATTRADE POSTBACK] processing error order_id=%s: %s", order_id, exc)
+    finally:
+        try:
+            local_db.close()
+        except Exception:
+            pass
+
+    return {"stat": "Ok"}
+
+
+@app.post("/broker/flattrade/postback/{broker_doc_id}")
+async def flattrade_postback_dynamic(request: Request, broker_doc_id: str):
+    """
+    Dynamic per-broker postback: /broker/flattrade/postback/{broker_doc_id}
+    Identical to the generic postback but logs broker_doc_id for traceability.
+    Set this as Order Notification URL in FlatTrade developer console.
+    """
+    from features.live_order_manager import process_broker_order_update
+
+    data: dict = {}
+    try:
+        body_bytes = await request.body()
+        body_str   = body_bytes.decode("utf-8", errors="replace")
+        if body_str.startswith("jData="):
+            import urllib.parse
+            parsed    = urllib.parse.parse_qs(body_str)
+            jdata_str = (parsed.get("jData") or ["{}"])[0]
+            data      = json.loads(jdata_str)
+        else:
+            data = json.loads(body_str) if body_str.strip() else {}
+    except Exception as exc:
+        log.warning("[POSTBACK/%s] parse error: %s", broker_doc_id, exc)
+        return {"stat": "Ok"}
+
+    order_id   = str(data.get("norenordno") or "").strip()
+    status_raw = str(data.get("status")     or "").upper()
+    fill_price = float(data.get("avgprc")   or data.get("flprc") or 0)
+    fill_qty   = int(data.get("fillshares") or 0)
+    rej_reason = str(data.get("rejreason")  or "").lower()
+
+    log.info(
+        "[POSTBACK/%s] order_id=%s status=%s fill=%.2f qty=%d",
+        broker_doc_id, order_id, status_raw, fill_price, fill_qty,
+    )
+
+    if not order_id:
+        return {"stat": "Ok"}
+
+    _status_map = {
+        "COMPLETE": "COMPLETE", "REJECTED": "REJECTED",
+        "CANCELLED": "CANCELLED", "OPEN": "OPEN", "TRIGGER_PENDING": "OPEN",
+    }
+    status = _status_map.get(status_raw, status_raw)
+
+    if status not in ("COMPLETE", "REJECTED", "CANCELLED"):
+        return {"stat": "Ok"}
+
+    local_db = MongoData()
+    try:
+        process_broker_order_update(
+            local_db,
+            order_id=order_id, status=status,
+            fill_price=fill_price, fill_qty=fill_qty,
+            rejection_reason=rej_reason, source="postback",
+        )
+    except Exception as exc:
+        log.error("[POSTBACK/%s] error order_id=%s: %s", broker_doc_id, order_id, exc)
     finally:
         try:
             local_db.close()
