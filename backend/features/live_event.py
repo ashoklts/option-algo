@@ -101,15 +101,22 @@ def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
     if not normalized_token or not normalized_token.isdigit():
         return
     try:
-        from features.kite_broker_ws import is_configured, register_user_tokens
-        if not is_configured():
+        from features.live_monitor_socket import _get_active_ticker_manager
+        ticker_manager = _get_active_ticker_manager()
+        if not ticker_manager._ticker or ticker_manager.status != 'running':
             print(
-                f'[LIVE SUBSCRIBE SKIPPED] Kite not configured — '
-                f'token={normalized_token} symbol={symbol or "-"} '
-                f'→ set Kite credentials in kite_market_config for LTP in view'
+                f'[LIVE SUBSCRIBE SKIPPED] ticker not running — '
+                f'token={normalized_token} symbol={symbol or "-"}'
             )
             return
-        register_user_tokens(_LIVE_KITE_OWNER, [int(normalized_token)])
+        if normalized_token in getattr(ticker_manager, 'subscribed_tokens', set()):
+            if symbol:
+                ticker_manager.register_option_token(normalized_token, symbol)
+            return
+        subscribe_token = int(normalized_token)
+        ticker_manager._ticker.subscribe([subscribe_token])
+        ticker_manager._ticker.set_mode(ticker_manager._ticker.MODE_LTP, [subscribe_token])
+        ticker_manager.register_option_token(normalized_token, symbol)
         print(f'[LIVE OPTION SUBSCRIBE] token={normalized_token} symbol={symbol or "-"}')
     except Exception:
         return
