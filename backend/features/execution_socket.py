@@ -2475,7 +2475,9 @@ def _queue_original_legs_if_needed(db: MongoData, trade: dict, now_ts: str) -> t
             {
                 'trade_id': trade_id,
                 'feature': {'$in': ['momentum_pending', 'pending_entry']},
-                'status': 'active',
+                # Include triggered/processing — feature marked triggered means leg was entered.
+                # Checking only 'active' caused duplicate entries (TOCTOU race condition).
+                'status': {'$in': ['active', 'triggered', 'processing']},
             },
             {'leg_id': 1, 'lazy_leg_ref': 1},
         ):
@@ -2852,17 +2854,23 @@ def _queue_pending_entry_feature_status(
         'updated_at': now_ts,
     }
     try:
-        result = feature_col.update_one(
+        # Filter must include triggered/processing — if feature was already entered
+        # (status='triggered'), we must NOT insert a new 'active' feature.
+        # Using only status='active' caused duplicate entries: after first entry the
+        # feature becomes 'triggered', upsert misses it, inserts a new 'active' doc.
+        existing = feature_col.find_one(
             {
                 'trade_id': trade_id,
                 'leg_id': normalized_leg_id,
                 'feature': 'pending_entry',
-                'status': 'active',
+                'status': {'$in': ['active', 'triggered', 'processing']},
             },
-            {'$setOnInsert': doc},
-            upsert=True,
+            {'_id': 1},
         )
-        if not result.upserted_id:
+        if existing:
+            return False  # already queued or already entered
+        result = feature_col.insert_one(doc)
+        if not result.inserted_id:
             return False
         print(
             f'[PENDING ENTRY QUEUED] trade={trade_id} leg={normalized_leg_id} '
