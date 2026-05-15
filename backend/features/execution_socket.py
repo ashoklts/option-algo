@@ -3392,21 +3392,32 @@ def _process_momentum_pending_feature_legs(
                 {'$set': {'expiry_date': expiry, 'strike': strike, 'token': token, 'symbol': symbol}},
             )
 
-        if activation_mode in {'live', 'fast-forward'} and token and str(token).isdigit():
+        # Resolve Kite token for subscription (chain token may be broker-specific)
+        _sub_token = token
+        if activation_mode == 'live' and symbol:
+            try:
+                from features.live_event import resolve_kite_token_for_symbol as _rkt
+                _kt = _rkt(symbol)
+                if _kt:
+                    _sub_token = _kt
+            except Exception:
+                pass
+
+        if activation_mode in {'live', 'fast-forward'} and _sub_token and str(_sub_token).isdigit():
             try:
                 if activation_mode == 'fast-forward':
                     from features.fast_forward_event import _subscribe_option_token
-                    _subscribe_option_token(token, symbol)
+                    _subscribe_option_token(_sub_token, symbol)
                     runtime_print(
                         f'[MOMENTUM TOKEN SUBSCRIBE] mode=fast-forward leg={leg_id} '
-                        f'token={token} symbol={symbol or "-"}'
+                        f'token={_sub_token} symbol={symbol or "-"}'
                     )
                 else:
                     from features.live_event import _subscribe_live_option_token
-                    _subscribe_live_option_token(token, symbol)
+                    _subscribe_live_option_token(_sub_token, symbol)
                     runtime_print(
                         f'[MOMENTUM TOKEN SUBSCRIBE] mode=live leg={leg_id} '
-                        f'token={token} symbol={symbol or "-"}'
+                        f'kite_token={_sub_token} broker_token={token} symbol={symbol or "-"}'
                     )
             except Exception as _sub_exc:
                 log.warning('momentum_pending token subscribe error leg=%s: %s', leg_id, _sub_exc)
@@ -3597,10 +3608,24 @@ def _process_momentum_pending_feature_legs(
             'EntryType': entry_kind,
             'LotConfig': {'Value': lot_config_value},
         }, trade, now_ts, triggered_by, leg_type=leg_type_str)
+        # Resolve Kite instrument token for WebSocket LTP subscription.
+        # Chain token may be broker-specific (FlatTrade); we need Kite's integer token.
+        broker_token = token
+        kite_token = token
+        if symbol and activation_mode in {'live', 'fast-forward'}:
+            try:
+                from features.live_event import resolve_kite_token_for_symbol
+                _kt = resolve_kite_token_for_symbol(symbol)
+                if _kt:
+                    kite_token = _kt
+            except Exception:
+                pass
+
         new_leg.update({
             'strike': strike,
             'expiry_date': _normalize_expiry_datetime(expiry),
-            'token': token,
+            'token': kite_token,
+            'broker_token': broker_token,
             'symbol': symbol,
             'quantity': actual_quantity,
             'lot_size': lot_size,

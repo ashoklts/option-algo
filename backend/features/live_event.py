@@ -72,6 +72,30 @@ def _get_live_spot_price(underlying: str) -> float:
     return _safe_float(_get_live_ltp_map().get(token))
 
 
+def resolve_kite_token_for_symbol(kite_symbol: str) -> str:
+    """
+    Given a Kite-format tradingsymbol (e.g. NIFTY2651923700PE),
+    return the Kite integer instrument_token as a string.
+    Falls back to '' if not found.
+    Used to ensure 'token' field stores Kite token (for WebSocket LTP),
+    not FlatTrade/other broker token.
+    """
+    sym = str(kite_symbol or '').strip()
+    if not sym:
+        return ''
+    try:
+        from features.spot_atm_utils import _load_kite_instruments
+        cache = _load_kite_instruments()
+        for (_name, _exp, _strike, _opt), inst in cache.items():
+            if str(inst.get('symbol') or '').strip() == sym:
+                tok = inst.get('token')
+                if tok:
+                    return str(int(tok))
+    except Exception:
+        pass
+    return ''
+
+
 def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
     normalized_token = str(token or '').strip()
     if not normalized_token or not normalized_token.isdigit():
