@@ -3529,6 +3529,74 @@ async def list_broker_configurations(broker_type: str = ""):
     }
 
 
+@router.post("/broker-configuration/save")
+async def save_broker_configuration(payload: dict):
+    """
+    Create or update a broker configuration.
+    If _id is provided → update. Otherwise → insert new.
+
+    Fields accepted:
+      name, broker_name (flattrade|zerodha), broker_type (live|fast-forward|algo-backtest),
+      api_key, api_secret, redirect_url, broker_icon
+    """
+    from bson import ObjectId
+    from datetime import datetime, timezone
+
+    db = MongoData()
+    try:
+        doc_id  = str(payload.get("_id") or "").strip()
+        allowed = {
+            "name", "broker_name", "broker_type", "broker_icon",
+            "api_key", "api_secret", "redirect_url",
+        }
+        fields: dict = {k: str(v or "").strip() for k, v in payload.items() if k in allowed}
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        # Derive broker_icon from broker_name if not set
+        if not fields.get("broker_icon"):
+            bname = fields.get("broker_name", "").lower()
+            if "flattrade" in bname:
+                fields["broker_icon"] = "flattrade.svg"
+            elif "zerodha" in bname or "kite" in bname:
+                fields["broker_icon"] = "kite-logo.svg"
+
+        col = db._db["broker_configuration"]
+
+        if doc_id:
+            result = col.update_one(
+                {"_id": ObjectId(doc_id)},
+                {"$set": fields},
+            )
+            return {"success": True, "action": "updated", "_id": doc_id, "matched": result.matched_count}
+        else:
+            fields["created_at"] = fields["updated_at"]
+            result = col.insert_one(fields)
+            return {"success": True, "action": "created", "_id": str(result.inserted_id)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+@router.delete("/broker-configuration/{doc_id}")
+async def delete_broker_configuration(doc_id: str):
+    from bson import ObjectId
+    db = MongoData()
+    try:
+        result = db._db["broker_configuration"].delete_one({"_id": ObjectId(doc_id)})
+        return {"success": True, "deleted": result.deleted_count}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 @router.get("/broker-orders")
 async def list_broker_orders(
     trade_id:     str = "",
@@ -4813,12 +4881,25 @@ async def flattrade_login(broker_doc_id: str = ""):
     import secrets
     from urllib.parse import quote
     from features.flattrade_broker import get_login_url as ft_login_url
+    # Read api_key from broker_configuration doc if available
+    ft_api_key = ""
+    if broker_doc_id:
+        try:
+            from bson import ObjectId
+            _bdb = MongoData()
+            _bdoc = _bdb._db["broker_configuration"].find_one(
+                {"_id": ObjectId(broker_doc_id)}, {"api_key": 1}
+            )
+            _bdb.close()
+            ft_api_key = str((_bdoc or {}).get("api_key") or "").strip()
+        except Exception:
+            pass
     session_id = secrets.token_hex(16)
     state = session_id
     if broker_doc_id:
         state = f"{session_id}:{quote(broker_doc_id, safe='')}"
     _flattrade_pending[state] = broker_doc_id
-    login_url = ft_login_url(state=state)
+    login_url = ft_login_url(state=state, api_key=ft_api_key)
     log.info("FlatTrade login started broker_doc_id=%s state=%s", broker_doc_id or "-", state)
     response = RedirectResponse(url=login_url)
     if broker_doc_id:
@@ -4884,8 +4965,24 @@ async def flattrade_redirect(request: Request):
         response.delete_cookie("flattrade_broker_doc_id")
         return response
 
+    # Read api_key/api_secret from broker_configuration if available
+    ft_api_key = ""
+    ft_api_secret = ""
+    if broker_doc_id:
+        try:
+            from bson import ObjectId
+            _bdb2 = MongoData()
+            _bdoc2 = _bdb2._db["broker_configuration"].find_one(
+                {"_id": ObjectId(broker_doc_id)}, {"api_key": 1, "api_secret": 1}
+            )
+            _bdb2.close()
+            ft_api_key    = str((_bdoc2 or {}).get("api_key")    or "").strip()
+            ft_api_secret = str((_bdoc2 or {}).get("api_secret") or "").strip()
+        except Exception:
+            pass
+
     try:
-        session = ft_generate_session(request_code)
+        session = ft_generate_session(request_code, api_key=ft_api_key, api_secret=ft_api_secret)
     except Exception as exc:
         log.exception(
             "FlatTrade token exchange failed state=%s broker_doc_id=%s",

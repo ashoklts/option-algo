@@ -93,10 +93,11 @@ def _to_flattrade_symbol(kite_symbol: str, exchange: str) -> str:
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
-def get_login_url(state: str = "") -> str:
-    if not FLATTRADE_API_KEY:
-        log.error("FlatTrade login URL requested but FLATTRADE_API_KEY is missing")
-    url = f"{_AUTH_URL}?app_key={FLATTRADE_API_KEY}"
+def get_login_url(state: str = "", api_key: str = "") -> str:
+    key = api_key or FLATTRADE_API_KEY
+    if not key:
+        log.error("FlatTrade login URL requested but api_key is missing")
+    url = f"{_AUTH_URL}?app_key={key}"
     if state:
         url += f"&state={state}"
     return url
@@ -124,21 +125,17 @@ def _session_user_id(session: dict) -> str:
     ).strip()
 
 
-def generate_session(request_code: str) -> dict:
+def generate_session(request_code: str, api_key: str = "", api_secret: str = "") -> dict:
     """Exchange request_code for jKey/session token."""
-    if not FLATTRADE_API_KEY or not FLATTRADE_API_SECRET:
-        raise ValueError("FLATTRADE_API_KEY / FLATTRADE_API_SECRET not set in .env")
+    key    = api_key    or FLATTRADE_API_KEY
+    secret = api_secret or FLATTRADE_API_SECRET
+    if not key or not secret:
+        raise ValueError("FlatTrade api_key / api_secret missing (set in broker configuration or .env)")
 
-    checksum = hashlib.sha256(
-        f"{FLATTRADE_API_KEY}{request_code}{FLATTRADE_API_SECRET}".encode()
-    ).hexdigest()
+    checksum = hashlib.sha256(f"{key}{request_code}{secret}".encode()).hexdigest()
     resp = requests.post(
         _TOKEN_URL,
-        json={
-            "api_key":      FLATTRADE_API_KEY,
-            "request_code": request_code,
-            "api_secret":   checksum,
-        },
+        json={"api_key": key, "request_code": request_code, "api_secret": checksum},
         timeout=15,
     )
     resp.raise_for_status()
