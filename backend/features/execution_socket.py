@@ -11248,6 +11248,18 @@ async def update_socket(
                         requested_reason
                         or ('explicit_trigger' if requested_action == 'get-position' else 'subscription')
                     )
+                    # For live: re-subscribe option tokens to Kite WS so a refresh
+                    # triggered by a client message also ensures subscription is current.
+                    if activation_mode == 'live' and subscribe_tokens:
+                        try:
+                            from features.live_event import _subscribe_live_option_token as _resub
+                            for _rst in subscribe_tokens:
+                                _rtok = str(_rst.get('token') or '').strip()
+                                _rsym = str(_rst.get('symbol') or '').strip()
+                                if _rtok and _rtok.isdigit():
+                                    _resub(_rtok, _rsym)
+                        except Exception:
+                            pass
                     await _send_update_message(_build_message(
                         'update',
                         'Open position snapshot refreshed',
