@@ -1196,6 +1196,11 @@ def place_live_entry_order(
             if not limit_price:
                 is_buy = (txn_type == _TXN_BUY)
                 limit_price = _sl_limit_price(trigger_price, is_sell_position=not is_buy)
+        # Ensure all prices are multiples of NFO tick size (0.05)
+        if limit_price > 0:
+            limit_price = _round_to_tick(limit_price, round_up=(txn_type == _TXN_BUY))
+        if trigger_price > 0:
+            trigger_price = _round_to_tick(trigger_price, round_up=(txn_type == _TXN_BUY))
         if kite_order_type in (_ORDER_TYPE_LIMIT, _ORDER_TYPE_SL):
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
@@ -1403,6 +1408,11 @@ def place_live_exit_order(
             if not limit_price:
                 # is_sell = position direction; exit for SELL position is BUY
                 limit_price = _sl_limit_price(trigger_price, is_sell_position=is_sell)
+        # Ensure all prices are multiples of NFO tick size (0.05) — FlatTrade rejects otherwise
+        if limit_price > 0:
+            limit_price = _round_to_tick(limit_price, round_up=(txn_type == _TXN_BUY))
+        if trigger_price > 0:
+            trigger_price = _round_to_tick(trigger_price, round_up=(txn_type == _TXN_BUY))
         if kite_order_type in (_ORDER_TYPE_LIMIT, _ORDER_TYPE_SL):
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
