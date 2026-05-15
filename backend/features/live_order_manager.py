@@ -1700,6 +1700,118 @@ def _get_aggressive_exit_price(broker, exchange: str, symbol: str, txn_type: str
         return 0.05 if txn_type == _TXN_SELL else 9999.0
 
 
+def live_manual_square_off_trade(db, trade: dict) -> dict:
+    """
+    Manual square-off for live mode:
+      1. Cancel all pending ENTRY orders (order_open status)
+      2. Cancel all open EXIT orders (SL + Target broker orders)
+      3. Place aggressive LIMIT exit orders for all filled open positions
+
+    Called from _square_off_trade_like_manual when activation_mode='live'.
+    Returns summary dict.
+    """
+    trade_id  = str(trade.get('_id') or '').strip()
+    if not trade_id:
+        return {}
+
+    now_ts   = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    hist_col = db._db['algo_trade_positions_history']
+    broker   = get_broker_for_trade(db, trade)
+
+    cancelled_entry  = 0
+    cancelled_exit   = 0
+    exit_orders_placed = 0
+
+    # ── 1. Cancel pending ENTRY orders (order_open) ───────────────────────────
+    pending_entry_docs = list(hist_col.find({
+        'trade_id': trade_id,
+        'exit_trade': None,
+        'entry_trade.entry_lifecycle_status': 'order_open',
+        'entry_trade.order_id': {'$nin': ['', None]},
+    }, {'leg_id': 1, 'entry_trade': 1}))
+
+    for doc in pending_entry_docs:
+        order_id = str((doc.get('entry_trade') or {}).get('order_id') or '').strip()
+        leg_id   = str(doc.get('leg_id') or '').strip()
+        if not order_id:
+            continue
+        try:
+            if broker and _is_live_order_punch_enabled():
+                broker.cancel_order(variety=_VARIETY_REGULAR, order_id=order_id)
+            _update_broker_order_status(db, order_id, _ORDER_STATUS_CANCELLED,
+                                        rejection_reason='manual_square_off')
+            hist_col.update_one(
+                {'_id': doc['_id']},
+                {'$set': {'entry_trade.entry_lifecycle_status': 'entry_failed',
+                           'entry_trade.rejection_reason': 'manual_square_off'}},
+            )
+            cancelled_entry += 1
+            print(f'[MANUAL SQ] cancelled entry order trade={trade_id} leg={leg_id} order={order_id}')
+        except Exception as exc:
+            log.warning('[MANUAL SQ] cancel entry order failed trade=%s leg=%s: %s', trade_id, leg_id, exc)
+
+    # ── 2. Cancel all open EXIT orders (SL + Target) per leg ─────────────────
+    active_hist_docs = list(hist_col.find({
+        'trade_id': trade_id,
+        'status': 1,
+        'exit_trade': None,
+        'entry_trade.entry_lifecycle_status': 'active',
+    }, {'leg_id': 1, 'symbol': 1, 'quantity': 1, 'position': 1}))
+
+    for hist in active_hist_docs:
+        leg_id = str(hist.get('leg_id') or '').strip()
+        n = cancel_open_exit_orders_for_leg(db, trade, leg_id)
+        cancelled_exit += n
+
+    # ── 3. Place aggressive LIMIT exit orders for filled open positions ───────
+    for hist in active_hist_docs:
+        symbol  = str(hist.get('symbol')   or '').strip()
+        qty     = int(hist.get('quantity') or 0)
+        leg_id  = str(hist.get('leg_id')   or '').strip()
+        if not symbol or qty <= 0 or not broker:
+            continue
+        exchange = _resolve_exchange(symbol, trade, {'id': leg_id})
+        is_sell  = 'sell' in str(hist.get('position') or '').lower()
+        txn_type = _TXN_BUY if is_sell else _TXN_SELL
+        product  = _get_leg_product(trade, leg_id)
+        exit_price = _get_aggressive_exit_price(broker, exchange, symbol, txn_type)
+        if exit_price <= 0:
+            log.warning('[MANUAL SQ] no price for %s leg=%s', symbol, leg_id)
+            continue
+        try:
+            if _is_live_order_punch_enabled():
+                order_id = broker.place_order(
+                    tradingsymbol=symbol,
+                    exchange=exchange,
+                    transaction_type=txn_type,
+                    quantity=qty,
+                    order_type=_ORDER_TYPE_LIMIT,
+                    price=exit_price,
+                    product=product,
+                    variety=_VARIETY_REGULAR,
+                )
+            else:
+                order_id = _build_simulated_live_order_id(trade_id, leg_id, 'manual_sq')
+            print(
+                f'[MANUAL SQ] exit placed trade={trade_id} leg={leg_id} '
+                f'symbol={symbol} txn={txn_type} qty={qty} price={exit_price} order={order_id}'
+            )
+            exit_orders_placed += 1
+        except Exception as exc:
+            log.error('[MANUAL SQ] exit order failed trade=%s leg=%s symbol=%s: %s',
+                      trade_id, leg_id, symbol, exc)
+
+    summary = {
+        'trade_id': trade_id,
+        'cancelled_entry_orders': cancelled_entry,
+        'cancelled_exit_orders': cancelled_exit,
+        'exit_orders_placed': exit_orders_placed,
+        'timestamp': now_ts,
+    }
+    print(f'[MANUAL SQ DONE] {summary}')
+    return summary
+
+
 def _rejection_squareoff_all(db, trade: dict, broker, _now_ts: str, rejected_leg_id: str) -> None:
     """Exit all filled (active) open legs when SquareOffAllLegs=True and an entry is rejected."""
     trade_id = str(trade.get('_id') or '')

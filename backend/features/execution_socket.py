@@ -1590,6 +1590,16 @@ def _square_off_trade_like_manual(
     if not t_id:
         return False
 
+    _mode = str(activation_mode or trade_rec.get('activation_mode') or '').strip()
+
+    # Live mode: cancel open orders + place broker exit orders FIRST
+    if _mode == 'live':
+        try:
+            from features.live_order_manager import live_manual_square_off_trade
+            live_manual_square_off_trade(db, trade_rec)
+        except Exception as _lsq_exc:
+            log.error('[MANUAL SQ LIVE] trade=%s: %s', t_id, _lsq_exc)
+
     chain_col = db._db[OPTION_CHAIN_COLLECTION]
     algo_trades_col = db._db['algo_trades']
     history_col = db._db['algo_trade_positions_history']
