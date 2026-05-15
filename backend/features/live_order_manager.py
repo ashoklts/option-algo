@@ -77,6 +77,32 @@ _ORDER_STATUS_REJECTED = 'REJECTED'
 _ORDER_STATUS_CANCELLED= 'CANCELLED'
 _ORDER_STATUS_TRIGGER_PENDING = 'TRIGGER_PENDING'
 
+_NFO_TICK_SIZE = 0.05  # NSE F&O tick size
+
+
+def _round_to_tick(price: float, tick: float = _NFO_TICK_SIZE, round_up: bool = False) -> float:
+    """Round price to nearest tick size. round_up=True for BUY limit (round up), False for SELL limit (round down)."""
+    import math
+    if tick <= 0 or price <= 0:
+        return round(price, 2)
+    if round_up:
+        return round(math.ceil(price / tick) * tick, 2)
+    return round(math.floor(price / tick) * tick, 2)
+
+
+def _sl_limit_price(trigger: float, is_sell_position: bool, buffer_pct: float = 5.0) -> float:
+    """
+    Compute SL-LMT limit price for a position exit.
+    SELL position (exit=BUY):  limit ABOVE trigger → round UP to tick
+    BUY  position (exit=SELL): limit BELOW trigger → round DOWN to tick
+    """
+    if is_sell_position:
+        raw = trigger * (1 + buffer_pct / 100)
+        return _round_to_tick(raw, round_up=True)
+    else:
+        raw = trigger * (1 - buffer_pct / 100)
+        return _round_to_tick(raw, round_up=False)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -553,9 +579,7 @@ def _place_initial_protection_orders(
     leg_for_order = dict(leg)
     leg_for_order['id'] = leg_id
     if sl_price > 0:
-        # SL-LMT: limit price is 5% beyond trigger so order fills even with slippage
-        # SELL exit (close long): limit below trigger;  BUY exit (close short): limit above
-        sl_limit_price = round(sl_price * (0.95 if is_sell else 1.05), 2)
+        sl_limit_price = _sl_limit_price(sl_price, is_sell_position=is_sell)
         result = place_live_exit_order(
             db, trade, leg_for_order, leg_cfg, symbol, qty, sl_price, 'stoploss',
             force_order_type=_ORDER_TYPE_SL,
@@ -1161,7 +1185,8 @@ def place_live_entry_order(
             kite_order_type = _ORDER_TYPE_SL
             order_params['order_type'] = _ORDER_TYPE_SL
             if not limit_price:
-                limit_price = round(trigger_price * (1.05 if txn_type == _TXN_BUY else 0.95), 2)
+                is_buy = (txn_type == _TXN_BUY)
+                limit_price = _sl_limit_price(trigger_price, is_sell_position=not is_buy)
         if kite_order_type in (_ORDER_TYPE_LIMIT, _ORDER_TYPE_SL):
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:
@@ -1367,7 +1392,8 @@ def place_live_exit_order(
             kite_order_type = _ORDER_TYPE_SL
             order_params['order_type'] = _ORDER_TYPE_SL
             if not limit_price:
-                limit_price = round(trigger_price * (1.05 if is_buy_order else 0.95), 2)
+                # is_sell = position direction; exit for SELL position is BUY
+                limit_price = _sl_limit_price(trigger_price, is_sell_position=is_sell)
         if kite_order_type in (_ORDER_TYPE_LIMIT, _ORDER_TYPE_SL):
             order_params['price'] = limit_price
         if kite_order_type == _ORDER_TYPE_SL:

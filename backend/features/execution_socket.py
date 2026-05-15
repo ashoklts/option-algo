@@ -2947,13 +2947,15 @@ def _queue_live_broker_pending_momentum_entry(
     )
     if use_stop_order:
         # SL-LMT: FlatTrade blocks SL-MKT for API orders
-        # limit price 2% beyond trigger to guarantee fill on momentum burst
-        forced_order_type   = 'SL'
+        # Momentum entry: if BUY entry (price rises), limit above trigger; SELL entry, limit below
+        from features.live_order_manager import _sl_limit_price, _round_to_tick
+        forced_order_type    = 'SL'
         forced_trigger_price = target_price
-        forced_limit_price  = round(target_price * (1.02 if not is_sell_pos else 0.98), 2)
+        # is_sell_pos=True → SELL entry → limit below trigger; False → BUY → limit above
+        forced_limit_price   = _sl_limit_price(target_price, is_sell_position=is_sell_pos, buffer_pct=2.0)
     else:
-        forced_order_type   = 'LIMIT'
-        forced_limit_price  = target_price
+        forced_order_type    = 'LIMIT'
+        forced_limit_price   = _round_to_tick(target_price)
         forced_trigger_price = 0.0
     actual_quantity = lot_config_value
     exchange_ts = now_ts.replace('T', ' ')[:19] if 'T' in now_ts else now_ts[:19]
@@ -8532,7 +8534,7 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
                 _etime_exit_vix: float | None = None
                 try:
                     from features.trading_core import get_vix_at_time as _get_vix_etime  # type: ignore
-                    _v = _get_vix_etime(db, now_ts, market_cache)
+                    _v = _get_vix_etime(db, now_ts, None)
                     _etime_exit_vix = _v if _v > 0 else None
                 except Exception:
                     pass
@@ -8589,7 +8591,7 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
             _live_exit_vix: float | None = None
             try:
                 from features.trading_core import get_vix_at_time as _get_vix_exit  # type: ignore
-                _vix_val = _get_vix_exit(db, now_ts, market_cache)
+                _vix_val = _get_vix_exit(db, now_ts, None)
                 _live_exit_vix = _vix_val if _vix_val > 0 else None
             except Exception:
                 pass
