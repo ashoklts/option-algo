@@ -10785,25 +10785,27 @@ async def execute_orders_socket(
 async def update_socket(
     websocket: WebSocket,
     user_id: str = Query(default=''),
+    activation_mode: str = Query(default=''),
 ):
     await websocket.accept()
     _register_channel_websocket('update', websocket)
     uid = str(user_id or '').strip()
     if uid:
         _register_user_websocket('update', uid, websocket)
+    activation_mode = str(activation_mode or '').strip() or 'algo-backtest'
     await websocket.send_text(_build_message(
         'connection_established',
         'Update websocket connected',
-        {'channel': 'update', 'user_id': uid},
+        {'channel': 'update', 'user_id': uid, 'activation_mode': activation_mode},
     ))
     print(
         '[WS CONNECTED] '
         f'channel=update '
-        f'user_id={uid or "-"}'
+        f'user_id={uid or "-"} '
+        f'activation_mode={activation_mode}'
     )
     db = MongoData()
     trade_date = _today_ist()
-    activation_mode = 'algo-backtest'
     subscription_status = ''
     subscribe_tokens: list[dict] = []
     market_cache: dict | None = None
@@ -11077,6 +11079,28 @@ async def update_socket(
 
     live_tick_task = asyncio.create_task(_live_tick_sender())
     _attach_live_tick_listener()
+
+    # For live/fast-forward: immediately load positions and emit on connect
+    if activation_mode in {'live', 'fast-forward'}:
+        try:
+            refresh_position_snapshot('initial_connect')
+            await websocket.send_text(_build_message(
+                'update',
+                'Open position snapshot (initial)',
+                {
+                    'trade_date': trade_date,
+                    'activation_mode': activation_mode,
+                    'status': subscription_status,
+                    'trigger_reason': 'initial_connect',
+                    'refresh_status': 'completed',
+                    'open_positions': open_positions,
+                    'subscribe_tokens': subscribe_tokens,
+                    'token_market_data': token_market_data,
+                    'count': len(open_positions),
+                },
+            ))
+        except Exception as _init_exc:
+            log.debug('ws/update initial live refresh error: %s', _init_exc)
 
     try:
         while True:
