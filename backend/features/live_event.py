@@ -103,6 +103,11 @@ def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
     try:
         from features.kite_broker_ws import is_configured, register_user_tokens
         if not is_configured():
+            entry_print(
+                f'[LIVE SUBSCRIBE SKIPPED] Kite not configured — '
+                f'token={normalized_token} symbol={symbol or "-"} '
+                f'→ set Kite credentials in kite_market_config for LTP in view'
+            )
             return
         register_user_tokens(_LIVE_KITE_OWNER, [int(normalized_token)])
         entry_print(f'[LIVE OPTION SUBSCRIBE] token={normalized_token} symbol={symbol or "-"}')

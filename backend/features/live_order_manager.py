@@ -574,6 +574,14 @@ def _place_initial_protection_orders(
         sl_price = _safe_float(calc_sl_price(fill_price, is_sell, sl_config))
     tp_price = _safe_float(calc_tp_price(fill_price, is_sell, tp_config)) if tp_config else 0.0
 
+    # Round trigger prices to NFO tick size (0.05) — FlatTrade rejects non-multiples
+    # SELL position SL (trigger on price rise) → round UP; BUY position → round DOWN
+    if sl_price > 0:
+        sl_price = _round_to_tick(sl_price, round_up=is_sell)
+    if tp_price > 0:
+        # Target: SELL position exits when price falls → round DOWN; BUY → round UP
+        tp_price = _round_to_tick(tp_price, round_up=not is_sell)
+
     sl_order_id = ''
     tgt_order_id = ''
     leg_for_order = dict(leg)
@@ -588,10 +596,11 @@ def _place_initial_protection_orders(
         )
         sl_order_id = str(result.get('order_id') or '').strip()
     if tp_price > 0:
+        tp_price_ticked = _round_to_tick(tp_price, round_up=not is_sell)
         result = place_live_exit_order(
-            db, trade, leg_for_order, leg_cfg, symbol, qty, tp_price, 'target',
+            db, trade, leg_for_order, leg_cfg, symbol, qty, tp_price_ticked, 'target',
             force_order_type=_ORDER_TYPE_LIMIT,
-            force_limit_price=tp_price,
+            force_limit_price=tp_price_ticked,
             force_trigger_price=0.0,
         )
         tgt_order_id = str(result.get('order_id') or '').strip()
