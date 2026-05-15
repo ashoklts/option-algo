@@ -2974,7 +2974,7 @@ def _queue_live_broker_pending_momentum_entry(
         forced_order_type    = 'LIMIT'
         forced_limit_price   = _round_to_tick(target_price)
         forced_trigger_price = 0.0
-    actual_quantity = lot_config_value
+    actual_quantity = lot_config_value * lot_size
     exchange_ts = now_ts.replace('T', ' ')[:19] if 'T' in now_ts else now_ts[:19]
 
     try:
@@ -3550,6 +3550,39 @@ def _process_momentum_pending_feature_legs(
                         lazy_entry_vix=lazy_entry_vix,
                     )
                 continue
+
+            # ── Live: retry broker SL-L order if arming placement failed ─────────
+            if activation_mode == 'live' and not str(feat_doc.get('broker_order_id') or '').strip():
+                all_leg_configs = _resolve_trade_leg_configs(trade)
+                leg_cfg = all_leg_configs.get(lazy_leg_ref) or all_leg_configs.get(leg_id) or {}
+                is_sell_pos = _is_sell(position_str)
+                sl_config = leg_cfg.get('LegStopLoss') or {}
+                sl_price = calc_sl_price(target_price, is_sell_pos, sl_config)
+                _retry_vix: float | None = None
+                try:
+                    from features.trading_core import get_vix_at_time as _get_vix
+                    _v = _get_vix(db, now_ts, market_cache)
+                    _retry_vix = _v if _v > 0 else None
+                except Exception:
+                    pass
+                queued = _queue_live_broker_pending_momentum_entry(
+                    db, trade, feat_doc,
+                    trade_id=trade_id, leg_id=leg_id, lazy_leg_ref=lazy_leg_ref,
+                    triggered_by=triggered_by, leg_type_str=leg_type_str,
+                    option_type=option_type, position_str=position_str,
+                    expiry_kind=expiry_kind, entry_kind=entry_kind,
+                    strike_param_raw=strike_param_raw, lot_config_value=lot_config_value,
+                    strike=strike, expiry=expiry, token=token, symbol=symbol,
+                    current_price=current_price, target_price=target_price,
+                    base_price=base_price, spot_price=spot_price, sl_price=sl_price,
+                    lot_size=lot_size, leg_cfg=leg_cfg, now_ts=now_ts,
+                    strike_meta=_strike_meta, lazy_chain_iv=_lazy_chain_iv,
+                    lazy_entry_vix=_retry_vix,
+                )
+                if queued:
+                    print(f'[MOMENTUM BROKER ORDER RETRY OK] trade={trade_id} leg={leg_id}')
+                    continue
+                # Placement still failing — fall through to tick-level trigger check
 
             # ── Check if momentum target is reached ───────────────────────────
             if not _is_simple_momentum_triggered(current_price, target_price, momentum_type):
@@ -8504,6 +8537,17 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
 
         past_exit = bool(exit_time_hhmm and now_time >= exit_time_hhmm)
         before_entry = bool(entry_time_hhmm and now_time < entry_time_hhmm)
+
+        # ── Live exit_time: cancel pending orders + broker exit — same as manual squareoff ──
+        if past_exit:
+            try:
+                _square_off_trade_like_manual(db, trade, exit_timestamp=now_ts)
+                _mark_trade_squared_off_at_exit_time(db, trade_id)
+                print(f'[EXIT TIME SQUAREOFF] trade={trade_id} exit_time={exit_time_hhmm}')
+                actions_taken.append(f'{trade_id}: exit_time squareoff')
+            except Exception as _sqoff_exc:
+                log.error('[EXIT TIME SQUAREOFF] trade=%s: %s', trade_id, _sqoff_exc)
+            continue
 
         try:
             lot_size = db.get_lot_size(trade_date, underlying)

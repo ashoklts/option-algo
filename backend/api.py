@@ -3206,17 +3206,13 @@ async def get_group_trade_history(group_id: str, status: str = "algo-backtest"):
 
         raw_trades = list(db._db["algo_trades"].find({
             "portfolio.group_id": normalized_group_id,
-            "activation_mode": normalized_status,
         }))
-        if not raw_trades:
-            raw_trades = list(db._db["algo_trades"].find({
-                "portfolio.group_id": normalized_group_id,
-            }))
         if not raw_trades:
             raise HTTPException(status_code=404, detail="Strategy trade history not found for this group_id")
 
+        # Use actual activation_mode from trade (not query param) so closed/live trades are resolved correctly
         payloads = [
-            _build_trade_history_payload(db._db, raw_trade, normalized_status)
+            _build_trade_history_payload(db._db, raw_trade, str(raw_trade.get("activation_mode") or normalized_status))
             for raw_trade in raw_trades
         ]
         result = _aggregate_group_trade_history_payload(normalized_group_id, normalized_status, payloads)
@@ -3574,7 +3570,7 @@ async def save_broker_configuration(payload: dict):
                 if not fields.get("redirect_url") and not (existing or {}).get("redirect_url"):
                     fields["redirect_url"] = f"{base_url}/broker/flattrade/callback/{doc_id}"
                 if not (existing or {}).get("postback_url"):
-                    fields["postback_url"] = f"{base_url}/broker/flattrade/postback"
+                    fields["postback_url"] = f"{base_url}/broker/flattrade/postback/{doc_id}"
             result = col.update_one({"_id": ObjectId(doc_id)}, {"$set": fields})
             return {"success": True, "action": "updated", "_id": doc_id,
                     "redirect_url": fields.get("redirect_url") or str((existing or {}).get("redirect_url") or ""),
@@ -3587,7 +3583,7 @@ async def save_broker_configuration(payload: dict):
             bname = fields.get("broker_name", "flattrade").lower()
             if "flattrade" in bname:
                 redirect_url = f"{base_url}/broker/flattrade/callback/{new_id}"
-                postback_url = f"{base_url}/broker/flattrade/postback"
+                postback_url = f"{base_url}/broker/flattrade/postback/{new_id}"
                 col.update_one({"_id": result.inserted_id}, {"$set": {
                     "redirect_url": redirect_url,
                     "postback_url": postback_url,
@@ -4947,6 +4943,25 @@ async def flattrade_postback_dynamic(request: Request, broker_doc_id: str):
 
     local_db = MongoData()
     try:
+        # Validate: only process orders that belong to this broker account
+        broker_order = local_db._db["broker_orders"].find_one(
+            {"order_id": order_id},
+            {"trade_id": 1},
+        )
+        if broker_order:
+            trade_id = str(broker_order.get("trade_id") or "").strip()
+            trade = local_db._db["algo_trades"].find_one(
+                {"_id": trade_id},
+                {"broker": 1},
+            )
+            trade_broker = str((trade or {}).get("broker") or "").strip()
+            if trade_broker and trade_broker != broker_doc_id:
+                log.warning(
+                    "[POSTBACK/%s] order_id=%s belongs to broker=%s — skipping",
+                    broker_doc_id, order_id, trade_broker,
+                )
+                return {"stat": "Ok"}
+
         process_broker_order_update(
             local_db, order_id=order_id, status=status,
             fill_price=fill_price, fill_qty=fill_qty,
@@ -4978,6 +4993,18 @@ async def flattrade_postback_validation_get():
 async def flattrade_postback_app_post(request: Request):
     """Fallback POST handler for postback URLs saved without /algo prefix."""
     return await flattrade_postback(request)
+
+
+@app.get("/broker/flattrade/postback/{broker_doc_id}")
+async def flattrade_postback_dynamic_app_get(broker_doc_id: str):
+    """GET handler so FlatTrade URL validation passes for dynamic postback URLs."""
+    return {"stat": "Ok", "broker": broker_doc_id}
+
+
+@app.post("/broker/flattrade/postback/{broker_doc_id}")
+async def flattrade_postback_dynamic_app_post(request: Request, broker_doc_id: str):
+    """Fallback POST handler for dynamic postback URLs saved without /algo prefix."""
+    return await flattrade_postback_dynamic(request, broker_doc_id)
 
 
 @app.get("/broker/flattrade/login")
