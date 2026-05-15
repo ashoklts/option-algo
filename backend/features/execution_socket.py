@@ -11050,6 +11050,12 @@ async def update_socket(
             activation_mode=activation_mode,
             user_id=uid,
         )
+        # live/fast-forward: legs[] stores string history IDs, not full dicts.
+        # _build_open_position_updates skips non-dict legs, so subscribe_tokens
+        # ends up with only spot tokens. Enrich with full leg objects from history
+        # so open_positions and subscribe_tokens are correctly populated.
+        if _is_strict_history_leg_mode(activation_mode):
+            records = _populate_legs_from_history(db, records)
         last_running_trade_records = [dict(record) for record in records if isinstance(record, dict)]
         if _is_algo_backtest_status(subscription_status):
             _print_open_strategy_fetch_flow(
@@ -11142,6 +11148,19 @@ async def update_socket(
                     'count': len(open_positions),
                 },
             ))
+            # Re-subscribe all open position tokens to Kite WS on connect.
+            # Needed when ws/update reconnects after Kite ticker was already running
+            # (token subscriptions from initial leg entry may not cover a new client session).
+            if activation_mode == 'live' and subscribe_tokens:
+                try:
+                    from features.live_event import _subscribe_live_option_token
+                    for _st in subscribe_tokens:
+                        _tok = str(_st.get('token') or '').strip()
+                        _sym = str(_st.get('symbol') or '').strip()
+                        if _tok and _tok.isdigit():
+                            _subscribe_live_option_token(_tok, _sym)
+                except Exception as _sub_exc:
+                    log.debug('ws/update initial kite re-subscribe error: %s', _sub_exc)
         except Exception as _init_exc:
             log.debug('ws/update initial live refresh error: %s', _init_exc)
 
