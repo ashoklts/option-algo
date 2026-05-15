@@ -1775,7 +1775,7 @@ def live_manual_square_off_trade(db, trade: dict) -> dict:
         'status': 1,
         'exit_trade': None,
         'entry_trade.entry_lifecycle_status': 'active',
-    }, {'leg_id': 1, 'symbol': 1, 'quantity': 1, 'position': 1}))
+    }, {'leg_id': 1, 'symbol': 1, 'quantity': 1, 'lot_size': 1, 'position': 1}))
 
     for hist in active_hist_docs:
         leg_id = str(hist.get('leg_id') or '').strip()
@@ -1784,9 +1784,10 @@ def live_manual_square_off_trade(db, trade: dict) -> dict:
 
     # ── 3. Place aggressive LIMIT exit orders for filled open positions ───────
     for hist in active_hist_docs:
-        symbol  = str(hist.get('symbol')   or '').strip()
-        qty     = int(hist.get('quantity') or 0)
-        leg_id  = str(hist.get('leg_id')   or '').strip()
+        symbol    = str(hist.get('symbol')   or '').strip()
+        lot_size  = int(hist.get('lot_size') or 1)
+        qty       = int(hist.get('quantity') or 0) * lot_size
+        leg_id    = str(hist.get('leg_id')   or '').strip()
         if not symbol or qty <= 0 or not broker:
             continue
         exchange = _resolve_exchange(symbol, trade, {'id': leg_id})
