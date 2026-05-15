@@ -332,6 +332,31 @@ class FlatTradeAdapter:
             )
         return str(result.get("result") or order_id)
 
+    # ── positions ────────────────────────────────────────────────────────────
+
+    def positions(self) -> list:
+        """Return net positions as list of Kite-shaped dicts.
+        qty is negative for short (SELL) positions, positive for long (BUY).
+        """
+        result = self._post("PositionBook", {"uid": self.user_id})
+        if not isinstance(result, list):
+            return []
+        out = []
+        for p in result:
+            try:
+                net_qty = int(float(p.get("netqty") or "0"))
+            except (ValueError, TypeError):
+                net_qty = 0
+            out.append({
+                "tradingsymbol": str(p.get("tsym") or ""),
+                "exchange":      str(p.get("exch") or ""),
+                "quantity":      net_qty,
+                "average_price": float(p.get("netavgprc") or 0),
+                "last_price":    float(p.get("lp") or 0),
+                "product":       "MIS" if p.get("prd") == "I" else "NRML",
+            })
+        return out
+
     # ── cancel_order ─────────────────────────────────────────────────────────
 
     def cancel_order(self, variety: str = "regular", order_id: str = "") -> str:
