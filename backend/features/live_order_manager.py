@@ -747,11 +747,32 @@ def _sync_live_exit_fill(
     if not trade:
         return
     cancel_open_exit_orders_for_leg(db, trade, leg_id, keep_reason=exit_reason)
+    now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
     try:
         from features.live_monitor_service import _live_safe_close_leg_in_db
-        _live_safe_close_leg_in_db(db, trade_id, 0, fill_price, exit_reason, datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), leg_id=leg_id)
+        _live_safe_close_leg_in_db(db, trade_id, 0, fill_price, exit_reason, now_ts, leg_id=leg_id)
     except Exception as exc:
         log.error('[LIVE EXIT FILL SYNC] trade=%s leg=%s reason=%s: %s', trade_id, leg_id, exit_reason, exc)
+
+    # Trigger lazy leg / reentry after exit (same as backtest path in execution_socket)
+    try:
+        from features.execution_socket import _handle_reentry
+        from features.position_manager import get_reentry_sl_config, get_reentry_tp_config
+
+        reentry_cfg = None
+        if exit_reason == 'stoploss':
+            reentry_cfg = get_reentry_sl_config(_leg_cfg or {})
+        elif exit_reason == 'target':
+            reentry_cfg = get_reentry_tp_config(_leg_cfg or {})
+
+        if reentry_cfg and _leg_cfg:
+            refreshed_trade = db._db['algo_trades'].find_one({'_id': trade_id}) or trade
+            leg_cfg_with_id = dict(_leg_cfg, id=leg_id)
+            result = _handle_reentry(db, refreshed_trade, leg_cfg_with_id, reentry_cfg, leg_id, now_ts)
+            if result:
+                print(f'[LIVE REENTRY] trade={trade_id} leg={leg_id} reason={exit_reason}: {result}')
+    except Exception as exc:
+        log.error('[LIVE REENTRY] trade=%s leg=%s reason=%s: %s', trade_id, leg_id, exit_reason, exc)
 
 
 def process_broker_order_update(
