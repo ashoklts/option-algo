@@ -796,6 +796,19 @@ def process_broker_order_update(
     if not hist_doc:
         embedded_trade, embedded_leg = _find_pending_live_leg_by_order_id(db, order_id)
         if not embedded_trade or not embedded_leg:
+            # Check if this is an exit order fill (SL-L / target / exit_time etc.)
+            # process_broker_order_update only searches entry_trade.order_id, so exit
+            # order fills via postback fall through here — handle them explicitly so
+            # the counterpart order is cancelled and the leg is closed in DB.
+            if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
+                exit_doc = db._db[_BROKER_ORDERS_COL].find_one({'order_id': order_id, 'order_side': 'exit'})
+                if exit_doc:
+                    _trade_id = str(exit_doc.get('trade_id') or '').strip()
+                    _leg_id   = str(exit_doc.get('leg_id')   or '').strip()
+                    _reason   = str(exit_doc.get('exit_reason') or 'stoploss').strip() or 'stoploss'
+                    if _trade_id and _leg_id:
+                        _sync_live_exit_fill(db, _trade_id, _leg_id, _reason, fill_price)
+                        return True
             return False
 
     # Skip if already processed to avoid double updates
@@ -1480,7 +1493,129 @@ def place_live_exit_order(
 
 # ── Order fill poller ─────────────────────────────────────────────────────────
 
-_poll_lock = threading.Lock()
+_poll_lock     = threading.Lock()
+_pos_sync_lock = threading.Lock()
+
+
+def _broker_net_positions(broker) -> dict[str, int] | None:
+    """
+    Call broker.positions() and return {tradingsymbol: net_qty} map.
+    Returns None if the call fails or broker doesn't support it.
+    For KiteConnect, positions() returns {"net": [...]}; for FlatTradeAdapter it returns a list.
+    """
+    if not hasattr(broker, 'positions'):
+        return None
+    try:
+        raw = broker.positions()
+    except Exception as exc:
+        log.warning('[POSITION SYNC] broker.positions() error: %s', exc)
+        return None
+    # KiteConnect returns {"net": [...], "day": [...]}; FlatTradeAdapter returns a list
+    if isinstance(raw, dict):
+        raw = raw.get('net') or []
+    if not isinstance(raw, list):
+        return None
+    pos_map: dict[str, int] = {}
+    for p in raw:
+        sym = str(p.get('tradingsymbol') or '').strip()
+        if sym:
+            pos_map[sym] = int(p.get('quantity') or 0)
+    return pos_map
+
+
+def sync_open_leg_positions(db) -> int:
+    """
+    Reconcile active open legs against actual broker net positions.
+
+    For each open leg (entry COMPLETE, no exit yet) the system expects a non-zero
+    net qty at the broker.  If the broker shows qty=0 the position was closed
+    externally (manual trade in broker terminal, broker risk-management square-off,
+    etc.).  The affected leg is closed via _sync_live_exit_fill() with
+    exit_kind='broker_sync'.
+
+    Works for any broker that implements positions() — both KiteConnect and
+    FlatTradeAdapter support it after this change.
+
+    Called every ~30 s from live_fast_monitor (every 120 ticks).
+    Returns number of legs closed due to external exit.
+    """
+    if not _pos_sync_lock.acquire(blocking=False):
+        return 0
+    closed = 0
+    try:
+        hist_col   = db._db['algo_trade_positions_history']
+        trades_col = db._db['algo_trades']
+
+        # All active open positions (entry filled, not yet exited)
+        open_docs = list(hist_col.find(
+            {
+                'status': 1,
+                'exit_trade': None,
+                'entry_trade.entry_lifecycle_status': 'active',
+            },
+            {'trade_id': 1, 'leg_id': 1, 'symbol': 1, 'quantity': 1, 'position': 1},
+        ))
+        if not open_docs:
+            return 0
+
+        trade_ids = list({str(d.get('trade_id') or '') for d in open_docs if d.get('trade_id')})
+        trades = {
+            str(t.get('_id') or ''): t
+            for t in trades_col.find(
+                {'_id': {'$in': trade_ids}, 'activation_mode': 'live'},
+                {'_id': 1, 'broker': 1},
+            )
+        }
+
+        # Cache broker positions per broker account (avoid redundant API calls)
+        pos_cache: dict[str, dict[str, int] | None] = {}
+
+        for doc in open_docs:
+            trade_id = str(doc.get('trade_id') or '')
+            leg_id   = str(doc.get('leg_id')   or '')
+            symbol   = str(doc.get('symbol')    or '').strip()
+            if not trade_id or not leg_id or not symbol:
+                continue
+            trade = trades.get(trade_id)
+            if not trade:
+                continue
+
+            broker_id = str(trade.get('broker') or '').strip()
+            cache_key = broker_id or '_default'
+
+            if cache_key not in pos_cache:
+                broker = get_broker_for_trade(db, trade)
+                pos_cache[cache_key] = _broker_net_positions(broker) if broker else None
+
+            pos_map = pos_cache.get(cache_key)
+            if pos_map is None:
+                continue  # Can't reach this broker; skip
+
+            broker_qty = pos_map.get(symbol, 0)  # 0 if symbol absent (= fully closed)
+            expected_abs = int(doc.get('quantity') or 0)
+
+            # Only act when broker confirms position is fully closed (qty=0)
+            # and we still think it's open
+            if broker_qty == 0 and expected_abs > 0:
+                log.info(
+                    '[POSITION SYNC] External close: trade=%s leg=%s symbol=%s qty_expected=%d → closing leg',
+                    trade_id, leg_id, symbol, expected_abs,
+                )
+                print(
+                    f'[POSITION SYNC] External close detected: '
+                    f'trade={trade_id} leg={leg_id} symbol={symbol} → auto-closing'
+                )
+                try:
+                    _sync_live_exit_fill(db, trade_id, leg_id, 'broker_sync', 0.0)
+                    closed += 1
+                except Exception as exc:
+                    log.error('[POSITION SYNC] close failed trade=%s leg=%s: %s', trade_id, leg_id, exc)
+
+    except Exception as exc:
+        log.error('[POSITION SYNC ERROR] %s', exc, exc_info=True)
+    finally:
+        _pos_sync_lock.release()
+    return closed
 
 
 def poll_pending_order_fills(db) -> int:
@@ -1497,15 +1632,14 @@ def poll_pending_order_fills(db) -> int:
         trades_col = db._db['algo_trades']
         pending_legs = _iter_pending_live_entry_orders(db)
 
-        if not pending_legs:
-            return 0
-
         # Group by trade to share Kite instance
         trade_ids = list({str(doc.get('trade_id') or '') for doc in pending_legs if doc.get('trade_id')})
-        trades    = {
-            str(t.get('_id') or ''): t
-            for t in trades_col.find({'_id': {'$in': trade_ids}, 'activation_mode': 'live'})
-        }
+        trades: dict[str, dict] = {}
+        if trade_ids:
+            trades = {
+                str(t.get('_id') or ''): t
+                for t in trades_col.find({'_id': {'$in': trade_ids}, 'activation_mode': 'live'})
+            }
 
         # Fetch kite orders once per unique broker
         broker_orders_cache: dict[str, list[dict]] = {}

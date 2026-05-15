@@ -259,6 +259,14 @@ class _LiveFastMonitorSupervisor:
                                 poll_pending_order_fills(db)
                             except Exception as _pe:
                                 log.debug('[ORDER POLL] error: %s', _pe)
+                        # Position sync every 120 ticks (~30 s) — detects externally
+                        # closed positions (manual exit in broker terminal, etc.)
+                        if _poll_tick % 120 == 0:
+                            try:
+                                from features.live_order_manager import sync_open_leg_positions
+                                sync_open_leg_positions(db)
+                            except Exception as _se:
+                                log.debug('[POSITION SYNC] error: %s', _se)
 
                     fast_forward_records = records_by_mode.get('fast-forward') or []
                     has_quote_trades = False
