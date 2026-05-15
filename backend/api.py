@@ -3574,7 +3574,7 @@ async def save_broker_configuration(payload: dict):
                 if not fields.get("redirect_url") and not (existing or {}).get("redirect_url"):
                     fields["redirect_url"] = f"{base_url}/broker/flattrade/callback/{doc_id}"
                 if not (existing or {}).get("postback_url"):
-                    fields["postback_url"] = f"{base_url}/algo/broker/flattrade/postback/{doc_id}"
+                    fields["postback_url"] = f"{base_url}/broker/flattrade/postback"
             result = col.update_one({"_id": ObjectId(doc_id)}, {"$set": fields})
             return {"success": True, "action": "updated", "_id": doc_id,
                     "redirect_url": fields.get("redirect_url") or str((existing or {}).get("redirect_url") or ""),
@@ -3587,7 +3587,7 @@ async def save_broker_configuration(payload: dict):
             bname = fields.get("broker_name", "flattrade").lower()
             if "flattrade" in bname:
                 redirect_url = f"{base_url}/broker/flattrade/callback/{new_id}"
-                postback_url = f"{base_url}/algo/broker/flattrade/postback/{new_id}"
+                postback_url = f"{base_url}/broker/flattrade/postback"
                 col.update_one({"_id": result.inserted_id}, {"$set": {
                     "redirect_url": redirect_url,
                     "postback_url": postback_url,
@@ -4966,6 +4966,12 @@ async def flattrade_postback_dynamic(request: Request, broker_doc_id: str):
 # ─── FlatTrade broker login ───────────────────────────────────────────────────
 
 _flattrade_pending: dict = {}
+
+
+@app.get("/broker/flattrade/postback")
+async def flattrade_postback_validation_get():
+    """GET handler so FlatTrade URL validation passes."""
+    return {"stat": "Ok"}
 
 
 @app.get("/broker/flattrade/login")
