@@ -4845,12 +4845,28 @@ async def flattrade_redirect(request: Request):
     request_code  = request.query_params.get("code", "").strip()
     error_msg     = request.query_params.get("error", "").strip()
     state         = request.query_params.get("state", "").strip()
+    # FlatTrade passes 'client' (user_id) but NOT 'state' in redirect
+    ft_client_id  = request.query_params.get("client", "").strip()
     broker_doc_id = _flattrade_pending.pop(state, "") or request.query_params.get("broker_doc_id", "").strip()
     if not broker_doc_id and ":" in state:
         from urllib.parse import unquote
         broker_doc_id = unquote(state.rsplit(":", 1)[-1]).strip()
     if not broker_doc_id:
         broker_doc_id = request.cookies.get("flattrade_broker_doc_id", "").strip()
+    # Last resort: find broker_configuration by user_id (client param from FlatTrade)
+    if not broker_doc_id and ft_client_id:
+        try:
+            _lookup_db = MongoData()
+            _doc = _lookup_db._db["broker_configuration"].find_one(
+                {"user_id": ft_client_id},
+                {"_id": 1},
+            )
+            _lookup_db.close()
+            if _doc:
+                broker_doc_id = str(_doc["_id"])
+                log.info("FlatTrade broker_doc_id resolved by client_id=%s → %s", ft_client_id, broker_doc_id)
+        except Exception as _le:
+            log.warning("FlatTrade broker_doc_id lookup by client failed: %s", _le)
 
     if error_msg or not request_code:
         log.error(
