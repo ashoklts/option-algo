@@ -845,6 +845,18 @@ def process_broker_order_update(
             f'[ORDER {status}][{source}] trade={trade_id} leg={leg_id} '
             f'order_id={order_id} reason={rejection_reason or "-"}'
         )
+        # SquareOffAllLegs: exit all filled open legs when any entry is rejected
+        try:
+            trade_doc = trades_col.find_one({'_id': trade_id})
+            if trade_doc and str(trade_doc.get('activation_mode') or '').strip() == 'live':
+                strategy_cfg = trade_doc.get('strategy') or {}
+                sq_all_raw = str(strategy_cfg.get('SquareOffAllLegs') or 'False').strip().lower()
+                if sq_all_raw in ('true', '1', 'yes'):
+                    broker = get_broker_for_trade(db, trade_doc)
+                    if broker:
+                        _rejection_squareoff_all(db, trade_doc, broker, now_ts, leg_id)
+        except Exception as _sq_exc:
+            log.error('[SQUAREOFF ALL LEGS ERROR] trade=%s: %s', trade_id, _sq_exc)
         return True
 
     return False
@@ -1624,8 +1636,79 @@ def _get_leg_product(trade: dict, leg_id: str) -> str:
     return _NRML
 
 
+def _get_aggressive_exit_price(broker, exchange: str, symbol: str, txn_type: str) -> float:
+    """
+    Get aggressive LIMIT price for immediate exit.
+    SELL exit → use bid price (bp1); BUY exit → use ask price (sp1).
+    Falls back to last_price with ±2% buffer if bid/ask unavailable.
+    Used because MARKET orders are blocked for options in FlatTrade.
+    """
+    try:
+        sym_key = f"{exchange}:{symbol}"
+        quotes  = broker.quote([sym_key])
+        q       = quotes.get(sym_key) or {}
+        depth   = q.get('depth') or {}
+        lp      = float(q.get('last_price') or 0)
+        if txn_type == _TXN_SELL:
+            bid = float(((depth.get('buy') or [{}])[0]).get('price') or 0)
+            if bid > 0:
+                return round(bid, 2)
+            return round(lp * 0.95, 2) if lp > 0 else 0.05
+        else:
+            ask = float(((depth.get('sell') or [{}])[0]).get('price') or 0)
+            if ask > 0:
+                return round(ask, 2)
+            return round(lp * 1.05, 2) if lp > 0 else 9999.0
+    except Exception:
+        return 0.05 if txn_type == _TXN_SELL else 9999.0
+
+
+def _rejection_squareoff_all(db, trade: dict, broker, _now_ts: str, rejected_leg_id: str) -> None:
+    """Exit all filled (active) open legs when SquareOffAllLegs=True and an entry is rejected."""
+    trade_id = str(trade.get('_id') or '')
+    hist_col = db._db['algo_trade_positions_history']
+    open_legs = list(hist_col.find(
+        {
+            'trade_id': trade_id,
+            'status': 1,
+            'exit_trade': None,
+            'entry_trade.entry_lifecycle_status': 'active',
+        },
+        {'leg_id': 1, 'symbol': 1, 'quantity': 1, 'position': 1},
+    ))
+    for hist in open_legs:
+        symbol  = str(hist.get('symbol') or '').strip()
+        qty     = int(hist.get('quantity') or 0)
+        leg_id  = str(hist.get('leg_id') or '').strip()
+        if not symbol or qty <= 0:
+            continue
+        exchange = _resolve_exchange(symbol, trade, {'id': leg_id})
+        is_sell  = 'sell' in str(hist.get('position') or '').lower()
+        txn_type = _TXN_BUY if is_sell else _TXN_SELL
+        product  = _get_leg_product(trade, leg_id)
+        exit_price = _get_aggressive_exit_price(broker, exchange, symbol, txn_type)
+        try:
+            order_id = broker.place_order(
+                tradingsymbol=symbol,
+                exchange=exchange,
+                transaction_type=txn_type,
+                quantity=qty,
+                order_type=_ORDER_TYPE_LIMIT,
+                price=exit_price,
+                product=product,
+                variety=_VARIETY_REGULAR,
+            )
+            print(
+                f'[SQUAREOFF ALL LEGS] trade={trade_id} rejected_leg={rejected_leg_id} '
+                f'exiting leg={leg_id} symbol={symbol} txn={txn_type} qty={qty} '
+                f'price={exit_price} order_id={order_id}'
+            )
+        except Exception as exc:
+            log.error('[SQUAREOFF ALL LEGS FAILED] trade=%s leg=%s symbol=%s: %s', trade_id, leg_id, symbol, exc)
+
+
 def _margin_squareoff_trade(db, trade: dict, kite, _now_ts: str) -> None:
-    """Place MARKET exit orders for all open legs when a margin rejection triggers full squareoff."""
+    """Place aggressive LIMIT exit orders for all open legs when a margin rejection triggers full squareoff."""
     trade_id = str(trade.get('_id') or '')
     if str(trade.get('activation_mode') or '').strip() != 'live':
         log.warning('[MARGIN SQUAREOFF] skipped — not live mode trade=%s', trade_id)
@@ -1645,20 +1728,22 @@ def _margin_squareoff_trade(db, trade: dict, kite, _now_ts: str) -> None:
         product  = _get_leg_product(trade, leg_id)
         if not symbol or qty <= 0:
             continue
+        exit_price = _get_aggressive_exit_price(kite, exchange, symbol, txn_type)
         try:
             order_id = kite.place_order(
                 tradingsymbol=symbol,
                 exchange=exchange,
                 transaction_type=txn_type,
                 quantity=qty,
-                order_type=_ORDER_TYPE_MARKET,
+                order_type=_ORDER_TYPE_LIMIT,
+                price=exit_price,
                 product=product,
                 variety=_VARIETY_REGULAR,
             )
             print(
                 f'[MARGIN SQUAREOFF] trade={trade_id} leg={leg_id} '
                 f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
-                f'product={product} order_id={order_id}'
+                f'price={exit_price} product={product} order_id={order_id}'
             )
         except Exception as exc:
             log.error('[MARGIN SQUAREOFF FAILED] trade=%s symbol=%s: %s', trade_id, symbol, exc)

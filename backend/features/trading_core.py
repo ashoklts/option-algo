@@ -3533,10 +3533,10 @@ def process_broker_tick(
         for hdoc in hist_col.find({'trade_id': trade_id}):
             if not isinstance(hdoc.get('entry_trade'), dict) or hdoc.get('exit_trade'):
                 continue
-            # Skip legs where broker order is still pending (not yet filled)
+            # Skip legs where broker order is still pending or was rejected
             # MTM / SL / TP must only run on confirmed filled positions
             _lifecycle = str((hdoc.get('entry_trade') or {}).get('entry_lifecycle_status') or '').strip()
-            if _lifecycle == 'order_open':
+            if _lifecycle in {'order_open', 'entry_failed'}:
                 continue
             h_leg_id = str(hdoc.get('leg_id') or hdoc.get('id') or '')
             if not h_leg_id:
