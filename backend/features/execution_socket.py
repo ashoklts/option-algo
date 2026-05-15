@@ -1136,8 +1136,7 @@ def _dispatch_mode_exit_order(
             )
             return
 
-        if exit_reason not in {'stoploss', 'target'}:
-            cancel_open_exit_orders_for_leg(db, trade, leg_id)
+        cancel_open_exit_orders_for_leg(db, trade, leg_id)
 
         place_live_exit_order(
             db, trade, leg, leg_cfg, symbol, quantity, exit_price, exit_reason
