@@ -3495,6 +3495,7 @@ async def list_broker_configurations(broker_type: str = ""):
                 "login_time": 1,
                 "user_id": 1,
                 "access_token": 1,
+                "redirect_url": 1,
             },
         )
         records = []
@@ -3508,10 +3509,12 @@ async def list_broker_configurations(broker_type: str = ""):
             records.append({
                 "_id": broker_id,
                 "name": _extract_broker_configuration_label(broker_doc, broker_id),
+                "broker_name": str(item.get("broker_name") or "").strip(),
                 "broker_type": str(item.get("broker_type") or "").strip(),
                 "broker_icon": str(item.get("broker_icon") or "").strip(),
                 "user_id": str(item.get("user_id") or "").strip(),
                 "login_time": str(item.get("login_time") or "").strip(),
+                "redirect_url": str(item.get("redirect_url") or "").strip(),
                 "is_logged_in": has_token,
             })
     except Exception as exc:
@@ -3561,8 +3564,17 @@ async def save_broker_configuration(payload: dict):
                 fields["broker_icon"] = "kite-logo.svg"
 
         col = db._db["broker_configuration"]
+        base_url = str(payload.get("base_url") or "https://finedgealgo.com").rstrip("/")
 
         if doc_id:
+            # Auto-generate redirect_url if not provided
+            if not fields.get("redirect_url"):
+                bname = fields.get("broker_name", "")
+                if not bname:
+                    existing = col.find_one({"_id": ObjectId(doc_id)}, {"broker_name": 1})
+                    bname = str((existing or {}).get("broker_name") or "flattrade")
+                if "flattrade" in bname.lower():
+                    fields["redirect_url"] = f"{base_url}/broker/flattrade/callback/{doc_id}"
             result = col.update_one(
                 {"_id": ObjectId(doc_id)},
                 {"$set": fields},
@@ -3571,7 +3583,15 @@ async def save_broker_configuration(payload: dict):
         else:
             fields["created_at"] = fields["updated_at"]
             result = col.insert_one(fields)
-            return {"success": True, "action": "created", "_id": str(result.inserted_id)}
+            new_id = str(result.inserted_id)
+            # Auto-generate redirect_url with the new doc id
+            bname = fields.get("broker_name", "flattrade").lower()
+            if "flattrade" in bname:
+                redirect_url = f"{base_url}/broker/flattrade/callback/{new_id}"
+                col.update_one({"_id": result.inserted_id}, {"$set": {"redirect_url": redirect_url}})
+            else:
+                redirect_url = ""
+            return {"success": True, "action": "created", "_id": new_id, "redirect_url": redirect_url}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
@@ -5029,6 +5049,68 @@ async def flattrade_redirect(request: Request):
     ))
     response.delete_cookie("flattrade_broker_doc_id")
     return response
+
+
+@app.get("/broker/flattrade/callback/{broker_doc_id}", response_class=HTMLResponse)
+async def flattrade_callback(request: Request, broker_doc_id: str):
+    """
+    Dynamic per-broker redirect URL: /broker/flattrade/callback/{broker_doc_id}
+    broker_doc_id is embedded in the path — no state/cookie needed.
+    FlatTrade sends ?code=<code>&client=<user_id> as query params.
+    """
+    from features.flattrade_broker import (
+        _session_token, _session_user_id,
+        generate_session as ft_gen, save_flattrade_session,
+    )
+    request_code = request.query_params.get("code", "").strip()
+    error_msg    = request.query_params.get("error", "").strip()
+
+    if error_msg or not request_code:
+        return HTMLResponse(content=_broker_popup_html(
+            broker="FlatTrade", success=False,
+            message=error_msg or "No request code received",
+        ))
+
+    ft_api_key = ft_api_secret = ""
+    try:
+        from bson import ObjectId
+        _bdb = MongoData()
+        _bdoc = _bdb._db["broker_configuration"].find_one(
+            {"_id": ObjectId(broker_doc_id)}, {"api_key": 1, "api_secret": 1}
+        )
+        _bdb.close()
+        ft_api_key    = str((_bdoc or {}).get("api_key")    or "").strip()
+        ft_api_secret = str((_bdoc or {}).get("api_secret") or "").strip()
+    except Exception:
+        pass
+
+    try:
+        session = ft_gen(request_code, api_key=ft_api_key, api_secret=ft_api_secret)
+    except Exception as exc:
+        log.exception("FlatTrade callback token exchange failed broker_doc_id=%s", broker_doc_id)
+        return HTMLResponse(content=_broker_popup_html(
+            broker="FlatTrade", success=False, message=f"Session error: {exc}",
+        ))
+
+    try:
+        _sdb = MongoData()
+        save_flattrade_session(_sdb._db, broker_doc_id, session)
+        _sdb.close()
+        log.info("FlatTrade callback token saved broker_doc_id=%s", broker_doc_id)
+    except Exception as exc:
+        log.exception("FlatTrade callback DB save failed broker_doc_id=%s", broker_doc_id)
+        return HTMLResponse(content=_broker_popup_html(
+            broker="FlatTrade", success=False,
+            message=f"Token generated but DB save failed: {exc}",
+        ))
+
+    return HTMLResponse(content=_broker_popup_html(
+        broker="FlatTrade", success=True, message="Login successful",
+        access_token=_session_token(session),
+        user_id=_session_user_id(session),
+        user_name=_session_user_id(session),
+        broker_doc_id=broker_doc_id,
+    ))
 
 
 def _broker_popup_html(
