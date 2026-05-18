@@ -948,19 +948,11 @@ def process_broker_order_update(
     leg_id   = str((hist_doc or {}).get('leg_id')   or (embedded_leg or {}).get('id') or '')
 
     if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
-        # Use limit_price (what we sent to broker) as canonical entry price for SL basis.
-        # Check hist_doc first, then embedded_leg (which has limit_price from order placement).
-        stored_limit = (
-            _safe_float((hist_doc or {}).get('entry_trade', {}).get('limit_price'))
-            or _safe_float((embedded_leg or {}).get('entry_trade', {}).get('limit_price'))
-        )
-        sl_basis_price = stored_limit if stored_limit > 0 else fill_price
         if hist_doc:
             hist_col.update_one(
                 {'_id': hist_doc['_id']},
                 {'$set': {
-                    'entry_trade.price':               sl_basis_price,
-                    'entry_trade.avg_fill_price':      fill_price,
+                    'entry_trade.price':               fill_price,
                     'entry_trade.order_status':        _ORDER_STATUS_COMPLETE,
                     'entry_trade.fill_qty':            int(fill_qty),
                     'entry_trade.filled_at':           now_ts,
@@ -973,8 +965,7 @@ def process_broker_order_update(
             {'_id': trade_id},
             {'$set': {
                 'legs.$[elem].last_saw_price':                   fill_price,
-                'legs.$[elem].entry_trade.price':                sl_basis_price,
-                'legs.$[elem].entry_trade.avg_fill_price':       fill_price,
+                'legs.$[elem].entry_trade.price':                fill_price,
                 'legs.$[elem].entry_trade.order_status':         _ORDER_STATUS_COMPLETE,
                 'legs.$[elem].entry_trade.fill_qty':             int(fill_qty),
                 'legs.$[elem].entry_trade.filled_at':            now_ts,
@@ -987,7 +978,7 @@ def process_broker_order_update(
         if not hist_doc:
             _promote_pending_live_leg_to_position_history(db, trade_id, leg_id)
 
-        _place_initial_protection_orders(db, trade_id, leg_id, sl_basis_price, fill_qty)
+        _place_initial_protection_orders(db, trade_id, leg_id, fill_price, fill_qty)
 
         try:
             from features.execution_socket import mark_execute_order_dirty_from_trade_id
@@ -1666,26 +1657,42 @@ def _get_sl_order_id(trade_id: str, leg_id: str) -> str:
 
 def restore_sl_order_registry(db) -> None:
     """
-    On monitor start, reload existing TRIGGER_PENDING SL orders from DB into registry.
-    This ensures trail SL can modify pre-existing broker SL orders after a server restart.
+    On monitor start:
+    1. Reload existing TRIGGER_PENDING SL orders into sl_order_registry (for trail SL modify).
+    2. Reload existing OPEN entry orders into _active_entry_order_ids (so poll detects fills).
     """
-    loaded = 0
+    sl_loaded = entry_loaded = 0
     try:
+        # Restore SL orders
         for hist_doc in db._db['algo_trade_positions_history'].find(
             {'broker_stoploss_order_id': {'$exists': True, '$ne': ''}, 'exit_trade': None},
             {'trade_id': 1, 'leg_id': 1, 'broker_stoploss_order_id': 1},
         ):
-            trade_id  = str(hist_doc.get('trade_id') or '').strip()
-            leg_id    = str(hist_doc.get('leg_id') or '').strip()
-            order_id  = str(hist_doc.get('broker_stoploss_order_id') or '').strip()
+            trade_id = str(hist_doc.get('trade_id') or '').strip()
+            leg_id   = str(hist_doc.get('leg_id') or '').strip()
+            order_id = str(hist_doc.get('broker_stoploss_order_id') or '').strip()
             if trade_id and leg_id and order_id:
-                key = f'{trade_id}:{leg_id}'
                 with _sl_order_registry_lock:
-                    _sl_order_registry[key] = order_id
-                loaded += 1
+                    _sl_order_registry[f'{trade_id}:{leg_id}'] = order_id
+                sl_loaded += 1
+
+        # Restore pending entry orders (order_status=OPEN, not yet filled)
+        for leg_doc in db._db['algo_trade_positions_history'].find(
+            {
+                'entry_trade.order_status': 'OPEN',
+                'entry_trade.entry_lifecycle_status': 'order_open',
+                'exit_trade': None,
+            },
+            {'entry_trade.order_id': 1},
+        ):
+            order_id = str((leg_doc.get('entry_trade') or {}).get('order_id') or '').strip()
+            if order_id:
+                with _active_entry_lock:
+                    _active_entry_order_ids.add(order_id)
+                entry_loaded += 1
     except Exception as exc:
-        log.warning('[SL REGISTRY RESTORE ERROR] %s', exc)
-    print(f'[SL REGISTRY RESTORED] loaded={loaded} entries')
+        log.warning('[REGISTRY RESTORE ERROR] %s', exc)
+    print(f'[REGISTRY RESTORED] sl_orders={sl_loaded} pending_entries={entry_loaded}')
 
 
 def _register_active_entry_order(order_id: str) -> None:
