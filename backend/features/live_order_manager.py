@@ -514,12 +514,9 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
     on the broker so the trigger price reflects the new SL value.
     """
     try:
-        hist_doc = db._db['algo_trade_positions_history'].find_one(
-            {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
-            {'broker_stoploss_order_id': 1},
-        )
-        sl_order_id = str((hist_doc or {}).get('broker_stoploss_order_id') or '').strip()
+        sl_order_id = _get_sl_order_id(trade_id, leg_id)
         if not sl_order_id:
+            print(f'[BROKER SL MODIFY SKIP] trade={trade_id} leg={leg_id} reason=not_in_sl_registry')
             return
 
         trade, leg, _leg_cfg, _hist = _load_trade_and_leg_context(db, trade_id, leg_id)
@@ -649,6 +646,8 @@ def _place_initial_protection_orders(
             force_trigger_price=sl_price,
         )
         sl_order_id = str(result.get('order_id') or '').strip()
+        if sl_order_id:
+            _register_sl_order(trade_id, leg_id, sl_order_id)
     if tp_price > 0:
         tp_price_ticked = _round_to_tick(tp_price, round_up=not is_sell)
         result = place_live_exit_order(
@@ -847,6 +846,11 @@ def process_broker_order_update(
     if status in (_ORDER_STATUS_COMPLETE, _ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
         _deregister_active_entry_order(order_id)
         _deregister_active_exit_order(order_id)
+        # Remove from SL registry if this was a protection SL order
+        with _sl_order_registry_lock:
+            stale_keys = [k for k, v in _sl_order_registry.items() if v == order_id]
+            for k in stale_keys:
+                del _sl_order_registry[k]
 
     # 1. Update broker_orders collection
     _update_broker_order_status(db, order_id, status, fill_price, fill_qty, rejection_reason)
@@ -1571,6 +1575,31 @@ _active_entry_order_ids: set[str] = set()
 _active_exit_order_ids: set[str] = set()
 _active_entry_lock = threading.Lock()
 _active_exit_lock  = threading.Lock()
+
+# SL order registry: maps "trade_id:leg_id" → order_id
+# Populated when protection SL order is placed; used for trail SL modification
+_sl_order_registry: dict[str, str] = {}
+_sl_order_registry_lock = threading.Lock()
+
+
+def _register_sl_order(trade_id: str, leg_id: str, order_id: str) -> None:
+    if trade_id and leg_id and order_id:
+        key = f'{trade_id}:{leg_id}'
+        with _sl_order_registry_lock:
+            _sl_order_registry[key] = order_id
+        print(f'[SL ORDER REGISTERED] trade={trade_id} leg={leg_id} order={order_id}')
+
+
+def _deregister_sl_order(trade_id: str, leg_id: str) -> None:
+    key = f'{trade_id}:{leg_id}'
+    with _sl_order_registry_lock:
+        _sl_order_registry.pop(key, None)
+
+
+def _get_sl_order_id(trade_id: str, leg_id: str) -> str:
+    key = f'{trade_id}:{leg_id}'
+    with _sl_order_registry_lock:
+        return _sl_order_registry.get(key, '')
 
 
 def _register_active_entry_order(order_id: str) -> None:

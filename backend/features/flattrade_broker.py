@@ -338,7 +338,7 @@ class FlatTradeAdapter:
         """Return net positions as list of Kite-shaped dicts.
         qty is negative for short (SELL) positions, positive for long (BUY).
         """
-        result = self._post("PositionBook", {"uid": self.user_id})
+        result = self._post("PositionBook", {"uid": self.user_id, "actid": self.user_id})
         if not isinstance(result, list):
             return []
         out = []
