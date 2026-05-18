@@ -90,7 +90,7 @@ def _round_to_tick(price: float, tick: float = _NFO_TICK_SIZE, round_up: bool = 
     return round(math.floor(price / tick) * tick, 2)
 
 
-def _sl_limit_price(trigger: float, is_sell_position: bool, buffer_pct: float = 5.0) -> float:
+def _sl_limit_price(trigger: float, is_sell_position: bool, buffer_pct: float = 1.0) -> float:
     """
     Compute SL-LMT limit price for a position exit.
     SELL position (exit=BUY):  limit ABOVE trigger → round UP to tick
@@ -528,8 +528,15 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
 
         position_str = str(leg.get('position') or (_hist or {}).get('position') or '')
         is_sell = _is_sell(position_str)
-        new_sl_ticked  = _round_to_tick(new_sl, round_up=is_sell)
-        new_limit_price = _sl_limit_price(new_sl_ticked, is_sell_position=is_sell)
+        new_sl_ticked = _round_to_tick(new_sl, round_up=is_sell)
+
+        exit_cfg      = _resolve_exit_order_config(_leg_cfg or {})
+        lmt_buf       = exit_cfg['limit_buffer']
+        buf_type      = exit_cfg['buffer_type']
+        new_limit_price = _round_to_tick(
+            _apply_buffer(new_sl_ticked, lmt_buf, buf_type, is_buy=is_sell),
+            round_up=is_sell,
+        )
 
         broker = get_broker_for_trade(db, trade)
         if not broker:
@@ -537,8 +544,8 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
 
         broker.modify_order(
             order_id=sl_order_id,
-            order_type=_ORDER_TYPE_SLM,
-            price=0.0,
+            order_type=_ORDER_TYPE_SL,
+            price=new_limit_price,
             trigger_price=new_sl_ticked,
         )
         print(
@@ -628,10 +635,17 @@ def _place_initial_protection_orders(
     leg_for_order = dict(leg)
     leg_for_order['id'] = leg_id
     if sl_price > 0:
+        # Use leg config buffer: TriggerBuffer=0 (exact SL price), LimitBuffer=N points
+        exit_cfg   = _resolve_exit_order_config(leg_cfg)
+        lmt_buf    = exit_cfg['limit_buffer']    # e.g. 3 points
+        buf_type   = exit_cfg['buffer_type']     # 'points' or 'percentage'
+        # For a SELL position exit=BUY: limit above trigger; BUY position: limit below
+        sl_limit   = _apply_buffer(sl_price, lmt_buf, buf_type, is_buy=is_sell)
+        sl_limit   = _round_to_tick(sl_limit, round_up=is_sell)
         result = place_live_exit_order(
             db, trade, leg_for_order, leg_cfg, symbol, qty, sl_price, 'stoploss',
-            force_order_type=_ORDER_TYPE_SLM,
-            force_limit_price=0.0,
+            force_order_type=_ORDER_TYPE_SL,
+            force_limit_price=sl_limit,
             force_trigger_price=sl_price,
         )
         sl_order_id = str(result.get('order_id') or '').strip()
