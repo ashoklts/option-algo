@@ -672,6 +672,14 @@ def _sync_leg_feature_entry_price(
             'updated_at':  now_ts,
         }},
     )
+    # leg_entry: sync the confirmed fill price so UI and downstream logic see the real entry
+    col.update_many(
+        {'leg_id': leg_id, 'feature': 'leg_entry'},
+        {'$set': {
+            'entry_price': entry_price,
+            'updated_at':  now_ts,
+        }},
+    )
     print(
         f'[FEATURE STATUS SYNCED] trade={trade_id} leg={leg_id} '
         f'entry_price={entry_price} sl_trigger={sl_price} tp_trigger={tp_price}'
@@ -690,7 +698,7 @@ def _fetch_broker_avg_price(db, trade: dict, order_id: str) -> float:
             None,
         )
         if matched and str(matched.get('status') or '').upper() == _ORDER_STATUS_COMPLETE:
-            return _safe_float(matched.get('average_price'))
+            return _safe_float(matched.get('price') or matched.get('average_price'))
     except Exception as exc:
         log.warning('[FETCH AVG PRICE] order=%s: %s', order_id, exc)
     return 0.0
@@ -2044,7 +2052,7 @@ def poll_pending_order_fills(db) -> int:
                 continue
 
             status     = str(kite_order.get('status') or '').upper()
-            fill_price = _safe_float(kite_order.get('average_price'))  # actual broker fill price only
+            fill_price = _safe_float(kite_order.get('price') or kite_order.get('average_price'))  # limit price as entry price
             fill_qty   = int(kite_order.get('filled_quantity') or 0)
 
             # ── Debug: print raw broker response for every pending order ─────
