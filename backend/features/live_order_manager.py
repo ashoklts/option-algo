@@ -2044,6 +2044,13 @@ def sync_open_leg_positions(db) -> int:
             symbol   = str(doc.get('symbol')    or '').strip()
             if not trade_id or not leg_id or not symbol:
                 continue
+
+            # Skip legs that have active SL/target exit orders — those are handled
+            # exclusively by the postback URL and order poll. Position sync must not
+            # interfere with broker-placed protection orders.
+            if _get_open_exit_orders_for_leg(db, trade_id, leg_id):
+                continue
+
             trade = trades.get(trade_id)
             if not trade:
                 continue
@@ -2065,16 +2072,37 @@ def sync_open_leg_positions(db) -> int:
             # Only act when broker confirms position is fully closed (qty=0)
             # and we still think it's open
             if broker_qty == 0 and expected_abs > 0:
+                # Check if one of our own exit orders already filled —
+                # if so, use its fill price and reason (stoploss/target) so
+                # the SL order is NOT cancelled (it already executed).
+                sync_exit_price = 0.0
+                sync_exit_reason = 'broker_sync'
+                try:
+                    filled_exit = db._db[_BROKER_ORDERS_COL].find_one(
+                        {
+                            'trade_id': trade_id,
+                            'leg_id':   leg_id,
+                            'order_side': 'exit',
+                            'status':   _ORDER_STATUS_COMPLETE,
+                        },
+                        sort=[('_id', -1)],
+                    )
+                    if filled_exit:
+                        sync_exit_price  = _safe_float(filled_exit.get('fill_price') or 0)
+                        sync_exit_reason = str(filled_exit.get('exit_reason') or 'broker_sync').strip() or 'broker_sync'
+                except Exception:
+                    pass
                 log.info(
-                    '[POSITION SYNC] External close: trade=%s leg=%s symbol=%s qty_expected=%d → closing leg',
-                    trade_id, leg_id, symbol, expected_abs,
+                    '[POSITION SYNC] External close: trade=%s leg=%s symbol=%s qty_expected=%d exit_price=%s reason=%s → closing leg',
+                    trade_id, leg_id, symbol, expected_abs, sync_exit_price or 'unknown', sync_exit_reason,
                 )
                 print(
                     f'[POSITION SYNC] External close detected: '
-                    f'trade={trade_id} leg={leg_id} symbol={symbol} → auto-closing'
+                    f'trade={trade_id} leg={leg_id} symbol={symbol} '
+                    f'exit_price={sync_exit_price or "unknown"} reason={sync_exit_reason} → auto-closing'
                 )
                 try:
-                    _sync_live_exit_fill(db, trade_id, leg_id, 'broker_sync', 0.0)
+                    _sync_live_exit_fill(db, trade_id, leg_id, sync_exit_reason, sync_exit_price)
                     closed += 1
                 except Exception as exc:
                     log.error('[POSITION SYNC] close failed trade=%s leg=%s: %s', trade_id, leg_id, exc)
