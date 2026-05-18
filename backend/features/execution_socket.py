@@ -8914,7 +8914,7 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
                                 log.warning('recost feature status armed error leg=%s: %s', leg_id, _rce)
                 continue  # leg is now closed
 
-            # ── Trail SL moved — rotate feature records ───────────────────
+            # ── Trail SL moved — rotate feature records + modify broker order ──
             if sl_price and sl_price != stored_sl:
                 update_leg_sl_in_db(db, trade_id, leg_index, sl_price, current_price, leg_id=leg_id)
                 if stored_sl and sl_price != stored_sl:
@@ -8932,6 +8932,12 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
                         trail_config=trail_config,
                         timestamp=now_ts,
                     )
+                    # Modify the live broker SL order to reflect the new trail SL price
+                    try:
+                        from features.live_order_manager import modify_broker_sl_order
+                        modify_broker_sl_order(db, trade_id, leg_id, sl_price)
+                    except Exception as _tsl_mod_e:
+                        log.warning('live trail SL broker modify error trade=%s leg=%s: %s', trade_id, leg_id, _tsl_mod_e)
 
             # ── Build position snapshot ────────────────────────────────────
             position_payload = {
