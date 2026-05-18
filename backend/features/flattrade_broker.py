@@ -395,8 +395,12 @@ class FlatTradeAdapter:
                     bp = float(q.get("bp1") or 0)
                     sp = float(q.get("sp1") or 0)
                     lp = float(q.get("lp")  or 0)
+                    uc = float(q.get("uc")  or 0)
+                    lc = float(q.get("lc")  or 0)
                     result[sym_key] = {
-                        "last_price": lp,
+                        "last_price":    lp,
+                        "upper_circuit": uc,
+                        "lower_circuit": lc,
                         "depth": {
                             "buy":  [{"price": bp, "quantity": int(q.get("bq1") or 0)}],
                             "sell": [{"price": sp, "quantity": int(q.get("sq1") or 0)}],

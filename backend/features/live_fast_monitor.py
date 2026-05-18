@@ -157,6 +157,11 @@ class _LiveFastMonitorSupervisor:
         db = MongoData()
         _poll_tick = 0
         try:
+            from features.live_order_manager import restore_sl_order_registry
+            restore_sl_order_registry(db)
+        except Exception as _re:
+            log.warning('[SL REGISTRY RESTORE] error: %s', _re)
+        try:
             while self._running:
                 now_ts = _now_iso()
                 _poll_tick += 1
