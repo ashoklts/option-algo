@@ -3975,10 +3975,12 @@ def trigger_live_exit_followups(
     leg_id: str,
     exit_reason: str,
     now_ts: str,
+    fill_price: float = 0.0,
 ) -> list[str]:
     """
-    For broker-side live exits (postback / poll), immediately queue and evaluate
-    any connected reentry / lazy-leg follow-up instead of waiting for the next loop.
+    Called after broker-side fill is confirmed and leg is locally closed.
+    Order: broker fill → local close → THIS function → lazy leg activation.
+    Handles: feature status updates, reentry/lazy-leg queuing, momentum check.
     """
     normalized_trade_id = str(trade_id or '').strip()
     normalized_leg_id = str(leg_id or '').strip()
@@ -4006,29 +4008,49 @@ def trigger_live_exit_followups(
 
     all_leg_configs = _resolve_trade_leg_configs(trade)
     leg_cfg = _resolve_leg_cfg(normalized_leg_id, live_leg or {}, all_leg_configs)
-    if not leg_cfg:
-        return []
-
-    reentry_cfg = (
-        get_reentry_sl_config(leg_cfg)
-        if normalized_reason == 'stoploss'
-        else get_reentry_tp_config(leg_cfg)
-    )
-    if not reentry_cfg:
-        return []
 
     actions: list[str] = []
-    reentry_result = _handle_reentry(
-        db,
-        trade,
-        dict(leg_cfg, id=normalized_leg_id),
-        reentry_cfg,
-        normalized_leg_id,
-        now_ts,
-    )
-    if reentry_result:
-        actions.append(reentry_result)
 
+    # ── Feature status + notification (SL/TP only) ────────────────────────────
+    if normalized_reason in {'stoploss', 'target'} and live_leg and fill_price > 0:
+        try:
+            from features.notification_manager import (
+                record_sl_hit, record_target_hit,
+                trigger_leg_feature, disable_leg_features,
+            )
+            if normalized_reason == 'stoploss':
+                sl_price = _safe_float(live_leg.get('current_sl_price') or live_leg.get('initial_sl_value'))
+                record_sl_hit(db._db, trade, live_leg, now_ts, fill_price, sl_price or 0.0)
+                trigger_leg_feature(db._db, normalized_trade_id, normalized_leg_id, 'sl', fill_price, now_ts)
+                disable_leg_features(db._db, normalized_trade_id, normalized_leg_id, except_feature='sl', reason='sl_triggered', timestamp=now_ts)
+            else:
+                tp_price = _safe_float(live_leg.get('current_tp_price') or live_leg.get('tp_price'))
+                record_target_hit(db._db, trade, live_leg, now_ts, fill_price, tp_price or 0.0)
+                trigger_leg_feature(db._db, normalized_trade_id, normalized_leg_id, 'target', fill_price, now_ts)
+                disable_leg_features(db._db, normalized_trade_id, normalized_leg_id, except_feature='target', reason='target_triggered', timestamp=now_ts)
+        except Exception as _nf_exc:
+            log.warning('trigger_live_exit_followups notification error trade=%s leg=%s: %s', normalized_trade_id, normalized_leg_id, _nf_exc)
+
+    # ── Reentry / lazy-leg queuing (SL/TP only) ───────────────────────────────
+    if normalized_reason in {'stoploss', 'target'} and leg_cfg:
+        reentry_cfg = (
+            get_reentry_sl_config(leg_cfg)
+            if normalized_reason == 'stoploss'
+            else get_reentry_tp_config(leg_cfg)
+        )
+        if reentry_cfg:
+            reentry_result = _handle_reentry(
+                db,
+                trade,
+                dict(leg_cfg, id=normalized_leg_id),
+                reentry_cfg,
+                normalized_leg_id,
+                now_ts,
+            )
+            if reentry_result:
+                actions.append(reentry_result)
+
+    # ── Momentum pending leg check (always — lazy legs may be waiting) ─────────
     refreshed_trade = db._db['algo_trades'].find_one({'_id': normalized_trade_id}) or trade
     underlying = str(
         refreshed_trade.get('ticker')
@@ -8721,27 +8743,39 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
                     _exit_time_chain_doc = get_latest_chain_doc(chain_col, underlying, expiry_date, strike, option_type, trade_date)
                     exit_price = _safe_float(_exit_time_chain_doc.get('close'), leg.get('last_saw_price', 0.0))
 
-                _etime_exit_iv  = _safe_float(_exit_time_chain_doc.get('iv')) or None
-                _etime_exit_vix: float | None = None
-                try:
-                    from features.trading_core import get_vix_at_time as _get_vix_etime  # type: ignore
-                    _v = _get_vix_etime(db, now_ts, None)
-                    _etime_exit_vix = _v if _v > 0 else None
-                except Exception:
-                    pass
-
                 print(
                     f'[EXIT TIME] trade={trade_id} leg={leg_id} token={leg_token} '
                     f'exit_price={exit_price} exit_time={exit_time_hhmm} now={now_time}'
                 )
-                close_leg_in_db(db, trade_id, leg_index, exit_price, 'exit_time', now_ts, leg_id=leg_id, activation_mode='live', exit_iv=_etime_exit_iv, exit_vix=_etime_exit_vix)
-                actions_taken.append(f'{trade_id}/{leg_id}: force-exit at {exit_price} (exit_time)')
+                # Live mode: place broker exit order — do NOT close locally.
+                # Close only when broker fill postback arrives → _sync_live_exit_fill.
                 try:
-                    from features.notification_manager import record_force_exit, disable_leg_features
-                    record_force_exit(db._db, trade, leg, now_ts, exit_price, exit_reason='exit_time')
-                    disable_leg_features(db._db, trade_id, leg_id, reason='force_exit', timestamp=now_ts)
-                except Exception as _nfe:
-                    log.warning('notification force_exit error: %s', _nfe)
+                    from features.live_order_manager import (
+                        _get_open_exit_orders_for_leg as _get_etime_orders,
+                        cancel_open_exit_orders_for_leg as _cancel_etime_orders,
+                        place_live_exit_order as _place_etime_order,
+                    )
+                    if _get_etime_orders(db, trade_id, leg_id):
+                        print(f'[EXIT TIME SKIP] trade={trade_id} leg={leg_id} broker_exit_order_already_open')
+                    else:
+                        _etime_symbol = str(leg.get('symbol') or '')
+                        _etime_qty = int(leg.get('quantity') or 0)
+                        _leg_for_etime = dict(leg)
+                        _leg_for_etime['id'] = leg_id
+                        _cancel_etime_orders(db, trade, leg_id, cancel_reason='exit_time_replace')
+                        _place_etime_order(
+                            db, trade, _leg_for_etime, leg_cfg,
+                            _etime_symbol, _etime_qty, exit_price, 'exit_time',
+                        )
+                        actions_taken.append(f'{trade_id}/{leg_id}: exit_time broker order placed @ {exit_price}')
+                        try:
+                            from features.notification_manager import record_force_exit, disable_leg_features
+                            record_force_exit(db._db, trade, leg, now_ts, exit_price, exit_reason='exit_time')
+                            disable_leg_features(db._db, trade_id, leg_id, reason='force_exit', timestamp=now_ts)
+                        except Exception as _nfe:
+                            log.warning('notification force_exit error: %s', _nfe)
+                except Exception as _etime_exc:
+                    log.error('[EXIT TIME] broker order error trade=%s leg=%s: %s', trade_id, leg_id, _etime_exc)
                 continue
 
             # ── Skip pending legs before entry_time ───────────────────────
@@ -8841,6 +8875,16 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
             # ── SL hit ────────────────────────────────────────────────────
             if is_sl_hit(current_price, sl_price, is_sell_pos):
                 _sl_exit_price = current_price if _is_market_order(leg_cfg, 'exit') else sl_price
+                try:
+                    from features.live_order_manager import has_open_exit_order as _has_sl_order
+                    if _has_sl_order(db, trade_id, leg_id, 'stoploss'):
+                        print(
+                            f'[LIVE SL SKIP LOCAL CLOSE] trade={trade_id} leg={leg_id} '
+                            f'ltp={current_price} sl={sl_price} broker_order_pending'
+                        )
+                        continue
+                except Exception:
+                    pass
                 close_leg_in_db(db, trade_id, leg_index, _sl_exit_price, 'stoploss', now_ts, leg_id=leg_id, activation_mode='live', exit_iv=_live_exit_iv, exit_vix=_live_exit_vix)
                 actions_taken.append(f'{trade_id}/{leg_id}: SL hit @ {_sl_exit_price} (ltp={current_price})')
                 record_sl_hit(db._db, trade, leg, now_ts, _sl_exit_price, sl_price or 0.0)
@@ -8879,6 +8923,16 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
             # ── TP hit ────────────────────────────────────────────────────
             if is_tp_hit(current_price, tp_price, is_sell_pos):
                 _tp_exit_price = current_price if _is_market_order(leg_cfg, 'exit') else tp_price
+                try:
+                    from features.live_order_manager import has_open_exit_order as _has_tp_order
+                    if _has_tp_order(db, trade_id, leg_id, 'target'):
+                        print(
+                            f'[LIVE TP SKIP LOCAL CLOSE] trade={trade_id} leg={leg_id} '
+                            f'ltp={current_price} tp={tp_price} broker_order_pending'
+                        )
+                        continue
+                except Exception:
+                    pass
                 close_leg_in_db(db, trade_id, leg_index, _tp_exit_price, 'target', now_ts, leg_id=leg_id, activation_mode='live', exit_iv=_live_exit_iv, exit_vix=_live_exit_vix)
                 actions_taken.append(f'{trade_id}/{leg_id}: TP hit @ {_tp_exit_price} (ltp={current_price})')
                 record_target_hit(db._db, trade, leg, now_ts, _tp_exit_price, tp_price or 0.0)
@@ -9009,15 +9063,17 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
             open_leg_ids = {p['leg_id'] for p in (trade_strat_entry or {}).get('open_positions', [])}
 
             def _close_remaining_open_legs(exit_reason: str) -> None:
+                from features.live_order_manager import (
+                    _get_open_exit_orders_for_leg as _get_rem_orders,
+                    cancel_open_exit_orders_for_leg as _cancel_rem_orders,
+                    place_live_exit_order as _place_rem_order,
+                )
                 for _leg in legs:
                     if str(_leg.get('id') or '') not in open_leg_ids:
                         continue
                     if int(_leg.get('status') or 0) != OPEN_LEG_STATUS:
                         continue
                     _leg_id = str(_leg.get('id') or '')
-                    _leg_idx = next(
-                        (i for i, l in enumerate(legs) if str(l.get('id') or '') == _leg_id), 0
-                    )
                     _cdoc = get_latest_chain_doc(
                         chain_col, underlying,
                         str(_leg.get('expiry_date') or ''),
@@ -9026,7 +9082,22 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
                         trade_date,
                     )
                     _ep = _safe_float(_cdoc.get('close'), _leg.get('last_saw_price', 0.0))
-                    close_leg_in_db(db, trade_id, _leg_idx, _ep, exit_reason, now_ts, leg_id=_leg_id, activation_mode='live')
+                    # Live mode: place broker exit order — do NOT close locally.
+                    if _get_rem_orders(db, trade_id, _leg_id):
+                        print(f'[CLOSE REMAINING SKIP] trade={trade_id} leg={_leg_id} reason={exit_reason} broker_exit_order_already_open')
+                        continue
+                    _leg_cfg_rem = _resolve_leg_cfg(_leg_id, _leg, all_leg_configs)
+                    _leg_for_rem = dict(_leg)
+                    _leg_for_rem['id'] = _leg_id
+                    _cancel_rem_orders(db, trade, _leg_id, cancel_reason=f'{exit_reason}_replace')
+                    try:
+                        _place_rem_order(
+                            db, trade, _leg_for_rem, _leg_cfg_rem,
+                            str(_leg.get('symbol') or ''), int(_leg.get('quantity') or 0),
+                            _ep, exit_reason,
+                        )
+                    except Exception as _place_exc:
+                        log.error('[CLOSE REMAINING] broker order error trade=%s leg=%s reason=%s: %s', trade_id, _leg_id, exit_reason, _place_exc)
                     try:
                         from features.notification_manager import record_force_exit, disable_leg_features
                         record_force_exit(db._db, trade, _leg, now_ts, _ep, exit_reason=exit_reason)
