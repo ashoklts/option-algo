@@ -7596,7 +7596,7 @@ async def mock_start(time: str = Query(default="")):
     return HTMLResponse(content=_MOCK_CONTROL_HTML)
 
 
-@router.get("/get_active_tokens/{instrument}")
+@app.get("/algo/get_active_tokens/{instrument}")
 async def get_active_tokens(instrument: str):
     return _sync_active_option_tokens(instrument)
 
