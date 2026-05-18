@@ -807,13 +807,14 @@ def _sync_live_exit_fill(
     except Exception as exc:
         log.error('[LIVE EXIT FILL SYNC] trade=%s leg=%s reason=%s: %s', trade_id, leg_id, exit_reason, exc)
 
-    # broker_sync = broker filled this leg's SL order independently.
-    # Other legs have their own SL orders on broker — do NOT touch them.
-    if exit_reason == 'broker_sync':
-        print(f'[BROKER EXIT SQUAREOFF SKIP] trade={trade_id} leg={leg_id} reason=broker_sync other_legs_independent')
+    # These reasons mean a pre-placed broker order filled for THIS leg only.
+    # Other legs have their own independent SL/Target orders — do NOT touch them.
+    _independent_reasons = ('broker_sync', 'stoploss', 'target')
+    if exit_reason in _independent_reasons:
+        print(f'[BROKER EXIT SQUAREOFF SKIP] trade={trade_id} leg={leg_id} reason={exit_reason} other_legs_independent')
         return
 
-    # For other exit reasons (manual, stoploss, target etc.) — exit remaining legs too.
+    # Only for explicit all-legs-exit reasons (overall_sl, exit_time, squared_off, manual)
     try:
         refreshed_trade = db._db['algo_trades'].find_one({'_id': trade_id}) or trade
         live_manual_square_off_trade(db, refreshed_trade)
@@ -1840,7 +1841,7 @@ def poll_pending_order_fills(db) -> int:
                 continue
 
             status     = str(kite_order.get('status') or '').upper()
-            fill_price = _safe_float(kite_order.get('average_price') or kite_order.get('price'))
+            fill_price = _safe_float(kite_order.get('average_price'))  # actual broker fill price only
             fill_qty   = int(kite_order.get('filled_quantity') or 0)
 
             if status == _ORDER_STATUS_TRIGGER_PENDING:
