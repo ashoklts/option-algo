@@ -631,6 +631,53 @@ def _recalc_sl_for_actual_fill(db, trade_id: str, leg_id: str, actual_fill: floa
         log.warning('[SL RECALC ERROR] trade=%s leg=%s: %s', trade_id, leg_id, exc)
 
 
+def _sync_leg_feature_entry_price(
+    db, trade_id: str, leg_id: str, entry_price: float, sl_price: float, tp_price: float,
+) -> None:
+    """
+    Update algo_leg_feature_status rows with the actual fill price (avg_price from broker).
+    Called after fill is verified — updates entry_price and recalculated trigger prices
+    so UI display and trail SL logic use the correct fill price, not the original limit_price.
+    Only updates rows that are still 'pending' (not yet triggered/disabled).
+    """
+    now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    col    = db._db['algo_leg_feature_status']
+    query  = {'trade_id': trade_id, 'leg_id': leg_id, 'status': 'pending'}
+
+    if sl_price > 0:
+        col.update_many(
+            {**query, 'feature': 'sl'},
+            {'$set': {
+                'entry_price':      entry_price,
+                'trigger_price':    sl_price,
+                'current_sl_price': sl_price,
+                'initial_sl_price': sl_price,
+                'updated_at':       now_ts,
+            }},
+        )
+    if tp_price > 0:
+        col.update_many(
+            {**query, 'feature': 'target'},
+            {'$set': {
+                'entry_price':   entry_price,
+                'trigger_price': tp_price,
+                'updated_at':    now_ts,
+            }},
+        )
+    # trail_sl: update entry_price only — current_sl_price follows the sl row
+    col.update_many(
+        {**query, 'feature': {'$in': ['trail_sl', 'trailing_sl']}},
+        {'$set': {
+            'entry_price': entry_price,
+            'updated_at':  now_ts,
+        }},
+    )
+    print(
+        f'[FEATURE STATUS SYNCED] trade={trade_id} leg={leg_id} '
+        f'entry_price={entry_price} sl_trigger={sl_price} tp_trigger={tp_price}'
+    )
+
+
 def _fetch_broker_avg_price(db, trade: dict, order_id: str) -> float:
     """Fetch actual avg_price from broker for a completed order_id."""
     try:
@@ -748,6 +795,11 @@ def _place_initial_protection_orders(
     if tp_price > 0:
         # Target: SELL position exits when price falls → round DOWN; BUY → round UP
         tp_price = _round_to_tick(tp_price, round_up=not is_sell)
+
+    # Update algo_leg_feature_status with the correct fill price and recalculated SL/TP.
+    # These rows were created at order placement using limit_price (OPEN status).
+    # SL calculation uses fill_price from algo_trade_positions_history (not from this table).
+    _sync_leg_feature_entry_price(db, trade_id, leg_id, fill_price, sl_price, tp_price)
 
     sl_order_id = ''
     tgt_order_id = ''
@@ -1985,11 +2037,25 @@ def poll_pending_order_fills(db) -> int:
             kite_order  = next((o for o in orders_list if str(o.get('order_id') or '') == order_id), None)
 
             if not kite_order:
+                print(
+                    f'[ORDER POLL] order_id={order_id} trade={trade_id} leg={leg_id} '
+                    f'NOT FOUND in broker order book (total_orders={len(orders_list)})'
+                )
                 continue
 
             status     = str(kite_order.get('status') or '').upper()
             fill_price = _safe_float(kite_order.get('average_price'))  # actual broker fill price only
             fill_qty   = int(kite_order.get('filled_quantity') or 0)
+
+            # ── Debug: print raw broker response for every pending order ─────
+            print(
+                f'[ORDER POLL SYNC] order_id={order_id} trade={trade_id} leg={leg_id} '
+                f'broker_status={status} avg_price={fill_price} '
+                f'filled_qty={fill_qty} '
+                f'raw_avgprc={kite_order.get("average_price")} '
+                f'raw_price={kite_order.get("price")} '
+                f'raw_status={kite_order.get("status")}'
+            )
 
             if status == _ORDER_STATUS_TRIGGER_PENDING:
                 # SL order waiting for trigger — do not modify or convert
