@@ -62,6 +62,7 @@ _paper_trade_portfolio_col = _stock_db["paper_trade_portfolio"]
 _paper_trade_strategy_col = _stock_db["paper_trade_strategy"]
 _lot_sizes_col = _stock_db["lot_sizes"]
 IST = timezone(timedelta(hours=5, minutes=30))
+_DEFAULT_PAPER_TRADE_SPOT_BROKER_ID = "69e18416c3d234dc8c90e6ca"
 _DEFAULT_PAPER_TRADE_PORTFOLIOS = [
     "Running Trades", "Exited Trades", "Archived Trades",
     "Aditional Position Strategy", "Nifty Weekly Expiry BB Stra",
@@ -120,6 +121,36 @@ def _ensure_default_paper_trade_portfolios() -> None:
                 "name": portfolio_name,
                 "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
             })
+
+
+def _serialize_instrument_spot_token(doc: dict) -> dict:
+    return {
+        "_id": str(doc.get("_id") or "").strip(),
+        "broker_id": str(doc.get("broker_id") or "").strip(),
+        "instrument": str(doc.get("instrument") or "").strip().upper(),
+        "code": str(doc.get("code") or "").strip().upper(),
+        "token": str(doc.get("token") or "").strip(),
+    }
+
+
+def _get_instrument_spot_token_docs(broker_id: str = "") -> list[dict]:
+    resolved_broker_id = str(broker_id or _DEFAULT_PAPER_TRADE_SPOT_BROKER_ID).strip()
+    query = {"broker_id": resolved_broker_id} if resolved_broker_id else {}
+    docs = list(
+        _stock_db["instrument_spot_token"].find(
+            query,
+            {"broker_id": 1, "instrument": 1, "code": 1, "token": 1},
+        ).sort("instrument", 1)
+    )
+    return [_serialize_instrument_spot_token(doc) for doc in docs]
+
+
+def _get_paper_trade_default_quote_tokens(broker_id: str = "") -> list[str]:
+    return [
+        str(item.get("token") or "").strip()
+        for item in _get_instrument_spot_token_docs(broker_id)
+        if str(item.get("token") or "").strip()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +448,7 @@ async def pt_list_strategies(portfolio_name: Optional[str] = None) -> dict:
         result = []
         for doc in docs:
             doc["_id"] = str(doc["_id"])
-            positions = doc.pop("positions", [])
+            positions = doc.get("positions", [])
             doc["position_count"] = len(positions)
             doc["all_exited"] = all(pos.get("exited", False) for pos in positions) if positions else False
             realized = 0.0
@@ -457,6 +488,19 @@ async def pt_get_strategy(strategy_id: str) -> dict:
         if not doc:
             return {"status": "error", "message": "Not found"}
         return {"status": "success", "strategy": _str_id(doc)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/paper-trade/spot-tokens")
+async def pt_spot_tokens(broker_id: str = Query(default="")) -> dict:
+    try:
+        resolved_broker_id = str(broker_id or _DEFAULT_PAPER_TRADE_SPOT_BROKER_ID).strip()
+        return {
+            "status": "success",
+            "broker_id": resolved_broker_id,
+            "items": _get_instrument_spot_token_docs(resolved_broker_id),
+        }
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
 

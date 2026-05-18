@@ -251,6 +251,13 @@ class MongoData:
                 name="portfolio_created_at_desc",
                 comment=self._comment("ensure_index", collection="saved_portfolios", index="portfolio_created_at_desc"),
             )
+            self._db["instrument_spot_token"].create_index(
+                [("broker_id", ASCENDING), ("instrument", ASCENDING)],
+                unique=True,
+                background=True,
+                name="uniq_spot_token_by_broker_instrument",
+                comment=self._comment("ensure_index", collection="instrument_spot_token", index="uniq_spot_token_by_broker_instrument"),
+            )
         except Exception as exc:
             _log.warning("[DB INDEX WARN] db=%s target=%s error=%s", DB_NAME, self._target, exc)
 

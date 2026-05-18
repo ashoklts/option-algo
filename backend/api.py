@@ -69,6 +69,7 @@ from simulator.strategy_engine import StrategyEngine
 from simulator.streaming_controller import StreamingController
 from simulator.zerodha_broker import ZerodhaBroker as SimulatorZerodhaBroker
 from simulator.api_server import router as simulator_router
+from scanner.router import router as scanner_router
 from features.spot_atm_utils import (
     _load_kite_instruments,
     KITE_INDEX_TOKENS,
@@ -1140,6 +1141,7 @@ class PTPositionIn(BaseModel):
     option_type: str
     strike: float
     expiry: str
+    token: Optional[str] = None
     entry_price: float
     entry_time: Optional[str] = None
     lots: Optional[int] = 1
@@ -1159,6 +1161,90 @@ class PTStrategyIn(BaseModel):
     spot_price: Optional[float] = None
     config: Optional[dict[str, Any]] = None
     positions: Optional[list[PTPositionIn]] = []
+
+
+def _normalize_pt_option_type(option_type: str) -> str:
+    normalized = str(option_type or "").strip().upper()
+    if normalized in {"CALL", "CE"}:
+        return "CE"
+    if normalized in {"PUT", "PE"}:
+        return "PE"
+    return normalized
+
+
+def _resolve_pt_position_token(position: dict, instrument: str = "") -> str:
+    direct_token = str(position.get("token") or position.get("tokens") or "").strip()
+    if direct_token:
+        return direct_token
+
+    normalized_instrument = str(instrument or position.get("instrument") or "").strip().upper()
+    normalized_expiry = str(position.get("expiry") or "").strip()[:10]
+    normalized_option_type = _normalize_pt_option_type(str(position.get("option_type") or ""))
+    try:
+        strike_value = float(position.get("strike") or 0)
+    except (TypeError, ValueError):
+        strike_value = 0.0
+
+    if not normalized_instrument or not normalized_expiry or not normalized_option_type or strike_value <= 0:
+        return ""
+
+    try:
+        instrument_doc = (_load_kite_instruments() or {}).get(
+            (normalized_instrument, normalized_expiry, strike_value, normalized_option_type)
+        ) or {}
+        return str(instrument_doc.get("token") or instrument_doc.get("tokens") or "").strip()
+    except Exception:
+        return ""
+
+
+def _enrich_pt_strategy_positions(strategy_doc: dict) -> dict:
+    enriched = dict(strategy_doc or {})
+    instrument = str(enriched.get("instrument") or "").strip().upper()
+    positions = []
+    for raw_position in (enriched.get("positions") or []):
+        if not isinstance(raw_position, dict):
+            positions.append(raw_position)
+            continue
+        position = dict(raw_position)
+        resolved_token = _resolve_pt_position_token(position, instrument)
+        if resolved_token:
+            position["token"] = resolved_token
+        positions.append(position)
+    enriched["positions"] = positions
+    return enriched
+
+
+_DEFAULT_PAPER_TRADE_SPOT_BROKER_ID = "69e18416c3d234dc8c90e6ca"
+
+
+def _serialize_instrument_spot_token(doc: dict) -> dict:
+    return {
+        "_id": str(doc.get("_id") or "").strip(),
+        "broker_id": str(doc.get("broker_id") or "").strip(),
+        "instrument": str(doc.get("instrument") or "").strip().upper(),
+        "code": str(doc.get("code") or "").strip().upper(),
+        "token": str(doc.get("token") or "").strip(),
+    }
+
+
+def _get_instrument_spot_token_docs(broker_id: str = "") -> list[dict]:
+    resolved_broker_id = str(broker_id or _DEFAULT_PAPER_TRADE_SPOT_BROKER_ID).strip()
+    query = {"broker_id": resolved_broker_id} if resolved_broker_id else {}
+    docs = list(
+        _shared_mongo._db["instrument_spot_token"].find(
+            query,
+            {"broker_id": 1, "instrument": 1, "code": 1, "token": 1},
+        ).sort("instrument", 1)
+    )
+    return [_serialize_instrument_spot_token(doc) for doc in docs]
+
+
+def _get_paper_trade_default_quote_tokens(broker_id: str = "") -> list[str]:
+    return [
+        str(item.get("token") or "").strip()
+        for item in _get_instrument_spot_token_docs(broker_id)
+        if str(item.get("token") or "").strip()
+    ]
 
 
 _DEFAULT_PAPER_TRADE_PORTFOLIOS = [
@@ -4455,8 +4541,9 @@ async def simulator_pt_list_strategies(portfolio_name: Optional[str] = None) -> 
         docs = list(_shared_mongo._db["paper_trade_strategy"].find(filt).sort("saved_at", -1))
         result = []
         for doc in docs:
+            doc = _enrich_pt_strategy_positions(doc)
             doc["_id"] = str(doc["_id"])
-            positions = doc.pop("positions", [])
+            positions = doc.get("positions", [])
             doc["position_count"] = len(positions)
             doc["all_exited"] = all(p.get("exited", False) for p in positions) if positions else False
             realized = 0.0
@@ -4475,6 +4562,7 @@ async def simulator_pt_list_strategies(portfolio_name: Optional[str] = None) -> 
                         "option_type": p.get("option_type", ""),
                         "strike": p.get("strike", 0),
                         "expiry": p.get("expiry", ""),
+                        "token": p.get("token", ""),
                         "entry_price": p.get("entry_price", 0),
                         "quantity": qty,
                     })
@@ -4492,9 +4580,168 @@ async def simulator_pt_get_strategy(strategy_id: str) -> dict:
         doc = _shared_mongo._db["paper_trade_strategy"].find_one({"_id": ObjectId(strategy_id)})
         if not doc:
             return {"status": "error", "message": "Not found"}
-        return {"status": "success", "strategy": _str_id(doc)}
+        return {"status": "success", "strategy": _str_id(_enrich_pt_strategy_positions(doc))}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/paper-trade/spot-tokens")
+async def simulator_pt_spot_tokens(broker_id: str = Query(default="")) -> dict:
+    try:
+        resolved_broker_id = str(broker_id or _DEFAULT_PAPER_TRADE_SPOT_BROKER_ID).strip()
+        items = _get_instrument_spot_token_docs(resolved_broker_id)
+        return {
+            "status": "success",
+            "broker_id": resolved_broker_id,
+            "items": items,
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/simulator/paper-trade/quotes")
+async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="")) -> dict:
+    requested_tokens = [
+        str(token).strip()
+        for token in str(tokens or "").split(",")
+        if str(token).strip()
+    ]
+    default_tokens = _get_paper_trade_default_quote_tokens(str(broker_id or "").strip())
+    unique_tokens = list(
+        dict.fromkeys(
+            requested_tokens + [token for token in default_tokens if token]
+        )
+    )
+    if not unique_tokens:
+        return {"status": "success", "quotes": {}}
+
+    quotes: dict[str, dict[str, float | str]] = {}
+    pending_tokens: list[str] = []
+
+    for token in unique_tokens:
+        live_ltp = float(ticker_manager.get_ltp(token) or 0.0)
+        if live_ltp > 0:
+            quotes[token] = {"token": token, "ltp": round(live_ltp, 2), "source": "ws"}
+        else:
+            pending_tokens.append(token)
+
+    if pending_tokens:
+        try:
+            if is_configured():
+                api_key, access_token = get_common_credentials()
+                if api_key and access_token:
+                    kite = get_kite_instance(access_token)
+                    quote_docs = kite.quote([int(token) for token in pending_tokens]) or {}
+                    for quote_key, quote_doc in quote_docs.items():
+                        resolved_token = str(
+                            quote_doc.get("instrument_token")
+                            or quote_key.split(":")[-1]
+                            or ""
+                        ).strip()
+                        if not resolved_token:
+                            continue
+                        quote_ltp = float(
+                            quote_doc.get("last_price")
+                            or (quote_doc.get("ohlc") or {}).get("close")
+                            or 0.0
+                        )
+                        quotes[resolved_token] = {
+                            "token": resolved_token,
+                            "ltp": round(quote_ltp, 2),
+                            "source": "quote",
+                        }
+        except Exception as exc:
+            log.warning("paper trade quote batch error tokens=%s: %s", ",".join(pending_tokens), exc)
+
+    unresolved_tokens = [
+        token for token in pending_tokens
+        if float((quotes.get(token) or {}).get("ltp") or 0.0) <= 0
+    ]
+    if unresolved_tokens:
+        reverse_index_tokens = {
+            str(token): underlying
+            for underlying, token in (KITE_INDEX_TOKENS or {}).items()
+            if str(token or "").strip()
+        }
+        option_contract_map: dict[str, dict[str, str]] = {}
+        try:
+            db = MongoData()
+            try:
+                for contract in db._db["active_option_tokens"].find(
+                    {"token": {"$in": unresolved_tokens}},
+                    {"_id": 0, "token": 1, "instrument": 1, "expiry": 1, "option_type": 1, "strike": 1},
+                ):
+                    token = str(contract.get("token") or "").strip()
+                    if not token:
+                        continue
+                    option_contract_map[token] = {
+                        "instrument": str(contract.get("instrument") or "").strip().upper(),
+                        "expiry": str(contract.get("expiry") or "").strip()[:10],
+                        "option_type": str(contract.get("option_type") or "").strip().upper(),
+                        "strike": str(contract.get("strike") or "").strip(),
+                    }
+            finally:
+                db.close()
+        except Exception as exc:
+            log.warning("paper trade quote fallback token lookup error: %s", exc)
+
+        chain_requests: list[tuple[str, str]] = []
+        for token in unresolved_tokens:
+            if token in reverse_index_tokens:
+                chain_requests.append((reverse_index_tokens[token], ""))
+                continue
+            contract = option_contract_map.get(token) or {}
+            instrument = str(contract.get("instrument") or "").strip().upper()
+            expiry = str(contract.get("expiry") or "").strip()
+            if instrument:
+                chain_requests.append((instrument, expiry))
+
+        deduped_chain_requests = list(dict.fromkeys(chain_requests))
+        if deduped_chain_requests:
+            chain_results = await asyncio.gather(
+                *[
+                    get_live_greeks_chain(instrument, expiry)
+                    for instrument, expiry in deduped_chain_requests
+                ],
+                return_exceptions=True,
+            )
+            chain_map = {
+                key: value
+                for key, value in zip(deduped_chain_requests, chain_results)
+                if not isinstance(value, Exception) and isinstance(value, dict)
+            }
+
+            for token in unresolved_tokens:
+                if token in reverse_index_tokens:
+                    payload = chain_map.get((reverse_index_tokens[token], "")) or {}
+                    spot_ltp = float(payload.get("spot_price") or 0.0)
+                    if spot_ltp > 0:
+                        quotes[token] = {"token": token, "ltp": round(spot_ltp, 2), "source": "chain_spot"}
+                    continue
+
+                contract = option_contract_map.get(token) or {}
+                instrument = str(contract.get("instrument") or "").strip().upper()
+                expiry = str(contract.get("expiry") or "").strip()
+                option_type = str(contract.get("option_type") or "").strip().upper()
+                try:
+                    strike_value = float(contract.get("strike") or 0)
+                except (TypeError, ValueError):
+                    strike_value = 0.0
+                payload = chain_map.get((instrument, expiry)) or {}
+                chain_bucket = ((payload.get("chain") or {}).get(option_type) or []) if payload else []
+                for row in chain_bucket:
+                    row_token = str(row.get("token") or "").strip()
+                    row_strike = float(row.get("strike") or 0.0)
+                    row_ltp = float(row.get("ltp") or 0.0)
+                    if row_token == token or (strike_value > 0 and row_strike == strike_value):
+                        if row_ltp > 0:
+                            quotes[token] = {"token": token, "ltp": round(row_ltp, 2), "source": "chain"}
+                        break
+
+    for token in unique_tokens:
+        quotes.setdefault(token, {"token": token, "ltp": 0.0, "source": "unavailable"})
+
+    return {"status": "success", "quotes": quotes}
 
 
 @router.put("/simulator/paper-trade/strategies/{strategy_id}")
@@ -4589,6 +4836,7 @@ app.include_router(router)
 app.include_router(socket_router)
 app.include_router(mock_kite_socket_router)
 app.include_router(simulator_router, prefix="/algo")
+app.include_router(scanner_router)
 
 
 # ─── Kite Broker Endpoints ────────────────────────────────────────────────────
