@@ -534,7 +534,7 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
         # Double-check: verify the SL order is still open in broker_orders before modifying
         existing_order = db._db[_BROKER_ORDERS_COL].find_one(
             {'order_id': sl_order_id, 'status': _ORDER_STATUS_OPEN},
-            {'_id': 1, 'trigger_price': 1, 'exchange': 1, 'tradingsymbol': 1},
+            {'_id': 1, 'trigger_price': 1, 'exchange': 1, 'symbol': 1},
         )
         if not existing_order:
             print(
@@ -566,8 +566,37 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
             return
 
         old_trigger = _safe_float((existing_order or {}).get('trigger_price'))
-        _exch   = str((existing_order or {}).get('exchange') or 'NFO').strip().upper()
-        _tsym   = str((existing_order or {}).get('tradingsymbol') or '').strip()
+        _exch = str((existing_order or {}).get('exchange') or 'NFO').strip().upper()
+        _tsym = str((existing_order or {}).get('symbol') or '').strip()
+
+        # Fallback: get symbol from leg / positions history if broker_orders has it empty
+        if not _tsym:
+            _tsym = str(
+                leg.get('symbol')
+                or (_hist or {}).get('symbol')
+                or ''
+            ).strip()
+        if not _exch or _exch == 'NFO':
+            _exch = str(
+                leg.get('exchange')
+                or (_hist or {}).get('exchange')
+                or 'NFO'
+            ).strip().upper()
+
+        if not _tsym:
+            print(
+                f'[BROKER SL MODIFY SKIP] trade={trade_id} leg={leg_id} '
+                f'order={sl_order_id} reason=symbol_not_found_anywhere'
+            )
+            return
+
+        if abs(new_sl_ticked - old_trigger) < 0.05:
+            print(
+                f'[BROKER SL MODIFY SKIP] trade={trade_id} leg={leg_id} '
+                f'order={sl_order_id} reason=trigger_unchanged old={old_trigger} new={new_sl_ticked}'
+            )
+            return
+
         print(
             f'[BROKER SL MODIFY ATTEMPT] trade={trade_id} leg={leg_id} '
             f'order={sl_order_id} exch={_exch} tsym={_tsym} '
