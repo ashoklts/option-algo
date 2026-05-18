@@ -586,6 +586,51 @@ def _persist_protection_order_refs(
         )
 
 
+def _recalc_sl_for_actual_fill(db, trade_id: str, leg_id: str, actual_fill: float) -> None:
+    """
+    When actual broker avg_price differs from initial limit_price basis,
+    recalculate SL from actual fill and modify the existing broker SL order.
+    """
+    if actual_fill <= 0:
+        return
+    try:
+        from features.position_manager import calc_sl_price  # type: ignore
+        trade, leg, leg_cfg, hist_doc = _load_trade_and_leg_context(db, trade_id, leg_id)
+        if not trade or not leg or not leg_cfg:
+            return
+        position_str = str(leg.get('position') or (hist_doc or {}).get('position') or '')
+        is_sell = _is_sell(position_str)
+        sl_config = leg_cfg.get('LegStopLoss') or {}
+        if not sl_config:
+            return
+        new_sl = _safe_float(calc_sl_price(actual_fill, is_sell, sl_config))
+        if not new_sl:
+            return
+        new_sl = _round_to_tick(new_sl, round_up=is_sell)
+        current_sl = _safe_float(
+            leg.get('current_sl_price') or (hist_doc or {}).get('current_sl_price')
+        )
+        if current_sl and abs(new_sl - current_sl) < 0.05:
+            return  # negligible difference — skip
+        # Update DB
+        db._db['algo_trades'].update_one(
+            {'_id': trade_id, 'legs.id': leg_id},
+            {'$set': {'legs.$.current_sl_price': new_sl, 'legs.$.initial_sl_value': new_sl}},
+        )
+        db._db['algo_trade_positions_history'].update_one(
+            {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
+            {'$set': {'current_sl_price': new_sl, 'initial_sl_value': new_sl}},
+        )
+        # Modify broker SL order to match actual fill basis
+        modify_broker_sl_order(db, trade_id, leg_id, new_sl)
+        print(
+            f'[SL RECALC] trade={trade_id} leg={leg_id} '
+            f'fill={actual_fill} old_sl={current_sl} new_sl={new_sl}'
+        )
+    except Exception as exc:
+        log.warning('[SL RECALC ERROR] trade=%s leg=%s: %s', trade_id, leg_id, exc)
+
+
 def _place_initial_protection_orders(
     db,
     trade_id: str,
@@ -903,11 +948,16 @@ def process_broker_order_update(
     leg_id   = str((hist_doc or {}).get('leg_id')   or (embedded_leg or {}).get('id') or '')
 
     if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
+        # Use limit_price (what we sent to broker) as canonical entry price for SL basis.
+        # avg_price stored separately as fill_price for reference.
+        stored_limit = _safe_float((hist_doc or {}).get('entry_trade', {}).get('limit_price'))
+        sl_basis_price = stored_limit if stored_limit > 0 else fill_price
         if hist_doc:
             hist_col.update_one(
                 {'_id': hist_doc['_id']},
                 {'$set': {
-                    'entry_trade.price':               fill_price,
+                    'entry_trade.price':               sl_basis_price,
+                    'entry_trade.avg_fill_price':      fill_price,
                     'entry_trade.order_status':        _ORDER_STATUS_COMPLETE,
                     'entry_trade.fill_qty':            int(fill_qty),
                     'entry_trade.filled_at':           now_ts,
@@ -920,7 +970,8 @@ def process_broker_order_update(
             {'_id': trade_id},
             {'$set': {
                 'legs.$[elem].last_saw_price':                   fill_price,
-                'legs.$[elem].entry_trade.price':                fill_price,
+                'legs.$[elem].entry_trade.price':                sl_basis_price,
+                'legs.$[elem].entry_trade.avg_fill_price':       fill_price,
                 'legs.$[elem].entry_trade.order_status':         _ORDER_STATUS_COMPLETE,
                 'legs.$[elem].entry_trade.fill_qty':             int(fill_qty),
                 'legs.$[elem].entry_trade.filled_at':            now_ts,
@@ -932,7 +983,9 @@ def process_broker_order_update(
         )
         if not hist_doc:
             _promote_pending_live_leg_to_position_history(db, trade_id, leg_id)
-        _place_initial_protection_orders(db, trade_id, leg_id, fill_price, fill_qty)
+
+        _place_initial_protection_orders(db, trade_id, leg_id, sl_basis_price, fill_qty)
+
         try:
             from features.execution_socket import mark_execute_order_dirty_from_trade_id
             mark_execute_order_dirty_from_trade_id(db, trade_id)
@@ -2293,17 +2346,21 @@ def _convert_to_aggressive_limit(
                     'entry_trade.order_placed_at': now_ts,
                     'entry_trade.last_modified_at': now_ts,
                     'entry_trade.aggressive_retry': True,
+                    'entry_trade.limit_price':     limit_price,
+                    'entry_trade.price':           limit_price,
                 }},
             )
         db._db['algo_trades'].update_one(
             {'_id': trade_id},
             {'$set': {
-                'legs.$[elem].entry_trade.order_id': new_order_id,
+                'legs.$[elem].entry_trade.order_id':    new_order_id,
                 'legs.$[elem].entry_trade.order_status': _ORDER_STATUS_OPEN,
                 'legs.$[elem].entry_trade.order_placed_at': now_ts,
                 'legs.$[elem].entry_trade.last_modified_at': now_ts,
                 'legs.$[elem].entry_trade.aggressive_retry': True,
                 'legs.$[elem].entry_trade.entry_lifecycle_status': 'order_open',
+                'legs.$[elem].entry_trade.limit_price': limit_price,
+                'legs.$[elem].entry_trade.price':       limit_price,
             }},
             array_filters=[{'elem.id': leg_id}],
         )
