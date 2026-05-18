@@ -7325,6 +7325,10 @@ def _process_backtest_trade_tick(
         if sl_price and sl_price != stored_sl:
             update_leg_sl_in_db(db, trade_id, leg_index, sl_price, current_price, leg_id=leg_id)
             if stored_sl and sl_price != stored_sl:
+                print(
+                    f'[TRAIL SL CHANGED] trade={trade_id} leg={leg_id} '
+                    f'old_sl={stored_sl} new_sl={sl_price} ltp={current_price} ts={now_ts}'
+                )
                 record_trail_sl_changed(db._db, trade, leg, now_ts, stored_sl, sl_price, current_price, trail_config=trail_config)
                 rotate_trail_sl_record(
                     db._db, trade_id, leg_id,
@@ -7336,13 +7340,20 @@ def _process_backtest_trade_tick(
                     'old_sl': round(stored_sl, 2), 'new_sl': round(sl_price, 2),
                     'current_price': round(current_price, 2),
                 })
-                # Simulator: update SL order in live_simulator_order with history
+                # Simulator: update SL order
                 try:
                     from features.live_simulator_order import is_simulator_order_enabled, update_trail_sl_order  # type: ignore
                     if is_simulator_order_enabled(trade):
                         update_trail_sl_order(db, trade_id, leg_id, sl_price, current_price, updated_at=now_ts)
                 except Exception as _tsl_e:
                     log.warning('simulator_order trail_sl error trade=%s leg=%s: %s', trade_id, leg_id, _tsl_e)
+                # Live broker: modify the broker SL order to reflect new trail SL price
+                if activation_mode == 'live':
+                    try:
+                        from features.live_order_manager import modify_broker_sl_order
+                        modify_broker_sl_order(db, trade_id, leg_id, sl_price)
+                    except Exception as _tsl_mod_e:
+                        log.warning('live trail SL broker modify error trade=%s leg=%s: %s', trade_id, leg_id, _tsl_mod_e)
 
         # ── Position snapshot for MTM ─────────────────────────────────────
         if strategy_entry is None:

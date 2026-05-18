@@ -531,6 +531,19 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
             print(f'[BROKER SL MODIFY SKIP] trade={trade_id} leg={leg_id} reason=not_in_sl_registry')
             return
 
+        # Double-check: verify the SL order is still open in broker_orders before modifying
+        existing_order = db._db[_BROKER_ORDERS_COL].find_one(
+            {'order_id': sl_order_id, 'status': _ORDER_STATUS_OPEN},
+            {'_id': 1, 'trigger_price': 1},
+        )
+        if not existing_order:
+            print(
+                f'[BROKER SL MODIFY SKIP] trade={trade_id} leg={leg_id} '
+                f'order={sl_order_id} reason=order_not_open_in_broker_orders'
+            )
+            _deregister_sl_order(trade_id, leg_id)
+            return
+
         trade, leg, _leg_cfg, _hist = _load_trade_and_leg_context(db, trade_id, leg_id)
         if not trade or not leg:
             return
@@ -549,14 +562,39 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
 
         broker = get_broker_for_trade(db, trade)
         if not broker:
+            print(f'[BROKER SL MODIFY SKIP] trade={trade_id} leg={leg_id} order={sl_order_id} reason=no_broker')
             return
 
-        broker.modify_order(
+        old_trigger = _safe_float((existing_order or {}).get('trigger_price'))
+        print(
+            f'[BROKER SL MODIFY ATTEMPT] trade={trade_id} leg={leg_id} '
+            f'order={sl_order_id} old_trigger={old_trigger} '
+            f'new_trigger={new_sl_ticked} new_limit={new_limit_price}'
+        )
+        modify_response = broker.modify_order(
             order_id=sl_order_id,
             order_type=_ORDER_TYPE_SL,
             price=new_limit_price,
             trigger_price=new_sl_ticked,
         )
+        now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        print(
+            f'[BROKER SL MODIFY SUCCESS] trade={trade_id} leg={leg_id} '
+            f'order={sl_order_id} response={modify_response} '
+            f'new_trigger={new_sl_ticked} new_limit={new_limit_price} ts={now_ts}'
+        )
+        # Update broker_orders with new trigger so the record reflects what was sent
+        try:
+            db._db[_BROKER_ORDERS_COL].update_one(
+                {'order_id': sl_order_id},
+                {'$set': {
+                    'trigger_price': new_sl_ticked,
+                    'price': new_limit_price,
+                    'updated_at': now_ts,
+                }},
+            )
+        except Exception as _bo_exc:
+            log.warning('[BROKER SL MODIFIED] broker_orders sync failed trade=%s leg=%s: %s', trade_id, leg_id, _bo_exc)
         try:
             db._db['algo_leg_feature_status'].update_many(
                 {
@@ -569,7 +607,7 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
                     'trigger_price': new_sl_ticked,
                     'current_sl_price': new_sl_ticked,
                     'order_limit_price': new_limit_price,
-                    'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+                    'updated_at': now_ts,
                 }},
             )
         except Exception as _sync_exc:
@@ -577,11 +615,8 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
                 '[BROKER SL MODIFIED] feature row sync failed trade=%s leg=%s: %s',
                 trade_id, leg_id, _sync_exc,
             )
-        print(
-            f'[BROKER SL MODIFIED] trade={trade_id} leg={leg_id} '
-            f'order={sl_order_id} trigger={new_sl_ticked} limit={new_limit_price}'
-        )
     except Exception as exc:
+        print(f'[BROKER SL MODIFY ERROR] trade={trade_id} leg={leg_id} new_sl={new_sl} error={exc}')
         log.warning('[BROKER SL MODIFY ERROR] trade=%s leg=%s new_sl=%s: %s', trade_id, leg_id, new_sl, exc)
 
 
@@ -702,13 +737,17 @@ def _sync_leg_feature_entry_price(
                 'updated_at':    now_ts,
             }},
         )
-    # trail_sl: update entry_price only — current_sl_price follows the sl row
+    # trail_sl: update entry_price AND recalculated SL so it matches the actual fill basis
+    _trail_sl_set = {'entry_price': entry_price, 'updated_at': now_ts}
+    if sl_price > 0:
+        _trail_sl_set.update({
+            'current_sl_price': sl_price,
+            'initial_sl_price': sl_price,
+            'trigger_price':    sl_price,
+        })
     col.update_many(
         {**query, 'feature': {'$in': ['trailSL', 'trail_sl', 'trailing_sl']}},
-        {'$set': {
-            'entry_price': entry_price,
-            'updated_at':  now_ts,
-        }},
+        {'$set': _trail_sl_set},
     )
     # leg_entry: sync the confirmed fill price so UI and downstream logic see the real entry
     col.update_many(
@@ -888,6 +927,24 @@ def _place_initial_protection_orders(
         # For a SELL position exit=BUY: limit above trigger; BUY position: limit below
         sl_limit = _apply_buffer(sl_price, lmt_buf, buf_type, is_buy=is_sell)
         sl_limit = _round_to_tick(sl_limit, round_up=is_sell)
+
+    # Write the actual-fill-based SL back to the leg document so check_leg_exit
+    # reads the correct price, not the pre-fill stale value from feature creation.
+    if sl_price > 0:
+        try:
+            db._db['algo_trades'].update_one(
+                {'_id': trade_id, 'legs.id': leg_id},
+                {'$set': {
+                    'legs.$.current_sl_price': sl_price,
+                    'legs.$.initial_sl_value': sl_price,
+                }},
+            )
+            db._db['algo_trade_positions_history'].update_one(
+                {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
+                {'$set': {'current_sl_price': sl_price, 'initial_sl_value': sl_price}},
+            )
+        except Exception as _slupd_exc:
+            log.warning('[SL SYNC] leg sl update error trade=%s leg=%s: %s', trade_id, leg_id, _slupd_exc)
 
     # Sync algo_leg_feature_status BEFORE the exit-order guard so the entry_price
     # and recalculated SL/TP are always written, even if protection orders already exist.
@@ -1078,7 +1135,7 @@ def _sync_live_exit_fill(
 
     try:
         from features.execution_socket import trigger_live_exit_followups
-        followup_actions = trigger_live_exit_followups(db, trade_id, leg_id, exit_reason, now_ts)
+        followup_actions = trigger_live_exit_followups(db, trade_id, leg_id, exit_reason, now_ts, fill_price=fill_price)
         if followup_actions:
             print(
                 f'[LIVE EXIT FOLLOWUP SYNC] trade={trade_id} leg={leg_id} '
