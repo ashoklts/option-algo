@@ -258,7 +258,7 @@ class _LiveFastMonitorSupervisor:
                             dict(ticker_manager.ltp_map or {}),
                             activation_mode='live',
                         )
-                        if _poll_tick % 5 == 0:
+                        if _poll_tick % 2 == 0:
                             try:
                                 from features.live_order_manager import poll_pending_order_fills
                                 poll_pending_order_fills(db)

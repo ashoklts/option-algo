@@ -3007,7 +3007,7 @@ def _queue_live_broker_pending_momentum_entry(
         'trigger_timestamp': exchange_ts,
         'trigger_price': target_price,
         'underlying_trigger_price': spot_price,
-        'price': broker_entry.get('limit_price') or target_price,
+        'price': target_price,
         'quantity': actual_quantity,
         'underlying_at_trade': spot_price,
         'traded_timestamp': exchange_ts,

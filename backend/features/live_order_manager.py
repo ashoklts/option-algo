@@ -1391,6 +1391,7 @@ def place_live_entry_order(
         order_id = kite.place_order(**order_params)
         order_id = str(order_id or '').strip()
         _register_active_entry_order(order_id)
+        _schedule_entry_fill_check(db, trade, order_id)
 
         print(
             f'[LIVE ORDER PLACED] trade={trade_id} leg={leg_id} '
@@ -1693,6 +1694,57 @@ def restore_sl_order_registry(db) -> None:
     except Exception as exc:
         log.warning('[REGISTRY RESTORE ERROR] %s', exc)
     print(f'[REGISTRY RESTORED] sl_orders={sl_loaded} pending_entries={entry_loaded}')
+
+
+def _schedule_entry_fill_check(db, trade: dict, order_id: str) -> None:
+    """
+    After placing an entry order on Flattrade, spawn a background thread that checks
+    fill status every 1 second (up to 3 attempts). On fill:
+      1. Get actual avg_price from Flattrade OrderBook
+      2. Update entry_trade.price = avg_price
+      3. Calculate SL from avg_price and place SL order on Flattrade
+    """
+    import threading, time
+
+    def _check():
+        for attempt in range(1, 4):
+            time.sleep(1)
+            try:
+                with _active_entry_lock:
+                    if order_id not in _active_entry_order_ids:
+                        return  # already handled by postback or poll
+                flattrade = get_broker_for_trade(db, trade)
+                if not flattrade:
+                    return
+                all_orders = flattrade.orders() or []
+                matched = next(
+                    (o for o in all_orders if str(o.get('order_id') or '') == order_id),
+                    None,
+                )
+                if not matched:
+                    continue
+                status = str(matched.get('status') or '').upper()
+                if status == _ORDER_STATUS_COMPLETE:
+                    avg_price = float(matched.get('average_price') or 0)
+                    fill_qty  = int(matched.get('filled_quantity') or 0)
+                    if avg_price > 0:
+                        print(
+                            f'[INSTANT FILL CHECK] order={order_id} '
+                            f'attempt={attempt} avg_price={avg_price} qty={fill_qty}'
+                        )
+                        process_broker_order_update(
+                            db, order_id, _ORDER_STATUS_COMPLETE,
+                            fill_price=avg_price, fill_qty=fill_qty,
+                            source='instant_check',
+                        )
+                        return
+                elif status in (_ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
+                    process_broker_order_update(db, order_id, status, source='instant_check')
+                    return
+            except Exception as exc:
+                log.debug('[INSTANT FILL CHECK] order=%s attempt=%d: %s', order_id, attempt, exc)
+
+    threading.Thread(target=_check, daemon=True, name=f'fill-{order_id[:8]}').start()
 
 
 def _register_active_entry_order(order_id: str) -> None:
