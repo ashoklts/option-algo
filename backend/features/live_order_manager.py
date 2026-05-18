@@ -807,8 +807,13 @@ def _sync_live_exit_fill(
     except Exception as exc:
         log.error('[LIVE EXIT FILL SYNC] trade=%s leg=%s reason=%s: %s', trade_id, leg_id, exit_reason, exc)
 
-    # Cancel ALL remaining pending orders across the trade (other legs' SL/Target orders,
-    # momentum SL-L entry orders, etc.) and exit any other open positions.
+    # broker_sync = broker filled this leg's SL order independently.
+    # Other legs have their own SL orders on broker — do NOT touch them.
+    if exit_reason == 'broker_sync':
+        print(f'[BROKER EXIT SQUAREOFF SKIP] trade={trade_id} leg={leg_id} reason=broker_sync other_legs_independent')
+        return
+
+    # For other exit reasons (manual, stoploss, target etc.) — exit remaining legs too.
     try:
         refreshed_trade = db._db['algo_trades'].find_one({'_id': trade_id}) or trade
         live_manual_square_off_trade(db, refreshed_trade)
