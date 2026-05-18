@@ -534,7 +534,7 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
         # Double-check: verify the SL order is still open in broker_orders before modifying
         existing_order = db._db[_BROKER_ORDERS_COL].find_one(
             {'order_id': sl_order_id, 'status': _ORDER_STATUS_OPEN},
-            {'_id': 1, 'trigger_price': 1, 'exchange': 1, 'symbol': 1},
+            {'_id': 1, 'trigger_price': 1, 'exchange': 1, 'symbol': 1, 'quantity': 1},
         )
         if not existing_order:
             print(
@@ -602,6 +602,7 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
             f'order={sl_order_id} exch={_exch} tsym={_tsym} '
             f'old_trigger={old_trigger} new_trigger={new_sl_ticked} new_limit={new_limit_price}'
         )
+        _qty = int((existing_order or {}).get('quantity') or leg.get('quantity') or (_hist or {}).get('quantity') or 0)
         modify_response = broker.modify_order(
             order_id=sl_order_id,
             order_type=_ORDER_TYPE_SL,
@@ -609,6 +610,7 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
             trigger_price=new_sl_ticked,
             exchange=_exch,
             tradingsymbol=_tsym,
+            quantity=_qty,
         )
         now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
         print(
