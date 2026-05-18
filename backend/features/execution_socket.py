@@ -7237,17 +7237,6 @@ def _process_backtest_trade_tick(
             (current_price - entry_price) * effective_quantity
         )
 
-        print(
-            '[FEATURE CHECK]',
-            f'listen_time={now_ts}', f'trade_id={trade_id}', f'leg_id={leg_id}',
-            f'strategy_name={str(trade.get("name") or "-")}',
-            f'option={option_type}', f'position={position_str}',
-            f'entry_price={entry_price}', f'ltp={current_price}',
-            f'stored_sl={stored_sl}', f'next_sl={sl_price}', f'tp={tp_price}',
-            f'sl_enabled={bool(sl_price)}', f'tg_enabled={bool(tp_price)}',
-            f'tsl_enabled={bool(trail_config)}',
-        )
-
         # ── SL hit ────────────────────────────────────────────────────────
         if is_sl_hit(current_price, sl_price, is_sell_pos):
             _sl_exit_price = current_price if _is_market_order(leg_cfg, 'exit') else sl_price
@@ -8848,24 +8837,6 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
 
             token = make_token(underlying, expiry_date, strike, option_type)
 
-            print(
-                '[FEATURE CHECK]',
-                f'listen_time={now_ts}',
-                f'trade_id={trade_id}',
-                f'leg_id={leg_id}',
-                f'strategy_name={str(trade.get("name") or "-")}',
-                f'option={option_type}',
-                f'position={position_str}',
-                f'entry_price={entry_price}',
-                f'ltp={current_price}',
-                f'stored_sl={stored_sl}',
-                f'next_sl={sl_price}',
-                f'tp={tp_price}',
-                f'sl_enabled={bool(sl_price)}',
-                f'tg_enabled={bool(tp_price)}',
-                f'tsl_enabled={bool(trail_config)}',
-            )
-
             from features.notification_manager import (
                 record_sl_hit, record_target_hit,
                 record_trail_sl_changed, record_reentry_queued, record_force_exit,
@@ -8972,6 +8943,10 @@ def _live_minute_tick(db: MongoData, trade_date: str) -> dict:
             if sl_price and sl_price != stored_sl:
                 update_leg_sl_in_db(db, trade_id, leg_index, sl_price, current_price, leg_id=leg_id)
                 if stored_sl and sl_price != stored_sl:
+                    print(
+                        f'[TRAIL SL CHANGED] trade={trade_id} leg={leg_id} '
+                        f'old_sl={stored_sl} new_sl={sl_price} ltp={current_price} ts={now_ts}'
+                    )
                     record_trail_sl_changed(
                         db._db, trade, leg, now_ts, stored_sl, sl_price, current_price,
                         trail_config=trail_config,
