@@ -508,6 +508,47 @@ def cancel_open_exit_orders_for_leg(
     return cancelled
 
 
+def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> None:
+    """
+    Called after trail SL update — modifies the pending TRIGGER_PENDING SL order
+    on the broker so the trigger price reflects the new SL value.
+    """
+    try:
+        hist_doc = db._db['algo_trade_positions_history'].find_one(
+            {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
+            {'broker_stoploss_order_id': 1},
+        )
+        sl_order_id = str((hist_doc or {}).get('broker_stoploss_order_id') or '').strip()
+        if not sl_order_id:
+            return
+
+        trade, leg, _leg_cfg, _hist = _load_trade_and_leg_context(db, trade_id, leg_id)
+        if not trade or not leg:
+            return
+
+        position_str = str(leg.get('position') or (_hist or {}).get('position') or '')
+        is_sell = _is_sell(position_str)
+        new_sl_ticked  = _round_to_tick(new_sl, round_up=is_sell)
+        new_limit_price = _sl_limit_price(new_sl_ticked, is_sell_position=is_sell)
+
+        broker = get_broker_for_trade(db, trade)
+        if not broker:
+            return
+
+        broker.modify_order(
+            order_id=sl_order_id,
+            order_type=_ORDER_TYPE_SLM,
+            price=0.0,
+            trigger_price=new_sl_ticked,
+        )
+        print(
+            f'[BROKER SL MODIFIED] trade={trade_id} leg={leg_id} '
+            f'order={sl_order_id} trigger={new_sl_ticked} limit={new_limit_price}'
+        )
+    except Exception as exc:
+        log.warning('[BROKER SL MODIFY ERROR] trade=%s leg=%s new_sl=%s: %s', trade_id, leg_id, new_sl, exc)
+
+
 def _persist_protection_order_refs(
     db,
     trade_id: str,
@@ -587,11 +628,10 @@ def _place_initial_protection_orders(
     leg_for_order = dict(leg)
     leg_for_order['id'] = leg_id
     if sl_price > 0:
-        sl_limit_price = _sl_limit_price(sl_price, is_sell_position=is_sell)
         result = place_live_exit_order(
             db, trade, leg_for_order, leg_cfg, symbol, qty, sl_price, 'stoploss',
-            force_order_type=_ORDER_TYPE_SL,
-            force_limit_price=sl_limit_price,
+            force_order_type=_ORDER_TYPE_SLM,
+            force_limit_price=0.0,
             force_trigger_price=sl_price,
         )
         sl_order_id = str(result.get('order_id') or '').strip()
@@ -1730,6 +1770,10 @@ def poll_pending_order_fills(db) -> int:
             status     = str(kite_order.get('status') or '').upper()
             fill_price = _safe_float(kite_order.get('average_price') or kite_order.get('price'))
             fill_qty   = int(kite_order.get('filled_quantity') or 0)
+
+            if status == _ORDER_STATUS_TRIGGER_PENDING:
+                # SL order waiting for trigger — do not modify or convert
+                continue
 
             if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
                 if process_broker_order_update(

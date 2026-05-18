@@ -269,7 +269,7 @@ class FlatTradeAdapter:
         _status_map = {
             "COMPLETE":        "COMPLETE",
             "OPEN":            "OPEN",
-            "TRIGGER_PENDING": "OPEN",
+            "TRIGGER_PENDING": "TRIGGER_PENDING",
             "REJECTED":        "REJECTED",
             "CANCELLED":       "CANCELLED",
         }
