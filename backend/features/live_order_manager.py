@@ -1602,6 +1602,30 @@ def _get_sl_order_id(trade_id: str, leg_id: str) -> str:
         return _sl_order_registry.get(key, '')
 
 
+def restore_sl_order_registry(db) -> None:
+    """
+    On monitor start, reload existing TRIGGER_PENDING SL orders from DB into registry.
+    This ensures trail SL can modify pre-existing broker SL orders after a server restart.
+    """
+    loaded = 0
+    try:
+        for hist_doc in db._db['algo_trade_positions_history'].find(
+            {'broker_stoploss_order_id': {'$exists': True, '$ne': ''}, 'exit_trade': None},
+            {'trade_id': 1, 'leg_id': 1, 'broker_stoploss_order_id': 1},
+        ):
+            trade_id  = str(hist_doc.get('trade_id') or '').strip()
+            leg_id    = str(hist_doc.get('leg_id') or '').strip()
+            order_id  = str(hist_doc.get('broker_stoploss_order_id') or '').strip()
+            if trade_id and leg_id and order_id:
+                key = f'{trade_id}:{leg_id}'
+                with _sl_order_registry_lock:
+                    _sl_order_registry[key] = order_id
+                loaded += 1
+    except Exception as exc:
+        log.warning('[SL REGISTRY RESTORE ERROR] %s', exc)
+    print(f'[SL REGISTRY RESTORED] loaded={loaded} entries')
+
+
 def _register_active_entry_order(order_id: str) -> None:
     if order_id:
         with _active_entry_lock:
@@ -1978,18 +2002,24 @@ def _get_aggressive_exit_price(broker, exchange: str, symbol: str, txn_type: str
         q       = quotes.get(sym_key) or {}
         depth   = q.get('depth') or {}
         lp      = float(q.get('last_price') or 0)
+        uc      = float(q.get('upper_circuit') or 0)
+        lc      = float(q.get('lower_circuit') or 0)
         if txn_type == _TXN_SELL:
             bid = float(((depth.get('buy') or [{}])[0]).get('price') or 0)
             if bid > 0:
                 return round(bid, 2)
-            return round(lp * 0.95, 2) if lp > 0 else 0.05
+            if lp > 0:
+                return round(lp * 0.95, 2)
+            return round(lc, 2) if lc > 0 else 0.05
         else:
             ask = float(((depth.get('sell') or [{}])[0]).get('price') or 0)
             if ask > 0:
                 return round(ask, 2)
-            return round(lp * 1.05, 2) if lp > 0 else 9999.0
+            if lp > 0:
+                return round(min(lp * 1.05, uc) if uc > 0 else lp * 1.05, 2)
+            return round(uc, 2) if uc > 0 else 0.05
     except Exception:
-        return 0.05 if txn_type == _TXN_SELL else 9999.0
+        return 0.05 if txn_type == _TXN_SELL else 0.05
 
 
 def live_manual_square_off_trade(db, trade: dict) -> dict:
