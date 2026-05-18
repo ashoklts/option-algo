@@ -305,6 +305,8 @@ class FlatTradeAdapter:
         price: float = 0.0,
         trigger_price: float = 0.0,
         validity: str = "DAY",
+        exchange: str = "",
+        tradingsymbol: str = "",
     ) -> str:
         _prctyp = {
             "LIMIT": "LMT",
@@ -313,9 +315,13 @@ class FlatTradeAdapter:
             "SL-M":   "SL-MKT",
         }.get(order_type, "LMT")
 
+        ft_symbol = _to_flattrade_symbol(tradingsymbol, exchange) if tradingsymbol and exchange else tradingsymbol
+
         body: dict = {
             "norenordno": order_id,
             "uid":        self.user_id,
+            "exch":       str(exchange or "NFO").upper(),
+            "tsym":       ft_symbol,
             "prc":        str(round(float(price or 0), 2)),
             "prctyp":     _prctyp,
             "ret":        str(validity or "DAY").upper(),
