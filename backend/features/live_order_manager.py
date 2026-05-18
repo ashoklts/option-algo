@@ -790,6 +790,9 @@ def process_broker_order_update(
     """
     now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
 
+    if status in (_ORDER_STATUS_COMPLETE, _ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
+        _deregister_active_entry_order(order_id)
+
     # 1. Update broker_orders collection
     _update_broker_order_status(db, order_id, status, fill_price, fill_qty, rejection_reason)
 
@@ -1275,6 +1278,7 @@ def place_live_entry_order(
 
         order_id = kite.place_order(**order_params)
         order_id = str(order_id or '').strip()
+        _register_active_entry_order(order_id)
 
         print(
             f'[LIVE ORDER PLACED] trade={trade_id} leg={leg_id} '
@@ -1506,6 +1510,22 @@ def place_live_exit_order(
 _poll_lock     = threading.Lock()
 _pos_sync_lock = threading.Lock()
 
+# Track only orders placed in the current session — poll will ignore pre-existing DB entries
+_active_entry_order_ids: set[str] = set()
+_active_entry_lock = threading.Lock()
+
+
+def _register_active_entry_order(order_id: str) -> None:
+    if order_id:
+        with _active_entry_lock:
+            _active_entry_order_ids.add(order_id)
+
+
+def _deregister_active_entry_order(order_id: str) -> None:
+    if order_id:
+        with _active_entry_lock:
+            _active_entry_order_ids.discard(order_id)
+
 
 def _broker_net_positions(broker) -> dict[str, int] | None:
     """
@@ -1666,6 +1686,9 @@ def poll_pending_order_fills(db) -> int:
             order_id    = str(entry_trade.get('order_id') or '').strip()
             if not order_id or order_id in seen_order_ids:
                 continue
+            with _active_entry_lock:
+                if order_id not in _active_entry_order_ids:
+                    continue
             seen_order_ids.add(order_id)
 
             broker_id = str(trade.get('broker') or '').strip()
