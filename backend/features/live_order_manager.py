@@ -475,6 +475,7 @@ def cancel_open_exit_orders_for_leg(
     leg_id: str,
     *,
     keep_reason: str = '',
+    cancel_reason: str = '',
 ) -> int:
     trade_id = str((trade or {}).get('_id') or '').strip()
     if not trade_id or not leg_id:
@@ -493,17 +494,28 @@ def cancel_open_exit_orders_for_leg(
         order_id = str(row.get('order_id') or '').strip()
         if not order_id:
             continue
+        exit_reason = str(row.get('exit_reason') or '').strip() or '-'
+        order_type = str(row.get('order_type') or '').strip() or '-'
         try:
             if broker and _is_live_order_punch_enabled():
                 broker.cancel_order(variety=_VARIETY_REGULAR, order_id=order_id)
             _update_broker_order_status(db, order_id, _ORDER_STATUS_CANCELLED)
             cancelled += 1
+            print(
+                f'[LIVE EXIT ORDER CANCEL] trade={trade_id} leg={leg_id} '
+                f'order={order_id} exit_reason={exit_reason} order_type={order_type} '
+                f'keep_reason={keep_reason or "-"} cancel_reason={cancel_reason or "-"}'
+            )
         except Exception as exc:
-            log.warning('[LIVE EXIT ORDER CANCEL] trade=%s leg=%s order=%s: %s', trade_id, leg_id, order_id, exc)
+            log.warning(
+                '[LIVE EXIT ORDER CANCEL] trade=%s leg=%s order=%s exit_reason=%s cancel_reason=%s: %s',
+                trade_id, leg_id, order_id, exit_reason, cancel_reason or '-', exc,
+            )
     if cancelled:
         print(
             f'[LIVE EXIT ORDER CANCEL] trade={trade_id} leg={leg_id} '
-            f'cancelled={cancelled} keep_reason={keep_reason or "-"}'
+            f'cancelled={cancelled} keep_reason={keep_reason or "-"} '
+            f'cancel_reason={cancel_reason or "-"}'
         )
     return cancelled
 
@@ -638,11 +650,15 @@ def _sync_leg_feature_entry_price(
     Update algo_leg_feature_status rows with the actual fill price (avg_price from broker).
     Called after fill is verified — updates entry_price and recalculated trigger prices
     so UI display and trail SL logic use the correct fill price, not the original limit_price.
-    Only updates rows that are still 'pending' (not yet triggered/disabled).
+    Updates active/pending rows, while leaving disabled/triggered rows untouched.
     """
     now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
     col    = db._db['algo_leg_feature_status']
-    query  = {'trade_id': trade_id, 'leg_id': leg_id, 'status': 'pending'}
+    query  = {
+        'trade_id': trade_id,
+        'leg_id': leg_id,
+        'status': {'$nin': ['triggered', 'disabled', 'completed', 'cancelled']},
+    }
 
     if sl_price > 0:
         col.update_many(
@@ -666,7 +682,7 @@ def _sync_leg_feature_entry_price(
         )
     # trail_sl: update entry_price only — current_sl_price follows the sl row
     col.update_many(
-        {**query, 'feature': {'$in': ['trail_sl', 'trailing_sl']}},
+        {**query, 'feature': {'$in': ['trailSL', 'trail_sl', 'trailing_sl']}},
         {'$set': {
             'entry_price': entry_price,
             'updated_at':  now_ts,
@@ -684,6 +700,41 @@ def _sync_leg_feature_entry_price(
         f'[FEATURE STATUS SYNCED] trade={trade_id} leg={leg_id} '
         f'entry_price={entry_price} sl_trigger={sl_price} tp_trigger={tp_price}'
     )
+
+
+def _sync_leg_entry_feature_from_positions_history(
+    db,
+    trade_id: str,
+    leg_id: str,
+) -> float:
+    """
+    Read the latest entry price from algo_trade_positions_history and sync only the
+    matching algo_leg_feature_status(feature='leg_entry') row for this leg.
+    """
+    trade_id = str(trade_id or '').strip()
+    leg_id = str(leg_id or '').strip()
+    if not trade_id or not leg_id:
+        return 0.0
+
+    hist_doc = db._db['algo_trade_positions_history'].find_one(
+        {'trade_id': trade_id, 'leg_id': leg_id},
+        {'entry_trade.price': 1},
+    ) or {}
+    entry_trade = hist_doc.get('entry_trade') if isinstance(hist_doc.get('entry_trade'), dict) else {}
+    entry_price = _safe_float(entry_trade.get('price'))
+    if entry_price <= 0:
+        return 0.0
+
+    now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    db._db['algo_leg_feature_status'].update_many(
+        {'trade_id': trade_id, 'leg_id': leg_id, 'feature': 'leg_entry'},
+        {'$set': {'entry_price': entry_price, 'updated_at': now_ts}},
+    )
+    print(
+        f'[LEG ENTRY SYNC] trade={trade_id} leg={leg_id} '
+        f'entry_price(history)={entry_price}'
+    )
+    return entry_price
 
 
 def _fetch_broker_avg_price(db, trade: dict, order_id: str) -> float:
@@ -750,6 +801,7 @@ def _confirm_and_sync_fill_price(
             }},
             array_filters=[{'elem.id': leg_id}],
         )
+        _sync_leg_entry_feature_from_positions_history(db, trade_id, leg_id)
         print(f'[PRICE SYNCED] order={order_id} synced={fetched} from broker')
         return fetched
 
@@ -770,13 +822,6 @@ def _place_initial_protection_orders(
         return
     if str(trade.get('activation_mode') or '').strip() != 'live':
         return
-    if _get_open_exit_orders_for_leg(db, trade_id, leg_id):
-        return
-
-    symbol = str(leg.get('symbol') or hist_doc.get('symbol') or '').strip()
-    qty = int(fill_qty or leg.get('quantity') or hist_doc.get('quantity') or 0)
-    if not symbol or qty <= 0:
-        return
 
     from features.position_manager import calc_sl_price, calc_tp_price  # type: ignore
 
@@ -785,7 +830,7 @@ def _place_initial_protection_orders(
     sl_config = leg_cfg.get('LegStopLoss') or {}
     tp_config = leg_cfg.get('LegTarget') or {}
 
-    # fill_price = verified avg_price from algo_trade_positions_history.entry_trade.price
+    # fill_price = verified price from algo_trade_positions_history.entry_trade.price
     # Always calculate SL/TP from this price — never from algo_leg_feature_status.
     sl_price = _safe_float(calc_sl_price(fill_price, is_sell, sl_config)) if sl_config else 0.0
     tp_price = _safe_float(calc_tp_price(fill_price, is_sell, tp_config)) if tp_config else 0.0
@@ -804,10 +849,17 @@ def _place_initial_protection_orders(
         # Target: SELL position exits when price falls → round DOWN; BUY → round UP
         tp_price = _round_to_tick(tp_price, round_up=not is_sell)
 
-    # Update algo_leg_feature_status with the correct fill price and recalculated SL/TP.
-    # These rows were created at order placement using limit_price (OPEN status).
-    # SL calculation uses fill_price from algo_trade_positions_history (not from this table).
+    # Sync algo_leg_feature_status BEFORE the exit-order guard so the entry_price
+    # and recalculated SL/TP are always written, even if protection orders already exist.
     _sync_leg_feature_entry_price(db, trade_id, leg_id, fill_price, sl_price, tp_price)
+
+    if _get_open_exit_orders_for_leg(db, trade_id, leg_id):
+        return
+
+    symbol = str(leg.get('symbol') or hist_doc.get('symbol') or '').strip()
+    qty = int(fill_qty or leg.get('quantity') or hist_doc.get('quantity') or 0)
+    if not symbol or qty <= 0:
+        return
 
     sl_order_id = ''
     tgt_order_id = ''
@@ -981,7 +1033,13 @@ def _sync_live_exit_fill(
     trade, leg, _leg_cfg, _hist_doc = _load_trade_and_leg_context(db, trade_id, leg_id)
     if not trade:
         return
-    cancel_open_exit_orders_for_leg(db, trade, leg_id, keep_reason=exit_reason)
+    cancel_open_exit_orders_for_leg(
+        db,
+        trade,
+        leg_id,
+        keep_reason=exit_reason,
+        cancel_reason=f'exit_fill:{exit_reason}',
+    )
     now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
     try:
         from features.live_monitor_service import _live_safe_close_leg_in_db
@@ -1122,6 +1180,7 @@ def process_broker_order_update(
             db, trade_id, leg_id, order_id, fill_price,
         )
         if verified_price > 0:
+            _sync_leg_entry_feature_from_positions_history(db, trade_id, leg_id)
             _place_initial_protection_orders(db, trade_id, leg_id, verified_price, fill_qty)
 
         try:
@@ -2309,7 +2368,12 @@ def live_manual_square_off_trade(db, trade: dict) -> dict:
 
     for hist in active_hist_docs:
         leg_id = str(hist.get('leg_id') or '').strip()
-        n = cancel_open_exit_orders_for_leg(db, trade, leg_id)
+        n = cancel_open_exit_orders_for_leg(
+            db,
+            trade,
+            leg_id,
+            cancel_reason='manual_square_off',
+        )
         cancelled_exit += n
 
     # ── 3. Place aggressive LIMIT exit orders for filled open positions ───────
@@ -2518,6 +2582,7 @@ def _convert_to_aggressive_limit(
                     'entry_trade.price':           limit_price,
                 }},
             )
+            _sync_leg_entry_feature_from_positions_history(db, trade_id, leg_id)
         db._db['algo_trades'].update_one(
             {'_id': trade_id},
             {'$set': {

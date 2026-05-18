@@ -1129,14 +1129,25 @@ def _dispatch_mode_exit_order(
 
         trade_id = str(trade.get('_id') or '')
         if exit_reason in {'stoploss', 'target'} and has_open_exit_order(db, trade_id, leg_id, exit_reason):
-            cancel_open_exit_orders_for_leg(db, trade, leg_id, keep_reason=exit_reason)
+            cancel_open_exit_orders_for_leg(
+                db,
+                trade,
+                leg_id,
+                keep_reason=exit_reason,
+                cancel_reason=f'exit_dispatch_keep_existing:{exit_reason}',
+            )
             print(
                 f'[LIVE EXIT ORDER SKIP] trade={trade_id} leg={leg_id} '
                 f'reason={exit_reason} existing_protection_order=open'
             )
             return
 
-        cancel_open_exit_orders_for_leg(db, trade, leg_id)
+        cancel_open_exit_orders_for_leg(
+            db,
+            trade,
+            leg_id,
+            cancel_reason=f'exit_dispatch_replace:{exit_reason}',
+        )
 
         place_live_exit_order(
             db, trade, leg, leg_cfg, symbol, quantity, exit_price, exit_reason
