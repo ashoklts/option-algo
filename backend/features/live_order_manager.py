@@ -2019,7 +2019,7 @@ def _get_aggressive_exit_price(broker, exchange: str, symbol: str, txn_type: str
                 return round(min(lp * 1.05, uc) if uc > 0 else lp * 1.05, 2)
             return round(uc, 2) if uc > 0 else 0.05
     except Exception:
-        return 0.05 if txn_type == _TXN_SELL else 0.05
+        return 0.05 if txn_type == _TXN_SELL else 9999.0
 
 
 def live_manual_square_off_trade(db, trade: dict) -> dict:
