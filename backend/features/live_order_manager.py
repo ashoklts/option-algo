@@ -729,10 +729,17 @@ def _place_initial_protection_orders(
     is_sell = _is_sell(position_str)
     sl_config = leg_cfg.get('LegStopLoss') or {}
     tp_config = leg_cfg.get('LegTarget') or {}
-    sl_price = _safe_float(leg.get('current_sl_price') or hist_doc.get('current_sl_price'))
-    if not sl_price and sl_config:
-        sl_price = _safe_float(calc_sl_price(fill_price, is_sell, sl_config))
+
+    # fill_price = verified avg_price from algo_trade_positions_history.entry_trade.price
+    # Always calculate SL/TP from this price — never from algo_leg_feature_status.
+    sl_price = _safe_float(calc_sl_price(fill_price, is_sell, sl_config)) if sl_config else 0.0
     tp_price = _safe_float(calc_tp_price(fill_price, is_sell, tp_config)) if tp_config else 0.0
+
+    print(
+        f'[SL CALC] trade={trade_id} leg={leg_id} '
+        f'entry_price(positions_history)={fill_price} '
+        f'sl={sl_price} tp={tp_price}'
+    )
 
     # Round trigger prices to NFO tick size (0.05) — FlatTrade rejects non-multiples
     # SELL position SL (trigger on price rise) → round UP; BUY position → round DOWN
