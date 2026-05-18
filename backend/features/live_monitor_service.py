@@ -231,6 +231,13 @@ def _live_safe_update_leg_sl_in_db(db, trade_id: str, leg_index: int,
     except Exception as exc:
         log.warning('live_safe_update_leg_sl dirty-mark error trade=%s: %s', trade_id, exc)
 
+    if leg_id and new_sl > 0:
+        try:
+            from features.live_order_manager import modify_broker_sl_order
+            modify_broker_sl_order(db, trade_id, leg_id, new_sl)
+        except Exception as exc:
+            log.warning('live_safe_update_leg_sl broker-modify error trade=%s leg=%s: %s', trade_id, leg_id, exc)
+
 
 # ─── Singleton service ────────────────────────────────────────────────────────
 
