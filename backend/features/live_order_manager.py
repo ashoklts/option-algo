@@ -773,7 +773,7 @@ def _fetch_broker_avg_price(db, trade: dict, order_id: str) -> float:
             None,
         )
         if matched and str(matched.get('status') or '').upper() == _ORDER_STATUS_COMPLETE:
-            return _safe_float(matched.get('price') or matched.get('average_price'))
+            return _safe_float(matched.get('average_price') or matched.get('price'))
     except Exception as exc:
         log.warning('[FETCH AVG PRICE] order=%s: %s', order_id, exc)
     return 0.0
@@ -1075,6 +1075,20 @@ def _sync_live_exit_fill(
         _live_safe_close_leg_in_db(db, trade_id, 0, fill_price, exit_reason, now_ts, leg_id=leg_id)
     except Exception as exc:
         log.error('[LIVE EXIT FILL SYNC] trade=%s leg=%s reason=%s: %s', trade_id, leg_id, exit_reason, exc)
+
+    try:
+        from features.execution_socket import trigger_live_exit_followups
+        followup_actions = trigger_live_exit_followups(db, trade_id, leg_id, exit_reason, now_ts)
+        if followup_actions:
+            print(
+                f'[LIVE EXIT FOLLOWUP SYNC] trade={trade_id} leg={leg_id} '
+                f'reason={exit_reason} actions={followup_actions}'
+            )
+    except Exception as exc:
+        log.warning(
+            '[LIVE EXIT FOLLOWUP SYNC] trade=%s leg=%s reason=%s: %s',
+            trade_id, leg_id, exit_reason, exc,
+        )
 
     # These reasons mean a pre-placed broker order filled for THIS leg only.
     # Other legs have their own independent SL/Target orders — do NOT touch them.
@@ -2140,7 +2154,7 @@ def poll_pending_order_fills(db) -> int:
                 continue
 
             status     = str(kite_order.get('status') or '').upper()
-            fill_price = _safe_float(kite_order.get('price') or kite_order.get('average_price'))  # limit price as entry price
+            fill_price = _safe_float(kite_order.get('average_price') or kite_order.get('price'))  # actual broker fill price
             fill_qty   = int(kite_order.get('filled_quantity') or 0)
 
             # ── Debug: print raw broker response for every pending order ─────

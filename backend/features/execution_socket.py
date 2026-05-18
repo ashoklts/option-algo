@@ -3969,6 +3969,100 @@ def _handle_reentry(db: MongoData, trade: dict, leg_config: dict,
     return None
 
 
+def trigger_live_exit_followups(
+    db: MongoData,
+    trade_id: str,
+    leg_id: str,
+    exit_reason: str,
+    now_ts: str,
+) -> list[str]:
+    """
+    For broker-side live exits (postback / poll), immediately queue and evaluate
+    any connected reentry / lazy-leg follow-up instead of waiting for the next loop.
+    """
+    normalized_trade_id = str(trade_id or '').strip()
+    normalized_leg_id = str(leg_id or '').strip()
+    normalized_reason = str(exit_reason or '').strip().lower()
+    if not normalized_trade_id or not normalized_leg_id:
+        return []
+    if normalized_reason not in {'stoploss', 'target'}:
+        return []
+
+    trade = db._db['algo_trades'].find_one({'_id': normalized_trade_id}) or {}
+    if not trade:
+        return []
+
+    live_leg = next(
+        (
+            item for item in (trade.get('legs') or [])
+            if isinstance(item, dict) and str(item.get('id') or '').strip() == normalized_leg_id
+        ),
+        None,
+    )
+    if live_leg is None:
+        live_leg = db._db['algo_trade_positions_history'].find_one(
+            {'trade_id': normalized_trade_id, 'leg_id': normalized_leg_id},
+        ) or {}
+
+    all_leg_configs = _resolve_trade_leg_configs(trade)
+    leg_cfg = _resolve_leg_cfg(normalized_leg_id, live_leg or {}, all_leg_configs)
+    if not leg_cfg:
+        return []
+
+    reentry_cfg = (
+        get_reentry_sl_config(leg_cfg)
+        if normalized_reason == 'stoploss'
+        else get_reentry_tp_config(leg_cfg)
+    )
+    if not reentry_cfg:
+        return []
+
+    actions: list[str] = []
+    reentry_result = _handle_reentry(
+        db,
+        trade,
+        dict(leg_cfg, id=normalized_leg_id),
+        reentry_cfg,
+        normalized_leg_id,
+        now_ts,
+    )
+    if reentry_result:
+        actions.append(reentry_result)
+
+    refreshed_trade = db._db['algo_trades'].find_one({'_id': normalized_trade_id}) or trade
+    underlying = str(
+        refreshed_trade.get('ticker')
+        or ((refreshed_trade.get('config') or {}).get('Ticker') or '')
+    ).strip()
+    try:
+        lot_size = db.get_lot_size(now_ts[:10], underlying)
+    except Exception:
+        lot_size = 75
+
+    try:
+        entered_ids = _process_momentum_pending_feature_legs(
+            db,
+            refreshed_trade,
+            db._db[OPTION_CHAIN_COLLECTION],
+            now_ts[:10],
+            now_ts,
+            lot_size,
+        ) or []
+        actions.extend([f'immediate_check:{_id}' for _id in entered_ids if _id])
+    except Exception as exc:
+        log.warning(
+            'trigger_live_exit_followups immediate check error trade=%s leg=%s reason=%s: %s',
+            normalized_trade_id, normalized_leg_id, normalized_reason, exc,
+        )
+
+    if actions:
+        print(
+            f'[LIVE EXIT FOLLOWUPS] trade={normalized_trade_id} leg={normalized_leg_id} '
+            f'reason={normalized_reason} actions={actions}'
+        )
+    return actions
+
+
 # ─── Entry resolver for pending legs ──────────────────────────────────────────
 
 def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
