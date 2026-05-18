@@ -631,6 +631,76 @@ def _recalc_sl_for_actual_fill(db, trade_id: str, leg_id: str, actual_fill: floa
         log.warning('[SL RECALC ERROR] trade=%s leg=%s: %s', trade_id, leg_id, exc)
 
 
+def _fetch_broker_avg_price(db, trade: dict, order_id: str) -> float:
+    """Fetch actual avg_price from broker for a completed order_id."""
+    try:
+        broker = get_broker_for_trade(db, trade)
+        if not broker:
+            return 0.0
+        all_orders = broker.orders() or []
+        matched = next(
+            (o for o in all_orders if str(o.get('order_id') or '') == order_id),
+            None,
+        )
+        if matched and str(matched.get('status') or '').upper() == _ORDER_STATUS_COMPLETE:
+            return _safe_float(matched.get('average_price'))
+    except Exception as exc:
+        log.warning('[FETCH AVG PRICE] order=%s: %s', order_id, exc)
+    return 0.0
+
+
+def _confirm_and_sync_fill_price(
+    db, trade_id: str, leg_id: str, order_id: str, fill_price: float,
+) -> float:
+    """
+    Before placing SL: verify DB entry_trade.price == broker avg_price.
+    If mismatch: re-fetch from broker and sync DB.
+    Returns the verified price to use for SL calculation (always > 0 before SL is placed).
+    """
+    hist_col   = db._db['algo_trade_positions_history']
+    trades_col = db._db['algo_trades']
+    now_ts     = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+
+    doc = hist_col.find_one(
+        {'entry_trade.order_id': order_id},
+        {'entry_trade.price': 1},
+    )
+    db_price = _safe_float((doc.get('entry_trade') or {}).get('price') if doc else None)
+
+    if db_price > 0 and db_price == fill_price:
+        print(f'[PRICE VERIFIED] order={order_id} db={db_price} == broker={fill_price} ✓')
+        return fill_price
+
+    # Mismatch or db_price=0: re-fetch actual avg_price from broker
+    print(
+        f'[PRICE MISMATCH] order={order_id} db={db_price} broker={fill_price} '
+        f'— re-fetching from broker'
+    )
+    trade_doc  = trades_col.find_one({'_id': trade_id}) or {}
+    fetched    = _fetch_broker_avg_price(db, trade_doc, order_id)
+
+    if fetched > 0:
+        hist_col.update_one(
+            {'entry_trade.order_id': order_id},
+            {'$set': {
+                'entry_trade.price':     fetched,
+                'entry_trade.filled_at': now_ts,
+            }},
+        )
+        trades_col.update_one(
+            {'_id': trade_id},
+            {'$set': {
+                'legs.$[elem].entry_trade.price': fetched,
+                'legs.$[elem].last_saw_price':    fetched,
+            }},
+            array_filters=[{'elem.id': leg_id}],
+        )
+        print(f'[PRICE SYNCED] order={order_id} synced={fetched} from broker')
+        return fetched
+
+    return db_price if db_price > 0 else fill_price
+
+
 def _place_initial_protection_orders(
     db,
     trade_id: str,
@@ -895,9 +965,12 @@ def process_broker_order_update(
     now_ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
 
     if status in (_ORDER_STATUS_COMPLETE, _ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
-        _deregister_active_entry_order(order_id)
+        # Entry orders: only deregister when fill confirmed (fill_price > 0).
+        # COMPLETE with fill_price=0 means postback arrived before avg_price settled
+        # — keep in active set so the 2-second poll can retry with the real avg_price.
+        if status != _ORDER_STATUS_COMPLETE or fill_price > 0:
+            _deregister_active_entry_order(order_id)
         _deregister_active_exit_order(order_id)
-        # Remove from SL registry if this was a protection SL order
         with _sl_order_registry_lock:
             stale_keys = [k for k, v in _sl_order_registry.items() if v == order_id]
             for k in stale_keys:
@@ -978,7 +1051,11 @@ def process_broker_order_update(
         if not hist_doc:
             _promote_pending_live_leg_to_position_history(db, trade_id, leg_id)
 
-        _place_initial_protection_orders(db, trade_id, leg_id, fill_price, fill_qty)
+        verified_price = _confirm_and_sync_fill_price(
+            db, trade_id, leg_id, order_id, fill_price,
+        )
+        if verified_price > 0:
+            _place_initial_protection_orders(db, trade_id, leg_id, verified_price, fill_qty)
 
         try:
             from features.execution_socket import mark_execute_order_dirty_from_trade_id
@@ -1391,7 +1468,6 @@ def place_live_entry_order(
         order_id = kite.place_order(**order_params)
         order_id = str(order_id or '').strip()
         _register_active_entry_order(order_id)
-        _schedule_entry_fill_check(db, trade, order_id)
 
         print(
             f'[LIVE ORDER PLACED] trade={trade_id} leg={leg_id} '
@@ -1694,57 +1770,6 @@ def restore_sl_order_registry(db) -> None:
     except Exception as exc:
         log.warning('[REGISTRY RESTORE ERROR] %s', exc)
     print(f'[REGISTRY RESTORED] sl_orders={sl_loaded} pending_entries={entry_loaded}')
-
-
-def _schedule_entry_fill_check(db, trade: dict, order_id: str) -> None:
-    """
-    After placing an entry order on Flattrade, spawn a background thread that checks
-    fill status every 1 second (up to 3 attempts). On fill:
-      1. Get actual avg_price from Flattrade OrderBook
-      2. Update entry_trade.price = avg_price
-      3. Calculate SL from avg_price and place SL order on Flattrade
-    """
-    import threading, time
-
-    def _check():
-        for attempt in range(1, 4):
-            time.sleep(1)
-            try:
-                with _active_entry_lock:
-                    if order_id not in _active_entry_order_ids:
-                        return  # already handled by postback or poll
-                flattrade = get_broker_for_trade(db, trade)
-                if not flattrade:
-                    return
-                all_orders = flattrade.orders() or []
-                matched = next(
-                    (o for o in all_orders if str(o.get('order_id') or '') == order_id),
-                    None,
-                )
-                if not matched:
-                    continue
-                status = str(matched.get('status') or '').upper()
-                if status == _ORDER_STATUS_COMPLETE:
-                    avg_price = float(matched.get('average_price') or 0)
-                    fill_qty  = int(matched.get('filled_quantity') or 0)
-                    if avg_price > 0:
-                        print(
-                            f'[INSTANT FILL CHECK] order={order_id} '
-                            f'attempt={attempt} avg_price={avg_price} qty={fill_qty}'
-                        )
-                        process_broker_order_update(
-                            db, order_id, _ORDER_STATUS_COMPLETE,
-                            fill_price=avg_price, fill_qty=fill_qty,
-                            source='instant_check',
-                        )
-                        return
-                elif status in (_ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
-                    process_broker_order_update(db, order_id, status, source='instant_check')
-                    return
-            except Exception as exc:
-                log.debug('[INSTANT FILL CHECK] order=%s attempt=%d: %s', order_id, attempt, exc)
-
-    threading.Thread(target=_check, daemon=True, name=f'fill-{order_id[:8]}').start()
 
 
 def _register_active_entry_order(order_id: str) -> None:
