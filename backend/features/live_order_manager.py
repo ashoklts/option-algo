@@ -557,6 +557,26 @@ def modify_broker_sl_order(db, trade_id: str, leg_id: str, new_sl: float) -> Non
             price=new_limit_price,
             trigger_price=new_sl_ticked,
         )
+        try:
+            db._db['algo_leg_feature_status'].update_many(
+                {
+                    'trade_id': trade_id,
+                    'leg_id': leg_id,
+                    'feature': {'$in': ['sl', 'trailSL', 'trail_sl', 'trailing_sl']},
+                    'status': {'$nin': ['triggered', 'disabled', 'completed', 'cancelled']},
+                },
+                {'$set': {
+                    'trigger_price': new_sl_ticked,
+                    'current_sl_price': new_sl_ticked,
+                    'order_limit_price': new_limit_price,
+                    'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+                }},
+            )
+        except Exception as _sync_exc:
+            log.warning(
+                '[BROKER SL MODIFIED] feature row sync failed trade=%s leg=%s: %s',
+                trade_id, leg_id, _sync_exc,
+            )
         print(
             f'[BROKER SL MODIFIED] trade={trade_id} leg={leg_id} '
             f'order={sl_order_id} trigger={new_sl_ticked} limit={new_limit_price}'
@@ -645,6 +665,7 @@ def _recalc_sl_for_actual_fill(db, trade_id: str, leg_id: str, actual_fill: floa
 
 def _sync_leg_feature_entry_price(
     db, trade_id: str, leg_id: str, entry_price: float, sl_price: float, tp_price: float,
+    sl_order_price: float = 0.0,
 ) -> None:
     """
     Update algo_leg_feature_status rows with the actual fill price (avg_price from broker).
@@ -666,6 +687,7 @@ def _sync_leg_feature_entry_price(
             {'$set': {
                 'entry_price':      entry_price,
                 'trigger_price':    sl_price,
+                'order_limit_price': sl_order_price if sl_order_price > 0 else sl_price,
                 'current_sl_price': sl_price,
                 'initial_sl_price': sl_price,
                 'updated_at':       now_ts,
@@ -698,7 +720,9 @@ def _sync_leg_feature_entry_price(
     )
     print(
         f'[FEATURE STATUS SYNCED] trade={trade_id} leg={leg_id} '
-        f'entry_price={entry_price} sl_trigger={sl_price} tp_trigger={tp_price}'
+        f'entry_price={entry_price} sl_trigger={sl_price} '
+        f'sl_order_price={sl_order_price if sl_order_price > 0 else sl_price} '
+        f'tp_trigger={tp_price}'
     )
 
 
@@ -849,30 +873,35 @@ def _place_initial_protection_orders(
         # Target: SELL position exits when price falls → round DOWN; BUY → round UP
         tp_price = _round_to_tick(tp_price, round_up=not is_sell)
 
-    # Sync algo_leg_feature_status BEFORE the exit-order guard so the entry_price
-    # and recalculated SL/TP are always written, even if protection orders already exist.
-    _sync_leg_feature_entry_price(db, trade_id, leg_id, fill_price, sl_price, tp_price)
-
-    if _get_open_exit_orders_for_leg(db, trade_id, leg_id):
-        return
-
     symbol = str(leg.get('symbol') or hist_doc.get('symbol') or '').strip()
     qty = int(fill_qty or leg.get('quantity') or hist_doc.get('quantity') or 0)
-    if not symbol or qty <= 0:
-        return
-
     sl_order_id = ''
     tgt_order_id = ''
     leg_for_order = dict(leg)
     leg_for_order['id'] = leg_id
+    sl_limit = 0.0
     if sl_price > 0:
         # Use leg config buffer: TriggerBuffer=0 (exact SL price), LimitBuffer=N points
         exit_cfg   = _resolve_exit_order_config(leg_cfg)
         lmt_buf    = exit_cfg['limit_buffer']    # e.g. 3 points
         buf_type   = exit_cfg['buffer_type']     # 'points' or 'percentage'
         # For a SELL position exit=BUY: limit above trigger; BUY position: limit below
-        sl_limit   = _apply_buffer(sl_price, lmt_buf, buf_type, is_buy=is_sell)
-        sl_limit   = _round_to_tick(sl_limit, round_up=is_sell)
+        sl_limit = _apply_buffer(sl_price, lmt_buf, buf_type, is_buy=is_sell)
+        sl_limit = _round_to_tick(sl_limit, round_up=is_sell)
+
+    # Sync algo_leg_feature_status BEFORE the exit-order guard so the entry_price
+    # and recalculated SL/TP are always written, even if protection orders already exist.
+    _sync_leg_feature_entry_price(
+        db, trade_id, leg_id, fill_price, sl_price, tp_price, sl_order_price=sl_limit,
+    )
+
+    if _get_open_exit_orders_for_leg(db, trade_id, leg_id):
+        return
+
+    if not symbol or qty <= 0:
+        return
+
+    if sl_price > 0:
         result = place_live_exit_order(
             db, trade, leg_for_order, leg_cfg, symbol, qty, sl_price, 'stoploss',
             force_order_type=_ORDER_TYPE_SL,
