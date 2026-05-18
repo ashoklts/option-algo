@@ -949,8 +949,11 @@ def process_broker_order_update(
 
     if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
         # Use limit_price (what we sent to broker) as canonical entry price for SL basis.
-        # avg_price stored separately as fill_price for reference.
-        stored_limit = _safe_float((hist_doc or {}).get('entry_trade', {}).get('limit_price'))
+        # Check hist_doc first, then embedded_leg (which has limit_price from order placement).
+        stored_limit = (
+            _safe_float((hist_doc or {}).get('entry_trade', {}).get('limit_price'))
+            or _safe_float((embedded_leg or {}).get('entry_trade', {}).get('limit_price'))
+        )
         sl_basis_price = stored_limit if stored_limit > 0 else fill_price
         if hist_doc:
             hist_col.update_one(
