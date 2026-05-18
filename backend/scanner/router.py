@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, List, Optional, Union
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -9,15 +9,15 @@ router = APIRouter(prefix="/scanner", tags=["scanner"])
 
 
 class EodScoringRequest(BaseModel):
-    index_name: list[str] | str | None = None
-    index_names: list[str] | str | None = None
-    sectors: list[str] | str | None = None
-    min_price: float | int | str | None = None
-    max_price: float | int | str | None = None
+    index_name: Optional[Union[List[str], str]] = None
+    index_names: Optional[Union[List[str], str]] = None
+    sectors: Optional[Union[List[str], str]] = None
+    min_price: Optional[Union[float, int, str]] = None
+    max_price: Optional[Union[float, int, str]] = None
     top_n: int = 12
     total_capital: float = 1_000_000
-    score_date: str | None = None
-    formula: str | None = None
+    score_date: Optional[str] = None
+    formula: Optional[str] = None
 
 
 @router.get("/indexes")
