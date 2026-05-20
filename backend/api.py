@@ -133,6 +133,23 @@ def _resolve_app_user_id(value: str | None = None) -> str:
     return DEFAULT_APP_USER_ID
 
 
+def _normalize_runtime_activation_mode(value: str | None = None) -> str:
+    normalized_value = str(value or "").strip().lower() or "algo-backtest"
+    if normalized_value == "forward-test":
+        return "fast-forward"
+    return normalized_value
+
+
+def _default_runtime_trade_date(value: str | None = None, date_hint: str | None = None) -> str:
+    normalized_date = str(date_hint or "").strip()
+    if normalized_date:
+        return normalized_date
+    normalized_mode = _normalize_runtime_activation_mode(value)
+    if normalized_mode in {"live", "fast-forward"}:
+        return datetime.now(IST).strftime("%Y-%m-%d")
+    return ""
+
+
 def _list_cache_get(key: str):
     now = time.time()
     with _list_cache_lock:
@@ -528,6 +545,55 @@ def _load_strategy_time_difference_minutes(db: MongoData, activation_mode: str) 
         if config_doc:
             return max(0, _safe_int(config_doc.get("difference_time_interval"), 0))
     return 0
+
+
+def _resolve_daily_portfolio(db: MongoData, source_portfolio_oid, source_portfolio_doc: dict, activation_mode: str = ""):
+    """Find or create a saved_portfolios record for today (IST date) + activation mode.
+
+    Each trading day gets one portfolio per activation mode, e.g.:
+      "2026-05-19-live", "2026-05-19-forward-test", "2026-05-19-algo-backtest"
+
+    All activations with the same mode on the same day reuse the same document,
+    so every strategy is linked to a consistent daily portfolio_id.
+
+    Returns (portfolio_id_str, portfolio_doc_dict).
+    """
+    ist_today = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+    mode_slug = str(activation_mode or "algo-backtest").strip()
+    daily_name = f"{ist_today}-{mode_slug}"
+
+    existing = db._db["saved_portfolios"].find_one(
+        {"name": daily_name},
+        {"_id": 1, "name": 1},
+    )
+    if existing:
+        return str(existing["_id"]), existing
+
+    # Clone metadata from source portfolio
+    source_full = db._db["saved_portfolios"].find_one({"_id": source_portfolio_oid}) or {}
+    now_iso = datetime.utcnow().isoformat()
+    new_doc = {
+        "name": daily_name,
+        "strategy_ids": source_full.get("strategy_ids") or [],
+        "strategies": source_full.get("strategies") or [],
+        "qty_multiplier": int(source_full.get("qty_multiplier") or 1),
+        "is_weekdays": bool(source_full.get("is_weekdays", True)),
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    try:
+        result = db._db["saved_portfolios"].insert_one(new_doc)
+        return str(result.inserted_id), {"_id": result.inserted_id, "name": daily_name}
+    except Exception:
+        # Race condition: another request created the same-named doc concurrently
+        fallback = db._db["saved_portfolios"].find_one(
+            {"name": daily_name},
+            {"_id": 1, "name": 1},
+        )
+        if fallback:
+            return str(fallback["_id"]), fallback
+        # Last resort: keep the original source portfolio
+        return str(source_portfolio_oid), source_portfolio_doc
 
 
 def _apply_strategy_time_difference_to_trade(trade_doc: dict, difference_minutes: int) -> dict:
@@ -2296,6 +2362,9 @@ async def portfolio_prepare_activation(payload: dict):
     if not portfolio_doc:
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
+    # Resolve daily portfolio: find today's (IST) portfolio or create one
+    portfolio_id, portfolio_doc = _resolve_daily_portfolio(db, portfolio_oid, portfolio_doc, activation_mode)
+
     executed_col = db._db["executed_strategies"]
     now_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
     split_executions = {}
@@ -2420,6 +2489,9 @@ async def portfolio_activate(payload: dict):
     portfolio_doc = db._db["saved_portfolios"].find_one({"_id": portfolio_oid}, {"_id": 1, "name": 1})
     if not portfolio_doc:
         raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    # Resolve daily portfolio: find today's (IST) portfolio or create one
+    portfolio_id, portfolio_doc = _resolve_daily_portfolio(db, portfolio_oid, portfolio_doc, activation_mode)
 
     executed_col = db._db["executed_strategies"]
     collection_name = "algo_trades"
@@ -2877,8 +2949,8 @@ async def list_algo_trades(date: str = "", activation_mode: str = "algo-backtest
     """
     db = MongoData()
     algo_trades_col = db._db["algo_trades"]
-    normalized_mode = str(activation_mode or "").strip() or "algo-backtest"
-    normalized_date = str(date or "").strip()
+    normalized_mode = _normalize_runtime_activation_mode(activation_mode)
+    normalized_date = _default_runtime_trade_date(normalized_mode, date)
 
     query = {"activation_mode": normalized_mode}
     if normalized_date:
@@ -2932,8 +3004,8 @@ async def list_algo_executions(environment: str = "algo-backtest", is_signal: bo
       - date: YYYY-MM-DD (required when environment=algo-backtest)
       - trade_status: numeric trade status filter
     """
-    normalized_environment = str(environment or "").strip() or "algo-backtest"
-    normalized_date = str(date or "").strip()
+    normalized_environment = _normalize_runtime_activation_mode(environment)
+    normalized_date = _default_runtime_trade_date(normalized_environment, date)
 
     if normalized_environment == "algo-backtest" and not normalized_date:
         raise HTTPException(status_code=400, detail="date is required when environment=algo-backtest")
@@ -3259,7 +3331,7 @@ async def get_strategy_trade_history(strategy_id: str, status: str = "algo-backt
     db = MongoData()
     try:
         normalized_strategy_id = str(strategy_id or "").strip()
-        normalized_status = str(status or "").strip() or "algo-backtest"
+        normalized_status = _normalize_runtime_activation_mode(status)
         if not normalized_strategy_id:
             raise HTTPException(status_code=400, detail="strategy_id is required")
 
@@ -3286,13 +3358,23 @@ async def get_group_trade_history(group_id: str, status: str = "algo-backtest"):
     db = MongoData()
     try:
         normalized_group_id = str(group_id or "").strip()
-        normalized_status = str(status or "").strip() or "algo-backtest"
+        normalized_status = _normalize_runtime_activation_mode(status)
+        normalized_date = _default_runtime_trade_date(normalized_status)
         if not normalized_group_id:
             raise HTTPException(status_code=400, detail="group_id is required")
 
-        raw_trades = list(db._db["algo_trades"].find({
+        group_query: dict[str, Any] = {
             "portfolio.group_id": normalized_group_id,
-        }))
+            "activation_mode": normalized_status,
+        }
+        if normalized_date:
+            group_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+        raw_trades = list(db._db["algo_trades"].find(group_query))
+        if not raw_trades:
+            fallback_query: dict[str, Any] = {"portfolio.group_id": normalized_group_id}
+            if normalized_date:
+                fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(fallback_query))
         if not raw_trades:
             raise HTTPException(status_code=404, detail="Strategy trade history not found for this group_id")
 
@@ -3316,18 +3398,23 @@ async def get_portfolio_trade_history(portfolio_id: str, status: str = "algo-bac
     db = MongoData()
     try:
         normalized_portfolio_id = str(portfolio_id or "").strip()
-        normalized_status = str(status or "").strip() or "algo-backtest"
+        normalized_status = _normalize_runtime_activation_mode(status)
+        normalized_date = _default_runtime_trade_date(normalized_status)
         if not normalized_portfolio_id:
             raise HTTPException(status_code=400, detail="portfolio_id is required")
 
-        raw_trades = list(db._db["algo_trades"].find({
+        portfolio_query: dict[str, Any] = {
             "portfolio.portfolio": normalized_portfolio_id,
             "activation_mode": normalized_status,
-        }))
+        }
+        if normalized_date:
+            portfolio_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+        raw_trades = list(db._db["algo_trades"].find(portfolio_query))
         if not raw_trades:
-            raw_trades = list(db._db["algo_trades"].find({
-                "portfolio.portfolio": normalized_portfolio_id,
-            }))
+            fallback_query: dict[str, Any] = {"portfolio.portfolio": normalized_portfolio_id}
+            if normalized_date:
+                fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(fallback_query))
         if not raw_trades:
             raise HTTPException(status_code=404, detail="Strategy trade history not found for this portfolio")
 
@@ -4664,6 +4751,7 @@ async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="
             if str(token or "").strip()
         }
         option_contract_map: dict[str, dict[str, str]] = {}
+        equity_contract_map: dict[str, dict[str, str]] = {}
         try:
             db = MongoData()
             try:
@@ -4680,6 +4768,59 @@ async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="
                         "option_type": str(contract.get("option_type") or "").strip().upper(),
                         "strike": str(contract.get("strike") or "").strip(),
                     }
+
+                equity_queries = [
+                    (
+                        "angel_stock_list",
+                        {
+                            "$or": [
+                                {"kite_token": {"$in": unresolved_tokens}},
+                                {"token": {"$in": unresolved_tokens}},
+                                {"tokens": {"$in": unresolved_tokens}},
+                                {"instrument_token": {"$in": unresolved_tokens}},
+                                {"exchange_token": {"$in": unresolved_tokens}},
+                            ]
+                        },
+                        {"_id": 0, "symbol": 1, "exchange": 1, "kite_token": 1, "token": 1, "tokens": 1, "instrument_token": 1, "exchange_token": 1},
+                    ),
+                    (
+                        "stocks_list",
+                        {
+                            "$or": [
+                                {"kite_token": {"$in": unresolved_tokens}},
+                                {"token": {"$in": unresolved_tokens}},
+                                {"tokens": {"$in": unresolved_tokens}},
+                                {"instrument_token": {"$in": unresolved_tokens}},
+                                {"exchange_token": {"$in": unresolved_tokens}},
+                                {"code": {"$in": unresolved_tokens}},
+                            ]
+                        },
+                        {"_id": 0, "symbol": 1, "exchange": 1, "kite_token": 1, "token": 1, "tokens": 1, "instrument_token": 1, "exchange_token": 1, "code": 1},
+                    ),
+                ]
+
+                for collection_name, query, projection in equity_queries:
+                    for contract in db._db[collection_name].find(query, projection):
+                        symbol = str(contract.get("symbol") or "").strip().upper()
+                        exchange = str(contract.get("exchange") or "NSE").strip().upper() or "NSE"
+                        resolved_token = str(
+                            contract.get("kite_token")
+                            or contract.get("token")
+                            or contract.get("tokens")
+                            or contract.get("instrument_token")
+                            or contract.get("exchange_token")
+                            or contract.get("code")
+                            or ""
+                        ).strip()
+                        if not symbol or not resolved_token:
+                            continue
+                        equity_contract_map.setdefault(
+                            resolved_token,
+                            {
+                                "symbol": symbol,
+                                "exchange": exchange,
+                            },
+                        )
             finally:
                 db.close()
         except Exception as exc:
@@ -4738,10 +4879,313 @@ async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="
                             quotes[token] = {"token": token, "ltp": round(row_ltp, 2), "source": "chain"}
                         break
 
+        still_unresolved_equity_tokens = [
+            token for token in unresolved_tokens
+            if float((quotes.get(token) or {}).get("ltp") or 0.0) <= 0 and token in equity_contract_map
+        ]
+        if still_unresolved_equity_tokens:
+            try:
+                if is_configured():
+                    api_key, access_token = get_common_credentials()
+                    if api_key and access_token:
+                        kite = get_kite_instance(access_token)
+                        equity_instruments = [
+                            f"{(equity_contract_map.get(token) or {}).get('exchange', 'NSE')}:{(equity_contract_map.get(token) or {}).get('symbol', '')}"
+                            for token in still_unresolved_equity_tokens
+                            if (equity_contract_map.get(token) or {}).get("symbol")
+                        ]
+                        equity_quote_docs = kite.quote(equity_instruments) or {}
+                        symbol_token_map = {
+                            (
+                                f"{(equity_contract_map.get(token) or {}).get('exchange', 'NSE')}:{(equity_contract_map.get(token) or {}).get('symbol', '')}"
+                            ): token
+                            for token in still_unresolved_equity_tokens
+                            if (equity_contract_map.get(token) or {}).get("symbol")
+                        }
+                        for instrument_key, quote_doc in equity_quote_docs.items():
+                            original_token = symbol_token_map.get(str(instrument_key))
+                            if not original_token:
+                                continue
+                            quote_ltp = float(
+                                quote_doc.get("last_price")
+                                or (quote_doc.get("ohlc") or {}).get("close")
+                                or 0.0
+                            )
+                            if quote_ltp > 0:
+                                quotes[original_token] = {
+                                    "token": original_token,
+                                    "ltp": round(quote_ltp, 2),
+                                    "source": "equity_symbol_quote",
+                                }
+            except Exception as exc:
+                log.warning(
+                    "paper trade equity quote fallback error tokens=%s: %s",
+                    ",".join(still_unresolved_equity_tokens),
+                    exc,
+                )
+
     for token in unique_tokens:
         quotes.setdefault(token, {"token": token, "ltp": 0.0, "source": "unavailable"})
 
     return {"status": "success", "quotes": quotes}
+
+
+@router.get("/angel-stock-list/backfill-kite-token")
+async def backfill_angel_stock_list_kite_token(limit: int = Query(default=0, ge=0)) -> dict:
+    try:
+        from features.live_event import resolve_kite_token_for_symbol
+
+        collection = _shared_mongo._db["angel_stock_list"]
+        cursor = collection.find(
+            {},
+            {
+                "_id": 1,
+                "symbol": 1,
+                "tradingsymbol": 1,
+                "kite_token": 1,
+                "token": 1,
+                "tokens": 1,
+                "instrument_token": 1,
+                "exchange_token": 1,
+            },
+        )
+        if limit > 0:
+            cursor = cursor.limit(limit)
+
+        total_rows = 0
+        updated_count = 0
+        skipped_existing_count = 0
+        missing_token_count = 0
+        failed_symbols: list[str] = []
+
+        for row in cursor:
+            total_rows += 1
+            symbol = str(row.get("symbol") or "").strip()
+            tradingsymbol = str(row.get("tradingsymbol") or symbol).strip()
+            existing_token = str(row.get("kite_token") or "").strip()
+
+            if existing_token:
+                skipped_existing_count += 1
+                continue
+
+            resolved_token = str(
+                row.get("token")
+                or row.get("tokens")
+                or row.get("instrument_token")
+                or row.get("exchange_token")
+                or ""
+            ).strip()
+
+            if not resolved_token and tradingsymbol:
+                try:
+                    resolved_token = str(resolve_kite_token_for_symbol(tradingsymbol) or "").strip()
+                except Exception:
+                    resolved_token = ""
+
+            if resolved_token:
+                result = collection.update_one(
+                    {"_id": row.get("_id")},
+                    {"$set": {"kite_token": resolved_token}},
+                )
+                if result.modified_count > 0:
+                    updated_count += 1
+                else:
+                    skipped_existing_count += 1
+            else:
+                missing_token_count += 1
+                if symbol:
+                    failed_symbols.append(symbol)
+
+        return {
+            "status": "success",
+            "collection": "angel_stock_list",
+            "total_rows": total_rows,
+            "updated_count": updated_count,
+            "skipped_existing_count": skipped_existing_count,
+            "missing_token_count": missing_token_count,
+            "failed_symbols_sample": failed_symbols[:25],
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/investment-portfolio/backfill-symbol-token")
+async def backfill_investment_portfolio_symbol_token(symbol: str = Query(default="")) -> dict:
+    normalized_symbol = str(symbol or "").strip().upper()
+    if not normalized_symbol:
+        return {"status": "error", "message": "symbol query param is required"}
+
+    try:
+        db = _shared_mongo._db
+        source_doc = db["angel_stock_list"].find_one(
+            {"symbol": normalized_symbol},
+            {
+                "_id": 0,
+                "symbol": 1,
+                "kite_token": 1,
+                "token": 1,
+                "tokens": 1,
+                "instrument_token": 1,
+                "exchange_token": 1,
+            },
+        ) or {}
+
+        resolved_token = (
+            source_doc.get("kite_token")
+            or source_doc.get("token")
+            or source_doc.get("tokens")
+            or source_doc.get("instrument_token")
+            or source_doc.get("exchange_token")
+        )
+
+        if resolved_token in (None, ""):
+            fallback_doc = db["stocks_list"].find_one(
+                {"symbol": normalized_symbol},
+                {
+                    "_id": 0,
+                    "token": 1,
+                    "tokens": 1,
+                    "instrument_token": 1,
+                    "exchange_token": 1,
+                    "code": 1,
+                },
+            ) or {}
+            resolved_token = (
+                fallback_doc.get("token")
+                or fallback_doc.get("tokens")
+                or fallback_doc.get("instrument_token")
+                or fallback_doc.get("exchange_token")
+                or fallback_doc.get("code")
+            )
+
+        if resolved_token in (None, ""):
+            return {
+                "status": "error",
+                "message": f"Token not found for symbol {normalized_symbol}",
+            }
+
+        result = db["investment_portfolio"].update_many(
+            {"symbol": normalized_symbol},
+            {"$set": {"symbol_token": resolved_token}},
+        )
+
+        return {
+            "status": "success",
+            "collection": "investment_portfolio",
+            "symbol": normalized_symbol,
+            "symbol_token": resolved_token,
+            "matched_count": result.matched_count,
+            "modified_count": result.modified_count,
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/investment-portfolio/backfill-symbol-token-all")
+async def backfill_investment_portfolio_symbol_token_all(limit: int = Query(default=0, ge=0)) -> dict:
+    try:
+        db = _shared_mongo._db
+        source_cache: dict[str, Any] = {}
+
+        def resolve_symbol_token(normalized_symbol: str) -> Any:
+            if normalized_symbol in source_cache:
+                return source_cache[normalized_symbol]
+
+            source_doc = db["angel_stock_list"].find_one(
+                {"symbol": normalized_symbol},
+                {
+                    "_id": 0,
+                    "kite_token": 1,
+                    "token": 1,
+                    "tokens": 1,
+                    "instrument_token": 1,
+                    "exchange_token": 1,
+                },
+            ) or {}
+
+            resolved = (
+                source_doc.get("kite_token")
+                or source_doc.get("token")
+                or source_doc.get("tokens")
+                or source_doc.get("instrument_token")
+                or source_doc.get("exchange_token")
+            )
+
+            if resolved in (None, ""):
+                fallback_doc = db["stocks_list"].find_one(
+                    {"symbol": normalized_symbol},
+                    {
+                        "_id": 0,
+                        "token": 1,
+                        "tokens": 1,
+                        "instrument_token": 1,
+                        "exchange_token": 1,
+                        "code": 1,
+                    },
+                ) or {}
+                resolved = (
+                    fallback_doc.get("token")
+                    or fallback_doc.get("tokens")
+                    or fallback_doc.get("instrument_token")
+                    or fallback_doc.get("exchange_token")
+                    or fallback_doc.get("code")
+                )
+
+            source_cache[normalized_symbol] = resolved
+            return resolved
+
+        cursor = db["investment_portfolio"].find(
+            {},
+            {"_id": 1, "symbol": 1, "symbol_token": 1},
+        )
+        if limit > 0:
+            cursor = cursor.limit(limit)
+
+        total_rows = 0
+        updated_count = 0
+        skipped_existing_count = 0
+        missing_token_count = 0
+        failed_symbols: list[str] = []
+
+        for row in cursor:
+            total_rows += 1
+            normalized_symbol = str(row.get("symbol") or "").strip().upper()
+            existing_symbol_token = row.get("symbol_token")
+
+            if not normalized_symbol:
+                missing_token_count += 1
+                continue
+
+            if existing_symbol_token not in (None, ""):
+                skipped_existing_count += 1
+                continue
+
+            resolved_token = resolve_symbol_token(normalized_symbol)
+            if resolved_token in (None, ""):
+                missing_token_count += 1
+                failed_symbols.append(normalized_symbol)
+                continue
+
+            result = db["investment_portfolio"].update_one(
+                {"_id": row.get("_id")},
+                {"$set": {"symbol_token": resolved_token}},
+            )
+            if result.modified_count > 0:
+                updated_count += 1
+            else:
+                skipped_existing_count += 1
+
+        return {
+            "status": "success",
+            "collection": "investment_portfolio",
+            "total_rows": total_rows,
+            "updated_count": updated_count,
+            "skipped_existing_count": skipped_existing_count,
+            "missing_token_count": missing_token_count,
+            "failed_symbols_sample": failed_symbols[:25],
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
 
 
 @router.put("/simulator/paper-trade/strategies/{strategy_id}")
@@ -5041,8 +5485,158 @@ async def kite_get_access_token(broker_doc_id: str):
 
 # ─── FlatTrade postback (order status push) ──────────────────────────────────
 
+async def _parse_flattrade_postback_payload(request: Request) -> dict:
+    data: dict = {}
+    try:
+        query_params = dict(request.query_params or {})
+    except Exception:
+        query_params = {}
+
+    try:
+        body_bytes = await request.body()
+        body_str = body_bytes.decode("utf-8", errors="replace")
+    except Exception:
+        body_str = ""
+
+    try:
+        if body_str.startswith("jData="):
+            import urllib.parse
+            parsed = urllib.parse.parse_qs(body_str)
+            jdata_str = (parsed.get("jData") or ["{}"])[0]
+            data = json.loads(jdata_str)
+        elif body_str.strip():
+            data = json.loads(body_str)
+    except Exception as exc:
+        log.warning("[FLATTRADE POSTBACK] body parse error: %s", exc)
+        data = {}
+
+    if not data and query_params:
+        if "jData" in query_params:
+            try:
+                data = json.loads(str(query_params.get("jData") or "{}"))
+            except Exception as exc:
+                log.warning("[FLATTRADE POSTBACK] query jData parse error: %s", exc)
+                data = {}
+        else:
+            data = query_params
+    return data if isinstance(data, dict) else {}
+
+
+def _process_flattrade_postback_payload(
+    *,
+    data: dict,
+    broker_doc_id: str = "",
+    source_tag: str = "FLATTRADE POSTBACK",
+) -> None:
+    from features.live_order_manager import process_broker_order_update
+
+    order_id = str(data.get("norenordno") or data.get("order_id") or "").strip()
+    status_raw = str(data.get("status") or "").upper().strip()
+    fill_price = float(data.get("avgprc") or data.get("flprc") or data.get("prc") or 0)
+    fill_qty = int(data.get("fillshares") or data.get("filledshares") or data.get("qty") or 0)
+    rej_reason = str(data.get("rejreason") or data.get("emsg") or "").lower()
+    uid = str(data.get("uid") or data.get("actid") or "").strip()
+
+    log.info(
+        "[%s] broker=%s uid=%s order_id=%s status=%s fill=%.2f qty=%d payload=%s",
+        source_tag,
+        broker_doc_id or "-",
+        uid or "-",
+        order_id,
+        status_raw,
+        fill_price,
+        fill_qty,
+        data,
+    )
+
+    if not order_id:
+        return
+
+    _status_map = {
+        "COMPLETE": "COMPLETE",
+        "COMPLETED": "COMPLETE",
+        "REJECTED": "REJECTED",
+        "CANCELLED": "CANCELLED",
+        "CANCELED": "CANCELLED",
+        "OPEN": "OPEN",
+        "TRIGGER_PENDING": "TRIGGER_PENDING",
+    }
+    status = _status_map.get(status_raw, status_raw)
+    if status not in ("COMPLETE", "REJECTED", "CANCELLED"):
+        return
+
+    local_db = MongoData()
+    try:
+        if broker_doc_id:
+            broker_order = local_db._db["broker_orders"].find_one(
+                {"order_id": order_id},
+                {"trade_id": 1},
+            )
+            if broker_order:
+                trade_id = str(broker_order.get("trade_id") or "").strip()
+                trade = local_db._db["algo_trades"].find_one(
+                    {"_id": trade_id},
+                    {"broker": 1},
+                )
+                trade_broker = str((trade or {}).get("broker") or "").strip()
+                if trade_broker and trade_broker != broker_doc_id:
+                    log.warning(
+                        "[%s] broker=%s order_id=%s belongs_to=%s - skipping",
+                        source_tag, broker_doc_id, order_id, trade_broker,
+                    )
+                    return
+
+        updated = process_broker_order_update(
+            local_db,
+            order_id=order_id,
+            status=status,
+            fill_price=fill_price,
+            fill_qty=fill_qty,
+            rejection_reason=rej_reason,
+            source="postback",
+        )
+        if not updated and status == "COMPLETE":
+            exit_doc = local_db._db["broker_orders"].find_one(
+                {"order_id": order_id},
+                {"order_side": 1, "status": 1, "trade_id": 1, "leg_id": 1, "exit_reason": 1},
+            ) or {}
+            if str(exit_doc.get("order_side") or "").strip() == "exit":
+                from features.live_order_manager import _sync_live_exit_fill
+                trade_id = str(exit_doc.get("trade_id") or "").strip()
+                leg_id = str(exit_doc.get("leg_id") or "").strip()
+                exit_reason = str(exit_doc.get("exit_reason") or "stoploss").strip() or "stoploss"
+                if trade_id and leg_id and fill_price > 0:
+                    local_db._db["broker_orders"].update_one(
+                        {"order_id": order_id},
+                        {"$set": {
+                            "status": "COMPLETE",
+                            "fill_price": float(fill_price or 0),
+                            "fill_qty": int(fill_qty or 0),
+                            "filled_at": datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+                            "updated_at": datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+                        }},
+                    )
+                    _sync_live_exit_fill(local_db, trade_id, leg_id, exit_reason, fill_price)
+                    updated = True
+                    log.info(
+                        "[%s] forced exit sync broker=%s order_id=%s trade=%s leg=%s reason=%s fill=%.2f",
+                        source_tag, broker_doc_id or "-", order_id, trade_id, leg_id, exit_reason, fill_price,
+                    )
+        log.info("[%s] broker=%s order_id=%s updated=%s", source_tag, broker_doc_id or "-", order_id, updated)
+    except Exception as exc:
+        log.error("[%s] processing error broker=%s order_id=%s: %s", source_tag, broker_doc_id or "-", order_id, exc)
+    finally:
+        try:
+            local_db.close()
+        except Exception:
+            pass
+
+
 @router.get("/broker/flattrade/postback")
-async def flattrade_postback_get():
+async def flattrade_postback_get(request: Request):
+    data = await _parse_flattrade_postback_payload(request)
+    if data:
+        _process_flattrade_postback_payload(data=data, source_tag="FLATTRADE POSTBACK GET")
     return {"stat": "Ok"}
 
 
@@ -5067,81 +5661,22 @@ async def flattrade_postback(request: Request):
       OPEN            → order acknowledged (ignore — no DB change)
       TRIGGER_PENDING → SL trigger waiting (ignore)
     """
-    from features.live_order_manager import process_broker_order_update
-
-    # ── Parse payload — FlatTrade sends form-encoded jData=<json> ─────────────
-    data: dict = {}
-    try:
-        body_bytes = await request.body()
-        body_str   = body_bytes.decode("utf-8", errors="replace")
-
-        if body_str.startswith("jData="):
-            import urllib.parse
-            parsed = urllib.parse.parse_qs(body_str)
-            jdata_str = (parsed.get("jData") or ["{}"])[0]
-            data = json.loads(jdata_str)
-        else:
-            # Try plain JSON body
-            data = json.loads(body_str) if body_str.strip() else {}
-    except Exception as exc:
-        log.warning("[FLATTRADE POSTBACK] parse error: %s", exc)
-        return {"stat": "Ok"}   # always 200 so FlatTrade doesn't retry
-
-    order_id   = str(data.get("norenordno") or "").strip()
-    status_raw = str(data.get("status")     or "").upper()
-    fill_price = float(data.get("avgprc")   or data.get("flprc") or 0)
-    fill_qty   = int(data.get("fillshares") or 0)
-    rej_reason = str(data.get("rejreason")  or "").lower()
-    # uid = FlatTrade user ID — identifies which broker account sent this
-    uid        = str(data.get("uid") or data.get("actid") or "").strip()
-
-    log.info(
-        "[FLATTRADE POSTBACK] uid=%s order_id=%s status=%s fill=%.2f qty=%d",
-        uid or "-", order_id, status_raw, fill_price, fill_qty,
-    )
-
-    if not order_id:
-        return {"stat": "Ok"}
-
-    # Map FlatTrade status → our internal status
-    _status_map = {
-        "COMPLETE":        "COMPLETE",
-        "REJECTED":        "REJECTED",
-        "CANCELLED":       "CANCELLED",
-        "OPEN":            "OPEN",
-        "TRIGGER_PENDING": "OPEN",
-    }
-    status = _status_map.get(status_raw, status_raw)
-
-    # Only act on terminal / fill statuses
-    if status not in ("COMPLETE", "REJECTED", "CANCELLED"):
-        return {"stat": "Ok"}
-
-    local_db = MongoData()
-    try:
-        process_broker_order_update(
-            local_db,
-            order_id  = order_id,
-            status    = status,
-            fill_price= fill_price,
-            fill_qty  = fill_qty,
-            rejection_reason = rej_reason,
-            source    = "postback",
-        )
-    except Exception as exc:
-        log.error("[FLATTRADE POSTBACK] processing error order_id=%s: %s", order_id, exc)
-    finally:
-        try:
-            local_db.close()
-        except Exception:
-            pass
-
+    data = await _parse_flattrade_postback_payload(request)
+    if data:
+        _process_flattrade_postback_payload(data=data, source_tag="FLATTRADE POSTBACK POST")
     return {"stat": "Ok"}
 
 
 @router.get("/broker/flattrade/postback/{broker_doc_id}")
-async def flattrade_postback_dynamic_get(broker_doc_id: str):
-    """GET handler so FlatTrade URL validation passes (they ping the URL before saving)."""
+async def flattrade_postback_dynamic_get(request: Request, broker_doc_id: str):
+    """GET handler so FlatTrade URL validation passes, and also process GET payload fallback."""
+    data = await _parse_flattrade_postback_payload(request)
+    if data:
+        _process_flattrade_postback_payload(
+            data=data,
+            broker_doc_id=broker_doc_id,
+            source_tag="FLATTRADE POSTBACK DYNAMIC GET",
+        )
     return {"stat": "Ok", "broker": broker_doc_id}
 
 
@@ -5152,77 +5687,13 @@ async def flattrade_postback_dynamic(request: Request, broker_doc_id: str):
     URL: https://finedgealgo.com/algo/broker/flattrade/postback/{broker_doc_id}
     FlatTrade sends order updates here (fill / reject / cancel).
     """
-    from features.live_order_manager import process_broker_order_update
-
-    data: dict = {}
-    try:
-        body_bytes = await request.body()
-        body_str   = body_bytes.decode("utf-8", errors="replace")
-        if body_str.startswith("jData="):
-            import urllib.parse
-            jdata_str = (urllib.parse.parse_qs(body_str).get("jData") or ["{}"])[0]
-            data = json.loads(jdata_str)
-        else:
-            data = json.loads(body_str) if body_str.strip() else {}
-    except Exception as exc:
-        log.warning("[POSTBACK/%s] parse error: %s", broker_doc_id, exc)
-        return {"stat": "Ok"}
-
-    order_id   = str(data.get("norenordno") or "").strip()
-    status_raw = str(data.get("status")     or "").upper()
-    fill_price = float(data.get("avgprc")   or data.get("flprc") or 0)
-    fill_qty   = int(data.get("fillshares") or 0)
-    rej_reason = str(data.get("rejreason")  or "").lower()
-    uid        = str(data.get("uid")        or "").strip()
-
-    log.info("[POSTBACK/%s] uid=%s order_id=%s status=%s fill=%.2f qty=%d",
-             broker_doc_id, uid or "-", order_id, status_raw, fill_price, fill_qty)
-
-    if not order_id:
-        return {"stat": "Ok"}
-
-    _status_map = {
-        "COMPLETE": "COMPLETE", "REJECTED": "REJECTED",
-        "CANCELLED": "CANCELLED", "OPEN": "OPEN", "TRIGGER_PENDING": "OPEN",
-    }
-    status = _status_map.get(status_raw, status_raw)
-    if status not in ("COMPLETE", "REJECTED", "CANCELLED"):
-        return {"stat": "Ok"}
-
-    local_db = MongoData()
-    try:
-        # Validate: only process orders that belong to this broker account
-        broker_order = local_db._db["broker_orders"].find_one(
-            {"order_id": order_id},
-            {"trade_id": 1},
+    data = await _parse_flattrade_postback_payload(request)
+    if data:
+        _process_flattrade_postback_payload(
+            data=data,
+            broker_doc_id=broker_doc_id,
+            source_tag="FLATTRADE POSTBACK DYNAMIC POST",
         )
-        if broker_order:
-            trade_id = str(broker_order.get("trade_id") or "").strip()
-            trade = local_db._db["algo_trades"].find_one(
-                {"_id": trade_id},
-                {"broker": 1},
-            )
-            trade_broker = str((trade or {}).get("broker") or "").strip()
-            if trade_broker and trade_broker != broker_doc_id:
-                log.warning(
-                    "[POSTBACK/%s] order_id=%s belongs to broker=%s — skipping",
-                    broker_doc_id, order_id, trade_broker,
-                )
-                return {"stat": "Ok"}
-
-        process_broker_order_update(
-            local_db, order_id=order_id, status=status,
-            fill_price=fill_price, fill_qty=fill_qty,
-            rejection_reason=rej_reason, source="postback",
-        )
-    except Exception as exc:
-        log.error("[POSTBACK/%s] error order_id=%s: %s", broker_doc_id, order_id, exc)
-    finally:
-        try:
-            local_db.close()
-        except Exception:
-            pass
-
     return {"stat": "Ok"}
 
 
@@ -5232,9 +5703,9 @@ _flattrade_pending: dict = {}
 
 
 @app.get("/broker/flattrade/postback")
-async def flattrade_postback_validation_get():
+async def flattrade_postback_validation_get(request: Request):
     """GET handler so FlatTrade URL validation passes."""
-    return {"stat": "Ok"}
+    return await flattrade_postback_get(request)
 
 
 @app.post("/broker/flattrade/postback")
@@ -5244,9 +5715,9 @@ async def flattrade_postback_app_post(request: Request):
 
 
 @app.get("/broker/flattrade/postback/{broker_doc_id}")
-async def flattrade_postback_dynamic_app_get(broker_doc_id: str):
+async def flattrade_postback_dynamic_app_get(request: Request, broker_doc_id: str):
     """GET handler so FlatTrade URL validation passes for dynamic postback URLs."""
-    return {"stat": "Ok", "broker": broker_doc_id}
+    return await flattrade_postback_dynamic_get(request, broker_doc_id)
 
 
 @app.post("/broker/flattrade/postback/{broker_doc_id}")
@@ -7629,7 +8100,7 @@ async def mock_ltp(token: str):
 async def mtm_historical_data(
     tokens: str = Query(default=""),
     candle: str = Query(default=""),
-    activation_mode: str = Query(default="algo-backtest"),
+    activation_mode: str = Query(default=""),
 ):
     """
     Return per-minute OHLCV candle data for the given active leg tokens.
@@ -7637,7 +8108,7 @@ async def mtm_historical_data(
     Query params:
         tokens          – comma-separated  e.g. NSE_54812,NSE_54815,BSE_869786
         candle          – ISO timestamp    e.g. 2026-04-08T11:10:21+05:30
-        activation_mode – algo-backtest | fast-forward | live
+        activation_mode – optional; algo-backtest | fast-forward | live
 
     Only tokens that have an active (entered, not exited) leg on the trade date
     derived from `candle` are returned.
@@ -7665,7 +8136,7 @@ async def mtm_historical_data(
 async def spot_historical_data(
     underlying: str = Query(default=""),
     candle: str = Query(default=""),
-    activation_mode: str = Query(default="algo-backtest"),
+    activation_mode: str = Query(default=""),
 ):
     """
     Return per-minute spot price history for an underlying index (e.g. NIFTY)
@@ -7674,7 +8145,7 @@ async def spot_historical_data(
     Query params:
         underlying      – e.g. NIFTY, BANKNIFTY
         candle          – ISO timestamp  e.g. 2025-11-03T15:30:00
-        activation_mode – algo-backtest | fast-forward | live
+        activation_mode – optional; algo-backtest | fast-forward | live
 
     Response:
         { "NSE_01": { timestamp, close }, "NSE_00": { timestamp, close } }
@@ -7727,6 +8198,41 @@ async def option_chain_historical_iv(
         db.close()
 
     return data
+
+
+_TRADE_DATA_DIR = Path(__file__).resolve().parent.parent / "algoreq" / "trade-data"
+
+
+def _read_trade_static_json(filename: str):
+    path = _TRADE_DATA_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"{filename} not found")
+    import json as _json_mod
+    return _json_mod.loads(path.read_text(encoding="utf-8"))
+
+
+@app.get("/algo/trade-static/algoentry")
+async def get_algoentry_data():
+    """Return the current algoentry_data.json (legs + trade metadata)."""
+    return _read_trade_static_json("algoentry_data.json")
+
+
+@app.get("/algo/trade-static/scanner-symbol")
+async def get_scanner_symbol_data():
+    """Return the current scannersymbolinvest.json (per-token OHLCV including NSE_0 spot)."""
+    return _read_trade_static_json("scannersymbolinvest.json")
+
+
+@app.get("/algo/trade-static/algotest-all-position-data")
+async def get_algotest_all_position_data():
+    """Return the static AlgoTest multi-strategy positions payload."""
+    return _read_trade_static_json("algotest-all-position-data.json")
+
+
+@app.get("/algo/trade-static/algotest-all-position-data-his")
+async def get_algotest_all_position_data_his():
+    """Return the static AlgoTest historical token series payload."""
+    return _read_trade_static_json("algotest-all-position-data-his.json")
 
 
 @app.get("/algo/system/status")
