@@ -137,10 +137,6 @@ def get_spot_historical_data(
     algo-backtest       → DB option_chain_index_spot
     """
     date_part, candle_ts = _parse_candle(candle)
-
-    if str(activation_mode or "").strip() in ("live", "fast-forward"):
-        return _fetch_kite_spot_vix(underlying, date_part, candle_ts)
-
     market_open = f"{date_part}T09:15:00"
     time_q = {"timestamp": {"$gte": market_open, "$lte": candle_ts}}
     col = db._db[SPOT_COL]
@@ -174,4 +170,11 @@ def get_spot_historical_data(
     else:
         log.warning("[spot_hist] no VIX data for date=%s", date_part)
 
-    return result
+    if result:
+        return result
+
+    normalized_mode = str(activation_mode or "").strip().lower()
+    if normalized_mode == "algo-backtest":
+        return {}
+
+    return _fetch_kite_spot_vix(underlying, date_part, candle_ts)

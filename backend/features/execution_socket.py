@@ -4018,13 +4018,22 @@ def trigger_live_exit_followups(
                 record_sl_hit, record_target_hit,
                 trigger_leg_feature, disable_leg_features,
             )
+            from features.position_manager import calc_sl_price, calc_tp_price  # type: ignore
+            _entry_price = _safe_float((live_leg.get('entry_trade') or {}).get('price') or live_leg.get('entry_price'))
+            _is_sell = _is_sell(str(live_leg.get('position') or ''))
             if normalized_reason == 'stoploss':
+                _sl_cfg = (leg_cfg or {}).get('LegStopLoss') or {}
                 sl_price = _safe_float(live_leg.get('current_sl_price') or live_leg.get('initial_sl_value'))
+                if not sl_price and _entry_price and _sl_cfg:
+                    sl_price = _safe_float(calc_sl_price(_entry_price, _is_sell, _sl_cfg))
                 record_sl_hit(db._db, trade, live_leg, now_ts, fill_price, sl_price or 0.0)
                 trigger_leg_feature(db._db, normalized_trade_id, normalized_leg_id, 'sl', fill_price, now_ts)
                 disable_leg_features(db._db, normalized_trade_id, normalized_leg_id, except_feature='sl', reason='sl_triggered', timestamp=now_ts)
             else:
-                tp_price = _safe_float(live_leg.get('current_tp_price') or live_leg.get('tp_price'))
+                _tp_cfg = (leg_cfg or {}).get('LegTarget') or {}
+                tp_price = 0.0
+                if _entry_price and _tp_cfg:
+                    tp_price = _safe_float(calc_tp_price(_entry_price, _is_sell, _tp_cfg))
                 record_target_hit(db._db, trade, live_leg, now_ts, fill_price, tp_price or 0.0)
                 trigger_leg_feature(db._db, normalized_trade_id, normalized_leg_id, 'target', fill_price, now_ts)
                 disable_leg_features(db._db, normalized_trade_id, normalized_leg_id, except_feature='target', reason='target_triggered', timestamp=now_ts)
@@ -4039,9 +4048,10 @@ def trigger_live_exit_followups(
             else get_reentry_tp_config(leg_cfg)
         )
         if reentry_cfg:
+            refreshed_trade_for_reentry = db._db['algo_trades'].find_one({'_id': normalized_trade_id}) or trade
             reentry_result = _handle_reentry(
                 db,
-                trade,
+                refreshed_trade_for_reentry,
                 dict(leg_cfg, id=normalized_leg_id),
                 reentry_cfg,
                 normalized_leg_id,
@@ -4049,6 +4059,7 @@ def trigger_live_exit_followups(
             )
             if reentry_result:
                 actions.append(reentry_result)
+                print(f'[LIVE REENTRY QUEUED] trade={normalized_trade_id} leg={normalized_leg_id} reason={normalized_reason} result={reentry_result}')
 
     # ── Momentum pending leg check (always — lazy legs may be waiting) ─────────
     refreshed_trade = db._db['algo_trades'].find_one({'_id': normalized_trade_id}) or trade

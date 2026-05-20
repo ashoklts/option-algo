@@ -1590,6 +1590,148 @@ def record_leg_features_at_entry(
         log.error('leg_entry audit row error leg=%s: %s', leg_id, exc)
 
 
+def refresh_leg_feature_status_at_fill(
+    db,
+    trade_id: str,
+    leg_id: str,
+    fill_price: float,
+    leg_cfg: dict,
+    is_sell: bool,
+    sl_price: float,
+    tp_price: float,
+    now: str,
+) -> None:
+    """
+    Called after broker entry fill is confirmed (postback).
+    Rebuilds trigger_price, current_sl_price, initial_sl_price AND trigger_description
+    for sl / target / trailSL / leg_entry feature rows using the actual fill price.
+    Only touches active/pending rows (skips triggered/disabled).
+    """
+    from features.position_manager import calc_sl_price, calc_tp_price  # type: ignore
+
+    col   = db[LEG_FEATURE_STATUS_COLLECTION]
+    query = {
+        'trade_id': trade_id,
+        'leg_id':   leg_id,
+        'status':   {'$nin': ['triggered', 'disabled', 'completed', 'cancelled']},
+    }
+
+    sl_cfg   = leg_cfg.get('LegStopLoss') or {}
+    sl_type  = str(sl_cfg.get('Type') or '')
+    sl_val   = _safe_float(sl_cfg.get('Value'))
+    tp_cfg   = leg_cfg.get('LegTarget') or {}
+    tp_type  = str(tp_cfg.get('Type') or '')
+    tp_val   = _safe_float(tp_cfg.get('Value'))
+    trail_cfg  = leg_cfg.get('LegTrailSL') or {}
+    trail_type = str(trail_cfg.get('Type') or '')
+    trail_val  = trail_cfg.get('Value') or {}
+    instr_move = _safe_float(trail_val.get('InstrumentMove') if isinstance(trail_val, dict) else 0)
+    sl_move    = _safe_float(trail_val.get('StopLossMove') if isinstance(trail_val, dict) else 0)
+
+    # ── SL ────────────────────────────────────────────────────────────────────
+    if sl_price > 0 and 'None' not in sl_type and sl_val > 0:
+        sl_kind = 'Percentage' if 'Percentage' in sl_type else 'Points'
+        if is_sell:
+            sl_desc = (
+                f"SL triggers when price rises above ₹{sl_price} "
+                f"({sl_kind}: {sl_val}{'%' if sl_kind == 'Percentage' else ' pts'} from ₹{fill_price})"
+            )
+        else:
+            sl_desc = (
+                f"SL triggers when price falls below ₹{sl_price} "
+                f"({sl_kind}: {sl_val}{'%' if sl_kind == 'Percentage' else ' pts'} from ₹{fill_price})"
+            )
+        try:
+            col.update_many(
+                {**query, 'feature': 'sl'},
+                {'$set': {
+                    'entry_price':         fill_price,
+                    'trigger_price':       sl_price,
+                    'order_limit_price':   sl_price,
+                    'current_sl_price':    sl_price,
+                    'initial_sl_price':    sl_price,
+                    'trigger_description': sl_desc,
+                    'updated_at':          now,
+                }},
+            )
+        except Exception as _e:
+            log.warning('refresh_feature sl error leg=%s: %s', leg_id, _e)
+
+    # ── Target ────────────────────────────────────────────────────────────────
+    if tp_price > 0 and 'None' not in tp_type and tp_val > 0:
+        tp_kind = 'Percentage' if 'Percentage' in tp_type else 'Points'
+        if is_sell:
+            tp_desc = (
+                f"Target triggers when price falls below ₹{tp_price} "
+                f"({tp_kind}: {tp_val}{'%' if tp_kind == 'Percentage' else ' pts'} from ₹{fill_price})"
+            )
+        else:
+            tp_desc = (
+                f"Target triggers when price rises above ₹{tp_price} "
+                f"({tp_kind}: {tp_val}{'%' if tp_kind == 'Percentage' else ' pts'} from ₹{fill_price})"
+            )
+        try:
+            col.update_many(
+                {**query, 'feature': 'target'},
+                {'$set': {
+                    'entry_price':         fill_price,
+                    'trigger_price':       tp_price,
+                    'trigger_description': tp_desc,
+                    'updated_at':          now,
+                }},
+            )
+        except Exception as _e:
+            log.warning('refresh_feature target error leg=%s: %s', leg_id, _e)
+
+    # ── Trail SL ──────────────────────────────────────────────────────────────
+    if sl_price > 0 and 'None' not in trail_type and instr_move > 0:
+        trail_kind = 'Percentage' if 'Percentage' in trail_type else 'Points'
+        reference_text = _build_trail_step_reference_text(
+            entry_price=fill_price,
+            initial_sl_price=sl_price,
+            current_sl_price=sl_price,
+            instr_move=instr_move,
+            sl_move=sl_move,
+            is_sell=is_sell,
+            trail_type=trail_type,
+            current_step=0,
+        )
+        trail_desc = (
+            f"Trail SL active: every {instr_move} {trail_kind.lower()} favorable move → "
+            f"SL shifts {sl_move} {trail_kind.lower()}. "
+            f"Initial SL: {_format_rupee(sl_price)}. "
+            f"{reference_text}"
+        )
+        try:
+            col.update_many(
+                {**query, 'feature': {'$in': ['trailSL', 'trail_sl', 'trailing_sl']}},
+                {'$set': {
+                    'entry_price':         fill_price,
+                    'current_sl_price':    sl_price,
+                    'initial_sl_price':    sl_price,
+                    'trigger_price':       sl_price,
+                    'trigger_description': trail_desc,
+                    'updated_at':          now,
+                }},
+            )
+        except Exception as _e:
+            log.warning('refresh_feature trailSL error leg=%s: %s', leg_id, _e)
+
+    # ── leg_entry audit row ───────────────────────────────────────────────────
+    try:
+        col.update_many(
+            {'trade_id': trade_id, 'leg_id': leg_id, 'feature': 'leg_entry'},
+            {'$set': {'entry_price': fill_price, 'updated_at': now}},
+        )
+    except Exception as _e:
+        log.warning('refresh_feature leg_entry error leg=%s: %s', leg_id, _e)
+
+    print(
+        f'[FEATURE STATUS REFRESHED] trade={trade_id} leg={leg_id} '
+        f'fill={fill_price} sl={sl_price} tp={tp_price}'
+    )
+
+
 def trigger_leg_feature(
     db,
     trade_id: str,
