@@ -258,7 +258,9 @@ class _LiveFastMonitorSupervisor:
                             dict(ticker_manager.ltp_map or {}),
                             activation_mode='live',
                         )
-                        if _poll_tick % 8 == 0:
+                        # Entry fill detection: primary = postback URL.
+                        # Fallback poll every 120 ticks (~30 s) only if postback missed.
+                        if _poll_tick % 120 == 0:
                             try:
                                 from features.live_order_manager import poll_pending_order_fills
                                 poll_pending_order_fills(db)
