@@ -259,11 +259,17 @@ class _LiveFastMonitorSupervisor:
                             activation_mode='live',
                         )
                         # Entry fill detection: primary = postback URL.
-                        # Fallback poll every 120 ticks (~30 s) only if postback missed.
-                        if _poll_tick % 120 == 0:
+                        # Fallback poll every 8 ticks (~2 s) only while pending entry
+                        # orders exist. Stops automatically once SL is placed (order
+                        # deregistered from active set after fill confirmed).
+                        if _poll_tick % 8 == 0:
                             try:
-                                from features.live_order_manager import poll_pending_order_fills
-                                poll_pending_order_fills(db)
+                                from features.live_order_manager import (
+                                    poll_pending_order_fills,
+                                    has_pending_entry_orders,
+                                )
+                                if has_pending_entry_orders():
+                                    poll_pending_order_fills(db)
                             except Exception as _pe:
                                 log.debug('[ORDER POLL] error: %s', _pe)
                         # Position sync every 120 ticks (~30 s) — detects externally

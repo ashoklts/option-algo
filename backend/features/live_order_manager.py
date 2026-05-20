@@ -837,20 +837,28 @@ def _sync_leg_entry_feature_from_positions_history(
 
 def _fetch_broker_avg_price(db, trade: dict, order_id: str) -> float:
     """Fetch actual avg_price from broker for a completed order_id."""
+    price, _ = _fetch_broker_fill(db, trade, order_id)
+    return price
+
+
+def _fetch_broker_fill(db, trade: dict, order_id: str) -> tuple[float, int]:
+    """Fetch (avg_price, filled_qty) from broker for a completed order_id."""
     try:
         broker = get_broker_for_trade(db, trade)
         if not broker:
-            return 0.0
+            return 0.0, 0
         all_orders = broker.orders() or []
         matched = next(
             (o for o in all_orders if str(o.get('order_id') or '') == order_id),
             None,
         )
         if matched and str(matched.get('status') or '').upper() == _ORDER_STATUS_COMPLETE:
-            return _safe_float(matched.get('average_price') or matched.get('price'))
+            price = _safe_float(matched.get('average_price') or matched.get('price'))
+            qty   = int(matched.get('filled_quantity') or matched.get('quantity') or 0)
+            return price, qty
     except Exception as exc:
-        log.warning('[FETCH AVG PRICE] order=%s: %s', order_id, exc)
-    return 0.0
+        log.warning('[FETCH BROKER FILL] order=%s: %s', order_id, exc)
+    return 0.0, 0
 
 
 def _confirm_and_sync_fill_price(
@@ -1241,7 +1249,7 @@ def process_broker_order_update(
     if status in (_ORDER_STATUS_COMPLETE, _ORDER_STATUS_REJECTED, _ORDER_STATUS_CANCELLED):
         # Entry orders: only deregister when fill confirmed (fill_price > 0).
         # COMPLETE with fill_price=0 means postback arrived before avg_price settled
-        # — keep in active set so the 2-second poll can retry with the real avg_price.
+        # — keep in active set; we try an immediate broker fetch below before giving up.
         if status != _ORDER_STATUS_COMPLETE or fill_price > 0:
             _deregister_active_entry_order(order_id)
         _deregister_active_exit_order(order_id)
@@ -1279,6 +1287,10 @@ def process_broker_order_update(
                     if _trade_id and _leg_id:
                         _sync_live_exit_fill(db, _trade_id, _leg_id, _reason, fill_price)
                         return True
+                # Entry order not in DB yet (race condition between order placement and postback).
+                # Re-register so poll can detect the fill and place SL.
+                _register_active_entry_order(order_id)
+                log.info('[ORDER NOT FOUND] order=%s re-registered for poll (race condition)', order_id)
             return False
 
     # Skip if already processed to avoid double updates
@@ -1293,6 +1305,26 @@ def process_broker_order_update(
 
     trade_id = str((hist_doc or {}).get('trade_id') or (embedded_trade or {}).get('_id') or '')
     leg_id   = str((hist_doc or {}).get('leg_id')   or (embedded_leg or {}).get('id') or '')
+
+    # Postback arrived with COMPLETE but avgprc=0 (FlatTrade sends fill notification
+    # before avg_price settles). Fetch actual fill price + qty from broker immediately
+    # so SL/target orders are placed without waiting for the 30-second poll cycle.
+    if status == _ORDER_STATUS_COMPLETE and fill_price == 0:
+        _trade_doc = trades_col.find_one({'_id': trade_id}) or {}
+        _fetched_price, _fetched_qty = _fetch_broker_fill(db, _trade_doc, order_id)
+        if _fetched_price > 0:
+            fill_price = _fetched_price
+            if _fetched_qty > 0:
+                fill_qty = _fetched_qty
+            _deregister_active_entry_order(order_id)
+            log.info(
+                '[POSTBACK FILL FETCH] order=%s fetched price=%.2f qty=%d from broker (postback avgprc was 0)',
+                order_id, fill_price, fill_qty,
+            )
+        else:
+            # Broker price not ready yet — leave in active set, poll will handle it.
+            log.debug('[POSTBACK FILL FETCH] order=%s broker price not ready, poll will handle', order_id)
+            return False
 
     if status == _ORDER_STATUS_COMPLETE and fill_price > 0:
         if hist_doc:
@@ -2045,6 +2077,11 @@ def restore_sl_order_registry(db) -> None:
     except Exception as exc:
         log.warning('[REGISTRY RESTORE ERROR] %s', exc)
     print(f'[REGISTRY RESTORED] sl_orders={sl_loaded} pending_entries={entry_loaded}')
+
+
+def has_pending_entry_orders() -> bool:
+    with _active_entry_lock:
+        return bool(_active_entry_order_ids)
 
 
 def _register_active_entry_order(order_id: str) -> None:
