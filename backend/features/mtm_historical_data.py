@@ -240,14 +240,21 @@ def get_mtm_historical_data(
 
     Returns OHLCV candles from 09:15 up to (and including) the candle minute.
     """
-    normalized_mode = str(activation_mode or "algo-backtest").strip() or "algo-backtest"
+    normalized_mode = str(activation_mode or "").strip().lower()
     trade_date, candle_ts = _parse_candle_datetime(candle)
 
     token_keys = [_normalize_token(t) for t in str(tokens or "").split(",") if t.strip()]
     if not token_keys:
         return {}
 
+    # Prefer DB-backed minute history whenever it exists. This keeps the API
+    # stable even when callers omit activation_mode or accidentally send the
+    # wrong mode for backtest / fast-forward execution pages.
+    db_result = _fetch_backtest_historical(db, token_keys, trade_date, candle_ts)
+    if db_result:
+        return db_result
+
     if normalized_mode == "algo-backtest":
-        return _fetch_backtest_historical(db, token_keys, trade_date, candle_ts)
+        return {}
 
     return _fetch_kite_historical(token_keys, trade_date, candle_ts)

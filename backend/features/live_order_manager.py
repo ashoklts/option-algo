@@ -986,6 +986,20 @@ def _place_initial_protection_orders(
     _sync_leg_feature_entry_price(
         db, trade_id, leg_id, fill_price, sl_price, tp_price, sl_order_price=sl_limit,
     )
+    # Rebuild trigger_description text using actual fill price so UI shows correct values.
+    try:
+        from features.notification_manager import refresh_leg_feature_status_at_fill
+        refresh_leg_feature_status_at_fill(
+            db._db, trade_id, leg_id,
+            fill_price=fill_price,
+            leg_cfg=leg_cfg,
+            is_sell=is_sell,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            now=datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+        )
+    except Exception as _rfr_exc:
+        log.warning('[FEATURE REFRESH] trade=%s leg=%s: %s', trade_id, leg_id, _rfr_exc)
 
     if _get_open_exit_orders_for_leg(db, trade_id, leg_id):
         return

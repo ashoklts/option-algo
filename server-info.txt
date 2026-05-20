@@ -87,3 +87,32 @@ Algotest redirect url
 
 https://algotest.in/confirm_broker/flattrade/69cc8d70340c73617178943d?
 
+
+finedgealgo
+https://finedgealgo.com/broker/flattrade/callback/69e8f91d0e59052e21916992?
+
+
+http://localhost:8000/algo/angel-stock-list/backfill-kite-token
+
+
+http://localhost:8000/scanner/kite_sync_universe_stocks
+
+http://localhost:8000/scanner/sync_universe_stocks
+
+GET /scanner/previous_universe_stocks/nifty_50
+GET /scanner/previous_universe_stocks/nifty_500
+
+http://localhost:8000/scanner/previous_universe_stocks/nifty_50
+http://localhost:8000/scanner/previous_universe_stocks/nifty_500
+
+GET /scanner/backfill_stocks_kite_tokens
+
+http://localhost:8000/scanner/backfill_stocks_kite_tokens
+
+http://localhost:8000/scanner/backfill_stocks_kite_tokens
+
+
+GET /scanner/remove_universe_field
+
+http://localhost:8000/scanner/remove_universe_field
+
