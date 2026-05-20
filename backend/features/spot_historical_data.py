@@ -150,7 +150,8 @@ def get_spot_historical_data(
             {"_id": 0, "timestamp": 1, "spot_price": 1, "token": 1},
         ).sort("timestamp", 1)
     )
-    if spot_docs:
+    has_spot = bool(spot_docs)
+    if has_spot:
         token = str(spot_docs[0].get("token") or f"SPOT_{ul}")
         result[token] = _to_series(spot_docs)
         log.info("[spot_hist] %s token=%s rows=%d", ul, token, len(spot_docs))
@@ -164,17 +165,24 @@ def get_spot_historical_data(
             {"_id": 0, "timestamp": 1, "spot_price": 1},
         ).sort("timestamp", 1)
     )
-    if vix_docs:
+    has_vix = bool(vix_docs)
+    if has_vix:
         result[VIX_TOKEN] = _to_series(vix_docs)
         log.info("[spot_hist] VIX rows=%d", len(vix_docs))
     else:
         log.warning("[spot_hist] no VIX data for date=%s", date_part)
 
-    if result:
-        return result
-
     normalized_mode = str(activation_mode or "").strip().lower()
     if normalized_mode == "algo-backtest":
-        return {}
+        return result
+    if has_spot and has_vix:
+        return result
 
-    return _fetch_kite_spot_vix(underlying, date_part, candle_ts)
+    kite_result = _fetch_kite_spot_vix(underlying, date_part, candle_ts)
+    if not has_spot:
+        for key, series in kite_result.items():
+            if key != VIX_TOKEN:
+                result[key] = series
+    if not has_vix and VIX_TOKEN in kite_result:
+        result[VIX_TOKEN] = kite_result[VIX_TOKEN]
+    return result
