@@ -2562,6 +2562,7 @@ async def portfolio_activate(payload: dict):
       }
     """
     portfolio_id = str(payload.get("portfolio_id") or "").strip()
+    trade_portfolio_id = str(payload.get("trade_portfolio_id") or "").strip()
     activation_mode = str(payload.get("activation_mode") or "").strip() or "algo-backtest"
     requested_current_datetime = str(payload.get("current_datetime") or "").strip()
     trades = payload.get("trades") or []

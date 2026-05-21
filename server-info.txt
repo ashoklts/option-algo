@@ -116,3 +116,21 @@ GET /scanner/remove_universe_field
 
 http://localhost:8000/scanner/remove_universe_field
 
+http://localhost:8000/scanner/sync_market_holidays?year=2026
+
+
+http://localhost:8000/scanner/sync_historical_data?start_date=2026-03-12&end_date=2026-03-13
+
+
+http://localhost:8000/scanner/sync_historical_data?start_date=2026-03-02&end_date=2026-03-06
+
+http://localhost:8000/scanner/backfill_index_stocks_kite_tokens
+
+http://localhost:8000/scanner/stop_historical_data_sync
+
+
+http://localhost:8000/scanner/sync_historical_data?start_date=2026-03-12&end_date=2026-03-13
+stop வேண்டும்னா
+http://localhost:8000/scanner/stop_historical_data_sync
+status பார்க்க
+http://localhost:8000/scanner/historical_data_sync_status

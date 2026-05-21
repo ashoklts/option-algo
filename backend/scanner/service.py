@@ -656,7 +656,11 @@ def backfill_index_stocks_kite_tokens() -> dict[str, Any]:
     }
 
 
-def _build_scanner_daily_stock_instruments(db) -> tuple[list[str], dict[str, dict[str, Any]]]:
+def _build_scanner_daily_stock_instruments(
+    db,
+    cash_by_exchange_symbol: dict[str, dict[str, Any]],
+    cash_by_token: dict[str, dict[str, Any]],
+) -> tuple[list[str], dict[str, dict[str, Any]]]:
     rows = list(
         db[STOCKS_COLLECTION].find(
             {},
@@ -679,6 +683,8 @@ def _build_scanner_daily_stock_instruments(db) -> tuple[list[str], dict[str, dic
     skipped_no_symbol = 0
     skipped_index_series = 0
     duplicate_count = 0
+    resolved_from_token = 0
+    resolved_from_symbol = 0
 
     for row in rows:
         exchange = str(row.get("exchange") or "NSE").strip().upper() or "NSE"
@@ -687,7 +693,25 @@ def _build_scanner_daily_stock_instruments(db) -> tuple[list[str], dict[str, dic
         if str(row.get("series") or "").strip().lower() == "index":
             skipped_index_series += 1
             continue
-        tradingsymbol = str(row.get("tradingsymbol") or row.get("symbol") or "").strip().upper()
+        token = str(
+            row.get("kite_token")
+            or row.get("token")
+            or row.get("instrument_token")
+            or row.get("exchange_token")
+            or ""
+        ).strip()
+        inst = cash_by_token.get(token) if token else None
+        if inst:
+            tradingsymbol = str(inst.get("tradingsymbol") or "").strip().upper()
+            exchange = str(inst.get("exchange") or exchange).strip().upper() or exchange
+            resolved_from_token += 1
+        else:
+            input_tradingsymbol = str(row.get("tradingsymbol") or row.get("symbol") or "").strip().upper()
+            inst = cash_by_exchange_symbol.get(f"{exchange}:{input_tradingsymbol}") if input_tradingsymbol else None
+            tradingsymbol = str((inst or {}).get("tradingsymbol") or input_tradingsymbol).strip().upper()
+            if inst:
+                exchange = str(inst.get("exchange") or exchange).strip().upper() or exchange
+                resolved_from_symbol += 1
         if not tradingsymbol:
             skipped_no_symbol += 1
             continue
@@ -701,19 +725,26 @@ def _build_scanner_daily_stock_instruments(db) -> tuple[list[str], dict[str, dic
 
     print(
         f"📘 Stock loader: total_rows={len(rows)} loaded={len(instruments)} "
-        f"skipped_index_series={skipped_index_series} skipped_no_symbol={skipped_no_symbol} duplicates={duplicate_count}",
+        f"skipped_index_series={skipped_index_series} skipped_no_symbol={skipped_no_symbol} duplicates={duplicate_count} "
+        f"resolved_from_token={resolved_from_token} resolved_from_symbol={resolved_from_symbol}",
         flush=True,
     )
     return instruments, meta_map
 
 
-def _build_scanner_daily_index_instruments(db) -> tuple[list[str], dict[str, dict[str, Any]]]:
+def _build_scanner_daily_index_instruments(
+    db,
+    cash_by_exchange_symbol: dict[str, dict[str, Any]],
+    cash_by_token: dict[str, dict[str, Any]],
+) -> tuple[list[str], dict[str, dict[str, Any]]]:
     instruments: list[str] = []
     meta_map: dict[str, dict[str, Any]] = {}
     seen: set[str] = set()
     skipped_unresolved = 0
     skipped_no_tradingsymbol = 0
     duplicate_count = 0
+    resolved_from_token = 0
+    resolved_from_symbol = 0
 
     rows = list(
         db[INDEX_STOCKS_COLLECTION].find(
@@ -748,7 +779,19 @@ def _build_scanner_daily_index_instruments(db) -> tuple[list[str], dict[str, dic
             skipped_unresolved += 1
             continue
         exchange = str(row.get("exchange") or ("BSE" if default_index["lookup_symbol"] == "SENSEX" else "NSE")).strip().upper()
-        tradingsymbol = str(row.get("tradingsymbol") or default_index.get("raw_symbol") or "").strip()
+        token = str(row.get("kite_token") or row.get("instrument_token") or row.get("exchange_token") or "").strip()
+        inst = cash_by_token.get(token) if token else None
+        if inst:
+            tradingsymbol = str(inst.get("tradingsymbol") or "").strip()
+            exchange = str(inst.get("exchange") or exchange).strip().upper() or exchange
+            resolved_from_token += 1
+        else:
+            base_symbol = str(row.get("tradingsymbol") or default_index.get("raw_symbol") or "").strip()
+            inst = cash_by_exchange_symbol.get(f"{exchange}:{base_symbol.upper()}") if base_symbol else None
+            tradingsymbol = str((inst or {}).get("tradingsymbol") or base_symbol).strip()
+            if inst:
+                exchange = str(inst.get("exchange") or exchange).strip().upper() or exchange
+                resolved_from_symbol += 1
         if not tradingsymbol:
             skipped_no_tradingsymbol += 1
             continue
@@ -768,25 +811,51 @@ def _build_scanner_daily_index_instruments(db) -> tuple[list[str], dict[str, dic
 
     print(
         f"📗 Index loader: total_rows={len(rows)} loaded={len(instruments)} "
-        f"skipped_unresolved={skipped_unresolved} skipped_no_tradingsymbol={skipped_no_tradingsymbol} duplicates={duplicate_count}",
+        f"skipped_unresolved={skipped_unresolved} skipped_no_tradingsymbol={skipped_no_tradingsymbol} duplicates={duplicate_count} "
+        f"resolved_from_token={resolved_from_token} resolved_from_symbol={resolved_from_symbol}",
         flush=True,
     )
     return instruments, meta_map
 
 
-def _fetch_kite_quotes_in_batches(kite, instruments: list[str], *, batch_size: int = 500) -> tuple[dict[str, Any], int]:
+def _fetch_kite_quotes_in_batches(kite, instruments: list[str], *, batch_size: int = 500) -> tuple[dict[str, Any], int, list[dict[str, Any]]]:
     if not instruments:
-        return {}, 0
+        return {}, 0, []
 
     quotes: dict[str, Any] = {}
     total_batches = 0
+    missing_info: list[dict[str, Any]] = []
     for idx, batch in enumerate(_chunkify_strings(instruments, batch_size), start=1):
         total_batches = idx
         print(f"📦 Quote batch {idx} ({len(batch)} instruments)", flush=True)
         batch_quotes = kite.quote(batch) or {}
         quotes.update(batch_quotes)
-        print(f"✅ Quote batch {idx} completed fetched={len(batch_quotes)}", flush=True)
-    return quotes, total_batches
+        missing = [instrument for instrument in batch if instrument not in batch_quotes]
+        print(f"✅ Quote batch {idx} completed fetched={len(batch_quotes)} missing={len(missing)}", flush=True)
+        if missing:
+            print(f"⚠️ Missing quotes in batch {idx}: {missing[:20]}", flush=True)
+            retry_success = 0
+            still_missing: list[str] = []
+            for instrument in missing:
+                try:
+                    single_quote = kite.quote([instrument]) or {}
+                except Exception as exc:
+                    still_missing.append(instrument)
+                    missing_info.append({"instrument": instrument, "reason": f"retry_error:{exc}"})
+                    continue
+                if instrument in single_quote:
+                    quotes[instrument] = single_quote[instrument]
+                    retry_success += 1
+                else:
+                    still_missing.append(instrument)
+                    missing_info.append({"instrument": instrument, "reason": "not_returned_by_quote_api"})
+            print(
+                f"🔁 Quote batch {idx} retry completed retry_success={retry_success} still_missing={len(still_missing)}",
+                flush=True,
+            )
+            if still_missing:
+                print(f"❌ Still missing after retry: {still_missing[:20]}", flush=True)
+    return quotes, total_batches, missing_info
 
 
 def _scanner_daily_quote_timestamp(payload: dict[str, Any]) -> datetime:
@@ -901,14 +970,19 @@ def sync_scanner_daily_market_snapshot() -> dict[str, Any]:
     db = MongoData()._db
     kite = _build_kite_client_from_config()
     print("✅ Kite client ready.", flush=True)
+    cash_by_exchange_symbol, cash_by_token = _load_kite_cash_instrument_maps(kite)
+    print(
+        f"✅ Loaded Kite cash master exchange_symbols={len(cash_by_exchange_symbol)} token_map={len(cash_by_token)}",
+        flush=True,
+    )
 
-    stock_instruments, stock_meta_map = _build_scanner_daily_stock_instruments(db)
-    index_instruments, index_meta_map = _build_scanner_daily_index_instruments(db)
+    stock_instruments, stock_meta_map = _build_scanner_daily_stock_instruments(db, cash_by_exchange_symbol, cash_by_token)
+    index_instruments, index_meta_map = _build_scanner_daily_index_instruments(db, cash_by_exchange_symbol, cash_by_token)
     print(f"✅ Loaded {len(stock_instruments)} stock instruments from {STOCKS_COLLECTION}", flush=True)
     print(f"✅ Loaded {len(index_instruments)} index instruments from {INDEX_STOCKS_COLLECTION}", flush=True)
 
-    stock_quotes, stock_batches = _fetch_kite_quotes_in_batches(kite, stock_instruments, batch_size=500)
-    index_quotes, index_batches = _fetch_kite_quotes_in_batches(kite, index_instruments, batch_size=500)
+    stock_quotes, stock_batches, stock_missing = _fetch_kite_quotes_in_batches(kite, stock_instruments, batch_size=500)
+    index_quotes, index_batches, index_missing = _fetch_kite_quotes_in_batches(kite, index_instruments, batch_size=500)
 
     stock_docs = [
         _transform_scanner_daily_stock_quote(instrument, payload, stock_meta_map[instrument])
@@ -940,6 +1014,10 @@ def sync_scanner_daily_market_snapshot() -> dict[str, Any]:
         f"🎉 Snapshot completed. stock_upserts={stock_done} index_upserts={index_done} elapsed={elapsed}s",
         flush=True,
     )
+    if stock_missing:
+        print(f"⚠️ Stock missing quote count={len(stock_missing)} details={stock_missing[:20]}", flush=True)
+    if index_missing:
+        print(f"⚠️ Index missing quote count={len(index_missing)} details={index_missing[:20]}", flush=True)
 
     return {
         "status": "success",
@@ -950,6 +1028,8 @@ def sync_scanner_daily_market_snapshot() -> dict[str, Any]:
         "index_batches": index_batches,
         "stock_quotes": len(stock_quotes),
         "index_quotes": len(index_quotes),
+        "stock_missing_quotes": stock_missing,
+        "index_missing_quotes": index_missing,
         "stock_upserts": stock_done,
         "index_upserts": index_done,
         "elapsed_seconds": elapsed,

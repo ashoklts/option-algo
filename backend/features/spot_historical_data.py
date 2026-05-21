@@ -26,6 +26,14 @@ SPOT_COL  = "option_chain_index_spot"
 VIX_TOKEN = "NSE_00"
 
 
+def _set_underlying_series(result: dict, underlying: str, token: str, series: dict) -> None:
+    ul = str(underlying or "").strip().upper()
+    token_key = str(token or "").strip() or f"SPOT_{ul}"
+    alias_key = f"SPOT_{ul}"
+    result[token_key] = series
+    result[alias_key] = series
+
+
 def _parse_candle(candle: str) -> tuple[str, str]:
     raw = str(candle or "").strip()
     for sep in ("+", "Z"):
@@ -33,7 +41,14 @@ def _parse_candle(candle: str) -> tuple[str, str]:
             raw = raw.split(sep)[0].strip()
     if "T" in raw:
         date_part, time_part = raw.split("T", 1)
-        candle_ts = f"{date_part}T{time_part[:5]}:00"
+        hm = time_part[:5]
+        try:
+            parsed_time = datetime.strptime(hm, "%H:%M")
+            if (parsed_time.hour, parsed_time.minute) > (15, 30):
+                hm = "15:30"
+        except ValueError:
+            hm = "15:30"
+        candle_ts = f"{date_part}T{hm}:00"
     else:
         date_part = raw[:10] if len(raw) >= 10 else _date.today().isoformat()
         candle_ts = f"{date_part}T15:30:00"
@@ -153,7 +168,7 @@ def get_spot_historical_data(
     has_spot = bool(spot_docs)
     if has_spot:
         token = str(spot_docs[0].get("token") or f"SPOT_{ul}")
-        result[token] = _to_series(spot_docs)
+        _set_underlying_series(result, ul, token, _to_series(spot_docs))
         log.info("[spot_hist] %s token=%s rows=%d", ul, token, len(spot_docs))
     else:
         log.warning("[spot_hist] no data for underlying=%s date=%s", ul, date_part)
@@ -182,7 +197,7 @@ def get_spot_historical_data(
     if not has_spot:
         for key, series in kite_result.items():
             if key != VIX_TOKEN:
-                result[key] = series
+                _set_underlying_series(result, ul, key, series)
     if not has_vix and VIX_TOKEN in kite_result:
         result[VIX_TOKEN] = kite_result[VIX_TOKEN]
     return result
