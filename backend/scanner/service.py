@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import calendar
 import re
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any
@@ -13,6 +15,7 @@ from pymongo import UpdateOne
 
 from features.mongo_data import MongoData
 from features.kite_broker import get_kite_instance
+from features.spot_atm_utils import KITE_INDEX_TOKENS
 
 DEFAULT_FORMULA = "((70% * 6 Month Volatility) + (20% * 3 Month Performance) + (10% * 1 Year Performance)) / 3 Month Volatility"
 LOOKBACK_DAYS = 500
@@ -40,10 +43,105 @@ PORTFOLIO_COLLECTION = "scanner_portfolio_settings"
 INVESTMENT_COLLECTION = "scanner_investment_portfolio"
 STOCKS_COLLECTION = "scanner_stocks_list"
 HISTORY_COLLECTION = "scanner_stock_historical_data"
+INDEX_HISTORY_COLLECTION = "scanner_index_historical_data"
+INDEX_STOCKS_COLLECTION = "scanner_index_stocks"
+MARKET_HOLIDAYS_COLLECTION = "market_holidays"
 PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS = 10.0
+HISTORICAL_INTERVAL = "day"
+HISTORICAL_CHUNK_DAYS = 60
+HISTORICAL_LOOKBACK_BUFFER_DAYS = 10
+
+SCANNER_INDEX_ALIASES: dict[str, tuple[str, str]] = {
+    "GOLDBEES": ("GOLDBEES", "gold_bees"),
+    "GOLD_BEES": ("GOLDBEES", "gold_bees"),
+    "NIFTY": ("NIFTY", "nifty_50"),
+    "GOLDBEES-EQ": ("GOLDBEES", "gold_bees"),
+    "NIFTY50": ("NIFTY", "nifty_50"),
+    "NIFTY 50": ("NIFTY", "nifty_50"),
+    "NIFTY_50": ("NIFTY", "nifty_50"),
+    "NIFTY500": ("NIFTY500", "nifty_500"),
+    "NIFTY 500": ("NIFTY500", "nifty_500"),
+    "NIFTY_500": ("NIFTY500", "nifty_500"),
+    "NIFTYMIDCAP100": ("NIFTYMIDCAP100", "nifty_midcap_100"),
+    "NIFTY MIDCAP100": ("NIFTYMIDCAP100", "nifty_midcap_100"),
+    "NIFTY_MIDCAP_100": ("NIFTYMIDCAP100", "nifty_midcap_100"),
+    "NIFTY_MIDCAP_50": ("NIFTYMIDCAP50", "nifty_midcap_50"),
+    "NIFTYMIDCAP50": ("NIFTYMIDCAP50", "nifty_midcap_50"),
+    "NIFTY MIDCAP50": ("NIFTYMIDCAP50", "nifty_midcap_50"),
+    "NIFTY100": ("NIFTY100", "nifty_100"),
+    "NIFTY 100": ("NIFTY100", "nifty_100"),
+    "NIFTY_100": ("NIFTY100", "nifty_100"),
+    "NIFTYNXT50": ("NIFTYNXT50", "nifty_next_50"),
+    "NIFTY NXT50": ("NIFTYNXT50", "nifty_next_50"),
+    "NIFTY_NEXT_50": ("NIFTYNXT50", "nifty_next_50"),
+    "NIFTYSMLCAP100": ("NIFTYSMLCAP100", "nifty_smallcap_100"),
+    "NIFTY SMLCAP100": ("NIFTYSMLCAP100", "nifty_smallcap_100"),
+    "NIFTY_SMALLCAP_50": ("NIFTYSMLCAP100", "nifty_smallcap_50"),
+    "NIFTY_SMALLCAP_100": ("NIFTYSMLCAP100", "nifty_smallcap_100"),
+    "NIFTY_SMLCAP_100": ("NIFTYSMLCAP100", "nifty_smallcap_100"),
+    "NIFTYSMALLCAP100": ("NIFTYSMLCAP100", "nifty_smallcap_100"),
+    "NIFTY200": ("NIFTY200", "nifty_200"),
+    "NIFTY 200": ("NIFTY200", "nifty_200"),
+    "NIFTY_200": ("NIFTY200", "nifty_200"),
+    "BANKNIFTY": ("BANKNIFTY", "nifty_bank"),
+    "NIFTY BANK": ("BANKNIFTY", "nifty_bank"),
+    "NIFTY_BANK": ("BANKNIFTY", "nifty_bank"),
+    "FINNIFTY": ("FINNIFTY", "nifty_fin_service"),
+    "NIFTY FIN SERVICE": ("FINNIFTY", "nifty_fin_service"),
+    "NIFTY_FIN_SERVICE": ("FINNIFTY", "nifty_fin_service"),
+    "MIDCPNIFTY": ("MIDCPNIFTY", "nifty_mid_select"),
+    "NIFTY MID SELECT": ("MIDCPNIFTY", "nifty_mid_select"),
+    "NIFTY_MID_SELECT": ("MIDCPNIFTY", "nifty_mid_select"),
+    "SENSEX": ("SENSEX", "sensex"),
+    "INDIA VIX": ("INDIA_VIX", "india_vix"),
+    "INDIA_VIX": ("INDIA_VIX", "india_vix"),
+    "INDIAVIX": ("INDIA_VIX", "india_vix"),
+}
+
+DEFAULT_SCANNER_INDEXES: list[dict[str, Any]] = [
+    {"lookup_symbol": "GOLDBEES", "raw_symbol": "GOLDBEES-EQ", "normalized_symbol": "gold_bees", "fetch_mode": "nse"},
+    {"lookup_symbol": "NIFTY", "raw_symbol": "NIFTY50", "normalized_symbol": "nifty_50", "fetch_mode": "token"},
+    {"lookup_symbol": "NIFTY500", "raw_symbol": "NIFTY 500", "normalized_symbol": "nifty_500", "fetch_mode": "nse"},
+    {"lookup_symbol": "NIFTYMIDCAP100", "raw_symbol": "NIFTY MIDCAP 100", "normalized_symbol": "nifty_midcap_100", "fetch_mode": "nse"},
+    {"lookup_symbol": "NIFTYMIDCAP50", "raw_symbol": "NIFTY MIDCAP 50", "normalized_symbol": "nifty_midcap_50", "fetch_mode": "nse"},
+    {"lookup_symbol": "NIFTY100", "raw_symbol": "NIFTY 100", "normalized_symbol": "nifty_100", "fetch_mode": "nse"},
+    {"lookup_symbol": "NIFTYNXT50", "raw_symbol": "NIFTY NEXT 50", "normalized_symbol": "nifty_next_50", "fetch_mode": "nse"},
+    {"lookup_symbol": "NIFTYSMLCAP100", "raw_symbol": "NIFTY SMLCAP 100", "normalized_symbol": "nifty_smallcap_100", "fetch_mode": "nse"},
+    {"lookup_symbol": "NIFTY200", "raw_symbol": "NIFTY 200", "normalized_symbol": "nifty_200", "fetch_mode": "nse"},
+    {"lookup_symbol": "BANKNIFTY", "raw_symbol": "BANKNIFTY", "normalized_symbol": "nifty_bank", "fetch_mode": "token"},
+    {"lookup_symbol": "FINNIFTY", "raw_symbol": "FINNIFTY", "normalized_symbol": "nifty_fin_service", "fetch_mode": "token"},
+    {"lookup_symbol": "MIDCPNIFTY", "raw_symbol": "MIDCPNIFTY", "normalized_symbol": "nifty_mid_select", "fetch_mode": "token"},
+    {"lookup_symbol": "SENSEX", "raw_symbol": "SENSEX", "normalized_symbol": "sensex", "fetch_mode": "token"},
+    {"lookup_symbol": "INDIA_VIX", "raw_symbol": "INDIA VIX", "normalized_symbol": "india_vix", "fetch_mode": "token"},
+]
+
+NSE_MARKET_HOLIDAYS: dict[int, list[dict[str, str]]] = {
+    2026: [
+        {"date": "2026-01-26", "description": "Republic Day"},
+        {"date": "2026-03-03", "description": "Holi"},
+        {"date": "2026-03-26", "description": "Shri Ram Navami"},
+        {"date": "2026-03-31", "description": "Shri Mahavir Jayanti"},
+        {"date": "2026-04-03", "description": "Good Friday"},
+        {"date": "2026-04-14", "description": "Dr. Baba Saheb Ambedkar Jayanti"},
+        {"date": "2026-05-01", "description": "Maharashtra Day"},
+        {"date": "2026-05-28", "description": "Bakri Id"},
+        {"date": "2026-06-26", "description": "Muharram"},
+        {"date": "2026-09-14", "description": "Ganesh Chaturthi"},
+        {"date": "2026-10-02", "description": "Mahatma Gandhi Jayanti"},
+        {"date": "2026-10-20", "description": "Dussehra"},
+        {"date": "2026-11-10", "description": "Diwali-Balipratipada"},
+        {"date": "2026-11-24", "description": "Prakash Gurpurb Sri Guru Nanak Dev"},
+        {"date": "2026-12-25", "description": "Christmas"},
+    ],
+}
 
 _portfolio_summary_cache_value: list[dict[str, Any]] | None = None
 _portfolio_summary_cache_expires_at = 0.0
+_historical_sync_stop_requested = False
+_historical_sync_running = False
+_historical_sync_thread: threading.Thread | None = None
+_historical_sync_last_result: dict[str, Any] | None = None
+_historical_sync_lock = threading.Lock()
 
 
 def _coerce_score_date(raw_value: Any) -> datetime:
@@ -109,6 +207,70 @@ def _normalize_formula(formula: str | None) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_+\-*/(). <>=!&|]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized
+
+
+def request_stop_scanner_historical_sync() -> dict[str, Any]:
+    global _historical_sync_stop_requested
+    _historical_sync_stop_requested = True
+    return {
+        "status": "success",
+        "message": "Stop requested. Historical sync will stop after the current symbol completes.",
+    }
+
+
+def get_scanner_historical_sync_status() -> dict[str, Any]:
+    return {
+        "status": "success",
+        "running": bool(_historical_sync_running),
+        "stop_requested": bool(_historical_sync_stop_requested),
+        "last_result": _historical_sync_last_result,
+    }
+
+
+def _scanner_historical_sync_worker(start_date: str, end_date: str) -> None:
+    global _historical_sync_last_result, _historical_sync_thread
+    try:
+        result = sync_scanner_historical_data(start_date, end_date)
+        _historical_sync_last_result = result
+    except Exception as exc:
+        _historical_sync_last_result = {
+            "status": "error",
+            "message": str(exc),
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+    finally:
+        _historical_sync_thread = None
+
+
+def start_scanner_historical_data_sync(start_date: str, end_date: str) -> dict[str, Any]:
+    global _historical_sync_thread, _historical_sync_last_result
+    with _historical_sync_lock:
+        if _historical_sync_running or (_historical_sync_thread and _historical_sync_thread.is_alive()):
+            raise ValueError("Historical sync is already running.")
+
+        _historical_sync_last_result = {
+            "status": "started",
+            "message": "Historical sync started in background.",
+            "start_date": start_date,
+            "end_date": end_date,
+            "started_at": datetime.utcnow().isoformat(),
+        }
+        _historical_sync_thread = threading.Thread(
+            target=_scanner_historical_sync_worker,
+            args=(start_date, end_date),
+            daemon=True,
+            name="scanner-historical-sync",
+        )
+        _historical_sync_thread.start()
+
+    return {
+        "status": "success",
+        "message": "Historical sync started in background.",
+        "start_date": start_date,
+        "end_date": end_date,
+        "running": True,
+    }
 
 
 def _load_company_map(symbols: list[str]) -> dict[str, str]:
@@ -177,13 +339,1032 @@ def _load_latest_closes(symbols: list[str]) -> dict[str, float]:
     return close_map
 
 
-def _load_kite_access_token() -> str:
+def _load_kite_credentials() -> tuple[str, str]:
     db = MongoData()._db
     doc = db["kite_market_config"].find_one(
         {"_id": _as_object_id(KITE_MARKET_CONFIG_ID)},
-        {"access_token": 1},
+        {"api_key": 1, "access_token": 1},
     ) or {}
-    return str(doc.get("access_token") or "").strip()
+    api_key = str(doc.get("api_key") or "").strip()
+    access_token = str(doc.get("access_token") or "").strip()
+    return api_key, access_token
+
+
+def _build_kite_client_from_config():
+    from kiteconnect import KiteConnect  # type: ignore
+
+    api_key, access_token = _load_kite_credentials()
+    if not access_token:
+        raise ValueError("Kite access token not configured.")
+    if not api_key:
+        raise ValueError("Kite api key not configured.")
+
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
+    return kite
+
+
+def _parse_ymd_date(value: Any, *, field_name: str) -> datetime:
+    raw = str(value or "").strip()
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field_name}. Expected YYYY-MM-DD.") from exc
+
+
+def _load_market_holiday_dates() -> set[str]:
+    db = MongoData()._db
+    rows = list(db[MARKET_HOLIDAYS_COLLECTION].find({}, {"_id": 0, "date": 1}))
+    return {
+        str(row.get("date") or "").strip()
+        for row in rows
+        if str(row.get("date") or "").strip()
+    }
+
+
+def _resolve_stock_kite_token(stock: dict[str, Any]) -> tuple[str, str]:
+    symbol = str(stock.get("symbol") or stock.get("tradingsymbol") or "").strip().upper()
+    token = str(
+        stock.get("kite_token")
+        or stock.get("token")
+        or stock.get("tokens")
+        or stock.get("instrument_token")
+        or stock.get("exchange_token")
+        or stock.get("code")
+        or ""
+    ).strip()
+    return symbol, token
+
+
+def _resolve_index_identity(stock: dict[str, Any]) -> tuple[str, str] | None:
+    candidates = [
+        str(stock.get("symbol") or "").strip(),
+        str(stock.get("tradingsymbol") or "").strip(),
+        str(stock.get("name") or "").strip(),
+    ]
+    for candidate in candidates:
+        alias = SCANNER_INDEX_ALIASES.get(candidate.upper())
+        if alias:
+            return alias
+
+    series = str(stock.get("series") or "").strip().lower()
+    if series == "index":
+        fallback = str(stock.get("symbol") or stock.get("tradingsymbol") or "").strip().upper()
+        alias = SCANNER_INDEX_ALIASES.get(fallback)
+        if alias:
+            return alias
+    return None
+
+
+def _fetch_kite_daily_candles(
+    kite,
+    instrument_token: int,
+    from_date: datetime,
+    to_date: datetime,
+) -> list[dict[str, Any]]:
+    candles = kite.historical_data(
+        instrument_token=instrument_token,
+        from_date=from_date,
+        to_date=to_date,
+        interval=HISTORICAL_INTERVAL,
+    )
+    return candles if isinstance(candles, list) else []
+
+
+def _chunkify_strings(items: list[str], size: int):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def _load_kite_cash_instrument_maps(kite) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    by_exchange_symbol: dict[str, dict[str, Any]] = {}
+    by_token: dict[str, dict[str, Any]] = {}
+
+    for exchange in ("NSE", "BSE"):
+        try:
+            rows = kite.instruments(exchange) or []
+        except Exception:
+            rows = []
+        for row in rows:
+            tradingsymbol = str(row.get("tradingsymbol") or "").strip().upper()
+            instrument_token = str(row.get("instrument_token") or "").strip()
+            if tradingsymbol:
+                by_exchange_symbol[f"{exchange}:{tradingsymbol}"] = row
+            if instrument_token:
+                by_token[instrument_token] = row
+
+    return by_exchange_symbol, by_token
+
+
+def _load_kite_nse_instrument_map(kite) -> dict[str, dict[str, Any]]:
+    instrument_map: dict[str, dict[str, Any]] = {}
+    try:
+        for inst in kite.instruments("NSE") or []:
+            tradingsymbol = str(inst.get("tradingsymbol") or "").strip().upper()
+            if tradingsymbol:
+                instrument_map[tradingsymbol] = inst
+    except Exception:
+        return {}
+    return instrument_map
+
+
+def _load_scanner_index_master(db, nse_instrument_map: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    index_rows: dict[str, dict[str, Any]] = {}
+
+    rows = list(
+        db[INDEX_STOCKS_COLLECTION].find(
+            {},
+            {"_id": 0, "filter_symbol": 1, "name": 1, "symbol": 1, "tradingsymbol": 1},
+        )
+    )
+
+    for row in rows:
+        candidates = [
+            str(row.get("filter_symbol") or "").strip(),
+            str(row.get("symbol") or "").strip(),
+            str(row.get("tradingsymbol") or "").strip(),
+            str(row.get("name") or "").strip(),
+        ]
+        index_meta = None
+        for candidate in candidates:
+            if not candidate:
+                continue
+            index_meta = _resolve_index_identity({"symbol": candidate, "name": candidate, "tradingsymbol": candidate})
+            if index_meta:
+                break
+        if not index_meta:
+            continue
+
+        index_key, normalized_symbol = index_meta
+        raw_symbol = (
+            str(row.get("symbol") or "").strip()
+            or str(row.get("tradingsymbol") or "").strip()
+            or str(row.get("filter_symbol") or "").strip()
+            or str(row.get("name") or "").strip()
+            or index_key
+        )
+        fetch_mode = "token" if index_key in KITE_INDEX_TOKENS else "nse"
+        if fetch_mode == "nse":
+            inst = _resolve_nse_index_instrument(nse_instrument_map, index_key, raw_symbol, normalized_symbol)
+            if inst:
+                raw_symbol = str(inst.get("tradingsymbol") or raw_symbol).strip()
+
+        index_rows[index_key] = {
+            "kite_key": index_key,
+            "normalized_symbol": normalized_symbol,
+            "raw_symbol": raw_symbol,
+            "fetch_mode": fetch_mode,
+        }
+
+    for default_index in DEFAULT_SCANNER_INDEXES:
+        lookup_symbol = str(default_index["lookup_symbol"]).strip().upper()
+        if lookup_symbol in index_rows:
+            continue
+        index_rows[lookup_symbol] = {
+            "kite_key": lookup_symbol,
+            "normalized_symbol": str(default_index["normalized_symbol"]),
+            "raw_symbol": str(default_index["raw_symbol"]),
+            "fetch_mode": str(default_index["fetch_mode"]),
+        }
+
+    return index_rows
+
+
+def _resolve_nse_index_instrument(
+    nse_instrument_map: dict[str, dict[str, Any]],
+    index_key: str,
+    raw_symbol: str,
+    normalized_symbol: str,
+) -> dict[str, Any]:
+    candidates = [
+        str(raw_symbol or "").strip().upper(),
+        str(index_key or "").strip().upper(),
+        str(normalized_symbol or "").strip().upper().replace("_", " "),
+        str(index_key or "").strip().upper().replace("MIDCAP", " MIDCAP ").replace("SMLCAP", " SMLCAP "),
+    ]
+
+    default_index = next(
+        (item for item in DEFAULT_SCANNER_INDEXES if str(item.get("lookup_symbol") or "").strip().upper() == str(index_key or "").strip().upper()),
+        None,
+    )
+    if default_index:
+        candidates.append(str(default_index.get("raw_symbol") or "").strip().upper())
+
+    normalized_candidates: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        cleaned = " ".join(str(candidate or "").split())
+        if cleaned and cleaned not in seen:
+            normalized_candidates.append(cleaned)
+            seen.add(cleaned)
+
+    for candidate in normalized_candidates:
+        inst = nse_instrument_map.get(candidate)
+        if inst:
+            return inst
+    return {}
+
+
+def backfill_index_stocks_kite_tokens() -> dict[str, Any]:
+    db = MongoData()._db
+    kite = _build_kite_client_from_config()
+    nse_instrument_map = _load_kite_nse_instrument_map(kite)
+    now = datetime.utcnow()
+
+    rows = list(
+        db[INDEX_STOCKS_COLLECTION].find(
+            {},
+            {"_id": 1, "filter_symbol": 1, "name": 1, "symbol": 1, "tradingsymbol": 1},
+        )
+    )
+
+    updated = 0
+    skipped: list[dict[str, str]] = []
+
+    for row in rows:
+        candidates = [
+            str(row.get("filter_symbol") or "").strip(),
+            str(row.get("symbol") or "").strip(),
+            str(row.get("tradingsymbol") or "").strip(),
+            str(row.get("name") or "").strip(),
+        ]
+        index_meta = None
+        for candidate in candidates:
+            if not candidate:
+                continue
+            index_meta = _resolve_index_identity({"symbol": candidate, "name": candidate, "tradingsymbol": candidate})
+            if index_meta:
+                break
+
+        if not index_meta:
+            skipped.append(
+                {
+                    "filter_symbol": str(row.get("filter_symbol") or "").strip() or "-",
+                    "reason": "unable_to_resolve_index_symbol",
+                }
+            )
+            continue
+
+        index_key, normalized_symbol = index_meta
+        default_index = next(
+            (item for item in DEFAULT_SCANNER_INDEXES if str(item.get("lookup_symbol") or "").strip().upper() == index_key),
+            None,
+        )
+        raw_symbol = str(
+            row.get("symbol")
+            or row.get("tradingsymbol")
+            or (default_index or {}).get("raw_symbol")
+            or index_key
+        ).strip()
+
+        fetch_mode = "token" if index_key in KITE_INDEX_TOKENS else "nse"
+        kite_token = ""
+        exchange_token = ""
+        tradingsymbol = raw_symbol
+
+        if fetch_mode == "token":
+            kite_token = str(int(KITE_INDEX_TOKENS.get(index_key) or 0) or "").strip()
+        else:
+            inst = _resolve_nse_index_instrument(nse_instrument_map, index_key, raw_symbol, normalized_symbol)
+            kite_token = str(inst.get("instrument_token") or "").strip()
+            exchange_token = str(inst.get("exchange_token") or "").strip()
+            tradingsymbol = str(inst.get("tradingsymbol") or raw_symbol).strip()
+
+        db[INDEX_STOCKS_COLLECTION].update_one(
+            {"_id": row["_id"]},
+            {
+                "$set": {
+                    "symbol": index_key,
+                    "tradingsymbol": tradingsymbol,
+                    "normalized_symbol": normalized_symbol,
+                    "kite_token": kite_token,
+                    "instrument_token": kite_token,
+                    "exchange_token": exchange_token,
+                    "fetch_mode": fetch_mode,
+                    "updated_at": now,
+                }
+            },
+        )
+        updated += 1
+
+    return {
+        "status": "success",
+        "total": len(rows),
+        "updated": updated,
+        "skipped": skipped,
+        "skipped_count": len(skipped),
+    }
+
+
+def _build_scanner_daily_stock_instruments(db) -> tuple[list[str], dict[str, dict[str, Any]]]:
+    rows = list(
+        db[STOCKS_COLLECTION].find(
+            {},
+            {
+                "_id": 0,
+                "exchange": 1,
+                "symbol": 1,
+                "tradingsymbol": 1,
+                "kite_token": 1,
+                "token": 1,
+                "instrument_token": 1,
+                "exchange_token": 1,
+                "series": 1,
+            },
+        )
+    )
+    instruments: list[str] = []
+    meta_map: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
+    skipped_no_symbol = 0
+    skipped_index_series = 0
+    duplicate_count = 0
+
+    for row in rows:
+        exchange = str(row.get("exchange") or "NSE").strip().upper() or "NSE"
+        if exchange not in {"NSE", "BSE"}:
+            exchange = "NSE"
+        if str(row.get("series") or "").strip().lower() == "index":
+            skipped_index_series += 1
+            continue
+        tradingsymbol = str(row.get("tradingsymbol") or row.get("symbol") or "").strip().upper()
+        if not tradingsymbol:
+            skipped_no_symbol += 1
+            continue
+        instrument = f"{exchange}:{tradingsymbol}"
+        if instrument in seen:
+            duplicate_count += 1
+            continue
+        seen.add(instrument)
+        instruments.append(instrument)
+        meta_map[instrument] = row
+
+    print(
+        f"📘 Stock loader: total_rows={len(rows)} loaded={len(instruments)} "
+        f"skipped_index_series={skipped_index_series} skipped_no_symbol={skipped_no_symbol} duplicates={duplicate_count}",
+        flush=True,
+    )
+    return instruments, meta_map
+
+
+def _build_scanner_daily_index_instruments(db) -> tuple[list[str], dict[str, dict[str, Any]]]:
+    instruments: list[str] = []
+    meta_map: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
+    skipped_unresolved = 0
+    skipped_no_tradingsymbol = 0
+    duplicate_count = 0
+
+    rows = list(
+        db[INDEX_STOCKS_COLLECTION].find(
+            {},
+            {"_id": 0, "filter_symbol": 1, "name": 1, "symbol": 1, "tradingsymbol": 1, "kite_token": 1, "exchange": 1},
+        )
+    )
+
+    for row in rows:
+        filter_symbol = str(row.get("filter_symbol") or "").strip().lower()
+        index_meta = None
+        for candidate in (
+            str(row.get("filter_symbol") or "").strip(),
+            str(row.get("name") or "").strip(),
+            str(row.get("symbol") or "").strip(),
+            str(row.get("tradingsymbol") or "").strip(),
+        ):
+            if not candidate:
+                continue
+            index_meta = _resolve_index_identity({"symbol": candidate, "name": candidate, "tradingsymbol": candidate})
+            if index_meta:
+                break
+        normalized_symbol = str(index_meta[1]).strip().lower() if index_meta else filter_symbol
+        default_index = next(
+            (
+                item for item in DEFAULT_SCANNER_INDEXES
+                if str(item.get("normalized_symbol") or "").strip().lower() == normalized_symbol
+            ),
+            None,
+        )
+        if not default_index:
+            skipped_unresolved += 1
+            continue
+        exchange = str(row.get("exchange") or ("BSE" if default_index["lookup_symbol"] == "SENSEX" else "NSE")).strip().upper()
+        tradingsymbol = str(row.get("tradingsymbol") or default_index.get("raw_symbol") or "").strip()
+        if not tradingsymbol:
+            skipped_no_tradingsymbol += 1
+            continue
+        instrument = f"{exchange}:{tradingsymbol}"
+        if instrument in seen:
+            duplicate_count += 1
+            continue
+        seen.add(instrument)
+        instruments.append(instrument)
+        meta_map[instrument] = {
+            **row,
+            "symbol": row.get("symbol") or default_index.get("lookup_symbol"),
+            "tradingsymbol": tradingsymbol,
+            "exchange": exchange,
+            "normalized_symbol": normalized_symbol,
+        }
+
+    print(
+        f"📗 Index loader: total_rows={len(rows)} loaded={len(instruments)} "
+        f"skipped_unresolved={skipped_unresolved} skipped_no_tradingsymbol={skipped_no_tradingsymbol} duplicates={duplicate_count}",
+        flush=True,
+    )
+    return instruments, meta_map
+
+
+def _fetch_kite_quotes_in_batches(kite, instruments: list[str], *, batch_size: int = 500) -> tuple[dict[str, Any], int]:
+    if not instruments:
+        return {}, 0
+
+    quotes: dict[str, Any] = {}
+    total_batches = 0
+    for idx, batch in enumerate(_chunkify_strings(instruments, batch_size), start=1):
+        total_batches = idx
+        print(f"📦 Quote batch {idx} ({len(batch)} instruments)", flush=True)
+        batch_quotes = kite.quote(batch) or {}
+        quotes.update(batch_quotes)
+        print(f"✅ Quote batch {idx} completed fetched={len(batch_quotes)}", flush=True)
+    return quotes, total_batches
+
+
+def _scanner_daily_quote_timestamp(payload: dict[str, Any]) -> datetime:
+    dt = payload.get("timestamp") or payload.get("last_trade_time") or datetime.now(timezone.utc)
+    return dt if isinstance(dt, datetime) else datetime.now(timezone.utc)
+
+
+def _transform_scanner_daily_stock_quote(instrument: str, payload: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+    dt = _scanner_daily_quote_timestamp(payload)
+    ohlc = payload.get("ohlc") or {}
+    symbol = str(meta.get("symbol") or instrument.split(":", 1)[-1]).strip().upper()
+    token = str(
+        meta.get("kite_token")
+        or meta.get("token")
+        or meta.get("instrument_token")
+        or payload.get("instrument_token")
+        or ""
+    ).strip()
+    return {
+        "h_symbol": symbol,
+        "ch_timestamp": dt.strftime("%Y-%m-%d"),
+        "ch_series": str(meta.get("series") or "EQ").strip() or "EQ",
+        "ch_opening_price": ohlc.get("open"),
+        "ch_high_price": ohlc.get("high"),
+        "ch_low_price": ohlc.get("low"),
+        "ch_closing_price": payload.get("last_price"),
+        "ch_previous_cls_price": ohlc.get("close"),
+        "ch_last_traded_price": payload.get("last_price"),
+        "ch_tot_traded_val": payload.get("volume"),
+        "ch_52week_high_price": ohlc.get("high"),
+        "ch_52week_low_price": ohlc.get("low"),
+        "ch_unix_timestamp": calendar.timegm(dt.utctimetuple()),
+        "ch_utc_timestamp": dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "h_symbol_token": token,
+    }
+
+
+def _transform_scanner_daily_index_quote(payload: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+    dt = _scanner_daily_quote_timestamp(payload)
+    ohlc = payload.get("ohlc") or {}
+    last_price = _safe_float(payload.get("last_price"))
+    open_price = _safe_float(ohlc.get("open"), last_price)
+    high_price = _safe_float(ohlc.get("high"), last_price)
+    low_price = _safe_float(ohlc.get("low"), last_price)
+    previous_close = _safe_float(ohlc.get("close"), last_price)
+    net_change_pct = _safe_float(payload.get("net_change"))
+    if previous_close > 0 and last_price > 0:
+        net_change_pct = round(((last_price - previous_close) / previous_close) * 100.0, 2)
+    else:
+        net_change_pct = 0.0
+    return {
+        "i_symbol": str(meta.get("normalized_symbol") or "").strip(),
+        "ih_timestamp": dt.strftime("%Y-%m-%d"),
+        "i_open_price": open_price,
+        "i_high_price": high_price,
+        "i_low_price": low_price,
+        "i_last_traded_price": last_price,
+        "i_close_price": last_price,
+        "i_previous_close": previous_close,
+        "i_volume": payload.get("volume") or 0,
+        "i_ch": net_change_pct,
+        "i_unix_timestamp": calendar.timegm(dt.utctimetuple()),
+    }
+
+
+def _bulk_upsert_scanner_daily_quotes(
+    target_col,
+    docs: list[dict[str, Any]],
+    key_fields: tuple[str, str],
+    batch_size: int = 1000,
+    fallback_symbol_field: str | None = None,
+) -> int:
+    if not docs:
+        return 0
+
+    total = 0
+    skipped_missing_key = 0
+    fallback_key_used = 0
+    for start in range(0, len(docs), batch_size):
+        batch = docs[start:start + batch_size]
+        ops: list[UpdateOne] = []
+        for doc in batch:
+            key_value = doc.get(key_fields[0])
+            ts_value = doc.get(key_fields[1])
+            if not ts_value:
+                skipped_missing_key += 1
+                continue
+            if key_value:
+                query = {key_fields[0]: key_value, key_fields[1]: ts_value}
+            elif fallback_symbol_field and doc.get(fallback_symbol_field):
+                fallback_key_used += 1
+                query = {fallback_symbol_field: doc.get(fallback_symbol_field), key_fields[1]: ts_value}
+            else:
+                skipped_missing_key += 1
+                continue
+            ops.append(UpdateOne(query, {"$set": doc}, upsert=True))
+        if not ops:
+            continue
+        result = target_col.bulk_write(ops, ordered=False)
+        total += int(result.upserted_count or 0) + int(result.modified_count or 0)
+    print(
+        f"💾 {target_col.name}: upserts={total} fallback_key_used={fallback_key_used} skipped_missing_key={skipped_missing_key}",
+        flush=True,
+    )
+    return total
+
+
+def sync_scanner_daily_market_snapshot() -> dict[str, Any]:
+    started_at = datetime.now()
+    print(f"\n🕒 Starting scanner daily market snapshot — {started_at.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
+    db = MongoData()._db
+    kite = _build_kite_client_from_config()
+    print("✅ Kite client ready.", flush=True)
+
+    stock_instruments, stock_meta_map = _build_scanner_daily_stock_instruments(db)
+    index_instruments, index_meta_map = _build_scanner_daily_index_instruments(db)
+    print(f"✅ Loaded {len(stock_instruments)} stock instruments from {STOCKS_COLLECTION}", flush=True)
+    print(f"✅ Loaded {len(index_instruments)} index instruments from {INDEX_STOCKS_COLLECTION}", flush=True)
+
+    stock_quotes, stock_batches = _fetch_kite_quotes_in_batches(kite, stock_instruments, batch_size=500)
+    index_quotes, index_batches = _fetch_kite_quotes_in_batches(kite, index_instruments, batch_size=500)
+
+    stock_docs = [
+        _transform_scanner_daily_stock_quote(instrument, payload, stock_meta_map[instrument])
+        for instrument, payload in stock_quotes.items()
+        if instrument in stock_meta_map
+    ]
+    index_docs = [
+        _transform_scanner_daily_index_quote(payload, index_meta_map[instrument])
+        for instrument, payload in index_quotes.items()
+        if instrument in index_meta_map
+    ]
+
+    stock_done = _bulk_upsert_scanner_daily_quotes(
+        db[HISTORY_COLLECTION],
+        stock_docs,
+        ("h_symbol_token", "ch_timestamp"),
+        batch_size=1000,
+        fallback_symbol_field="h_symbol",
+    )
+    index_done = _bulk_upsert_scanner_daily_quotes(
+        db[INDEX_HISTORY_COLLECTION],
+        index_docs,
+        ("i_symbol", "ih_timestamp"),
+        batch_size=1000,
+    )
+
+    elapsed = round((datetime.now() - started_at).total_seconds(), 2)
+    print(
+        f"🎉 Snapshot completed. stock_upserts={stock_done} index_upserts={index_done} elapsed={elapsed}s",
+        flush=True,
+    )
+
+    return {
+        "status": "success",
+        "message": "Scanner daily market snapshot synced.",
+        "stock_instruments": len(stock_instruments),
+        "index_instruments": len(index_instruments),
+        "stock_batches": stock_batches,
+        "index_batches": index_batches,
+        "stock_quotes": len(stock_quotes),
+        "index_quotes": len(index_quotes),
+        "stock_upserts": stock_done,
+        "index_upserts": index_done,
+        "elapsed_seconds": elapsed,
+        "date": started_at.strftime("%Y-%m-%d"),
+    }
+
+
+def _resolve_kite_access_token_error(exc: Exception) -> str | None:
+    message = str(exc or "").strip().lower()
+    if not message:
+        return None
+    if "expired" in message:
+        return "Expired Kite access token."
+    if any(
+        token in message
+        for token in (
+            "tokenexception",
+            "invalid api_key or access_token",
+            "invalid access token",
+            "incorrect `api_key` or `access_token`",
+            "access_token",
+            "token is invalid",
+        )
+    ):
+        return "Invalid Kite access token."
+    return None
+
+
+def _to_ymd(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    try:
+        return pd.to_datetime(value, errors="coerce").strftime("%Y-%m-%d")
+    except Exception:
+        return str(value or "")[:10]
+
+
+def _transform_scanner_stock_candles(
+    symbol: str,
+    token: str,
+    candles: list[dict[str, Any]],
+    valid_dates: set[str],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    previous_close: float | None = None
+
+    for candle in candles:
+        candle_date = _to_ymd(candle.get("date"))
+        close_price = _safe_float(candle.get("close"), default=0.0)
+        if candle_date not in valid_dates:
+            if close_price > 0:
+                previous_close = close_price
+            continue
+
+        out.append(
+            {
+                "h_symbol": symbol,
+                "token": token,
+                "ch_timestamp": candle_date,
+                "ch_series": "EQ",
+                "ch_opening_price": _safe_float(candle.get("open")),
+                "ch_high_price": _safe_float(candle.get("high")),
+                "ch_low_price": _safe_float(candle.get("low")),
+                "ch_closing_price": close_price,
+                "ch_volume": int(_safe_float(candle.get("volume"))),
+                "ch_previous_cls_price": previous_close,
+            }
+        )
+        if close_price > 0:
+            previous_close = close_price
+
+    return out
+
+
+def _transform_scanner_index_candles(
+    normalized_symbol: str,
+    raw_symbol: str,
+    candles: list[dict[str, Any]],
+    valid_dates: set[str],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    previous_close: float | None = None
+
+    for candle in candles:
+        candle_date = _to_ymd(candle.get("date"))
+        close_price = _safe_float(candle.get("close"), default=0.0)
+        if candle_date not in valid_dates:
+            if close_price > 0:
+                previous_close = close_price
+            continue
+
+        change_pct = 0.0
+        if previous_close and previous_close > 0:
+            change_pct = round(((close_price - previous_close) / previous_close) * 100.0, 2)
+
+        out.append(
+            {
+                "i_symbol": normalized_symbol,
+                "index_symbol": raw_symbol,
+                "ih_timestamp": candle_date,
+                "i_open_price": _safe_float(candle.get("open")),
+                "i_high_price": _safe_float(candle.get("high")),
+                "i_low_price": _safe_float(candle.get("low")),
+                "i_close_price": close_price,
+                "i_volume": int(_safe_float(candle.get("volume"))),
+                "i_previous_close": previous_close if previous_close is not None else close_price,
+                "i_ch": change_pct,
+            }
+        )
+        if close_price > 0:
+            previous_close = close_price
+
+    return out
+
+
+def sync_market_holidays(year: int | None = None) -> dict[str, Any]:
+    requested_year = int(year or datetime.now().year)
+    holidays = NSE_MARKET_HOLIDAYS.get(requested_year)
+    if not holidays:
+        raise ValueError(f"Holiday data not configured for year {requested_year}.")
+
+    db = MongoData()._db
+    now = datetime.utcnow().isoformat()
+    inserted = 0
+    updated = 0
+
+    for holiday in holidays:
+        payload = {
+            "date": holiday["date"],
+            "description": holiday["description"],
+            "year": requested_year,
+            "updated_at": now,
+            "source": "NSE Trading Holidays 2026",
+        }
+        result = db[MARKET_HOLIDAYS_COLLECTION].update_one(
+            {"date": holiday["date"]},
+            {"$set": payload, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+        if result.upserted_id is not None:
+            inserted += 1
+        elif result.modified_count:
+            updated += 1
+
+    return {
+        "status": "success",
+        "year": requested_year,
+        "holiday_count": len(holidays),
+        "inserted": inserted,
+        "updated": updated,
+        "dates": [holiday["date"] for holiday in holidays],
+    }
+
+
+def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, Any]:
+    def progress_print(message: str = "") -> None:
+        print(message, flush=True)
+    global _historical_sync_running, _historical_sync_stop_requested
+
+    from_dt = _parse_ymd_date(start_date, field_name="start_date")
+    to_dt = _parse_ymd_date(end_date, field_name="end_date")
+    if from_dt > to_dt:
+        raise ValueError("start_date cannot be after end_date.")
+
+    if _historical_sync_running:
+        raise ValueError("Historical sync is already running.")
+
+    _historical_sync_running = True
+    _historical_sync_stop_requested = False
+
+    try:
+        progress_print("🔐 Loading Kite market config credentials...")
+        db = MongoData()._db
+        kite = _build_kite_client_from_config()
+        progress_print("✅ Kite client ready.")
+        auth_validated = False
+
+        holiday_dates = _load_market_holiday_dates()
+        target_dates: set[str] = set()
+        current = from_dt
+        while current <= to_dt:
+            date_str = current.strftime("%Y-%m-%d")
+            if date_str not in holiday_dates:
+                target_dates.add(date_str)
+            current += timedelta(days=1)
+
+        progress_print(
+            f"\n📅 Fetching scanner historical data from {from_dt.strftime('%Y-%m-%d')} → {to_dt.strftime('%Y-%m-%d')}"
+        )
+        progress_print(f"📊 Trading days in range: {len(target_dates)}")
+
+        if not target_dates:
+            progress_print("⏭️ Selected range contains only market holidays.")
+            return {
+                "status": "success",
+                "message": "Selected range contains only market holidays.",
+                "start_date": from_dt.strftime("%Y-%m-%d"),
+                "end_date": to_dt.strftime("%Y-%m-%d"),
+                "stocks_processed": 0,
+                "indexes_processed": 0,
+            }
+
+        rows = list(
+            db[STOCKS_COLLECTION].find(
+                {},
+                {
+                    "_id": 0,
+                    "symbol": 1,
+                    "tradingsymbol": 1,
+                    "name": 1,
+                    "series": 1,
+                    "kite_token": 1,
+                    "token": 1,
+                    "tokens": 1,
+                    "instrument_token": 1,
+                    "exchange_token": 1,
+                    "code": 1,
+                },
+            )
+        )
+        nse_instrument_map = _load_kite_nse_instrument_map(kite)
+        index_rows = _load_scanner_index_master(db, nse_instrument_map)
+
+        stock_rows: list[dict[str, Any]] = []
+        for row in rows:
+            stock_rows.append(row)
+
+        total_items = len(stock_rows) + len(index_rows)
+        progress_print(f"📦 Total symbols to process: {total_items} ({len(stock_rows)} stocks, {len(index_rows)} indexes)")
+
+        stock_collection = db[HISTORY_COLLECTION]
+        index_collection = db[INDEX_HISTORY_COLLECTION]
+        delete_from = from_dt.strftime("%Y-%m-%d")
+        delete_to = to_dt.strftime("%Y-%m-%d")
+
+        stocks_processed = 0
+        indexes_processed = 0
+        stock_records_inserted = 0
+        index_records_inserted = 0
+        stock_deleted = 0
+        index_deleted = 0
+        skipped: list[dict[str, str]] = []
+        processed_items = 0
+        stop_reason = ""
+
+        # Replace only the requested window; fetch a short lookback so previous close remains correct.
+        fetch_start_base = from_dt - timedelta(days=HISTORICAL_LOOKBACK_BUFFER_DAYS)
+
+        for _, index_row in sorted(index_rows.items()):
+            if _historical_sync_stop_requested:
+                stop_reason = "Stopped by user request before stock processing."
+                progress_print("\n🛑 Stop requested. Ending sync before remaining symbols.")
+                break
+            kite_key = str(index_row["kite_key"]).strip().upper()
+            processed_items += 1
+            progress_print(f"\n[{processed_items}/{total_items}] 📉 {kite_key or '-'} (index)")
+            fetch_mode = str(index_row.get("fetch_mode") or "").strip().lower() or (
+                "token" if kite_key in KITE_INDEX_TOKENS else "nse"
+            )
+            if fetch_mode == "nse":
+                inst = _resolve_nse_index_instrument(
+                    nse_instrument_map,
+                    kite_key,
+                    str(index_row.get("raw_symbol") or ""),
+                    str(index_row.get("normalized_symbol") or ""),
+                )
+                index_token = int(str((inst or {}).get("instrument_token") or "0").strip() or 0)
+            else:
+                index_token = int(KITE_INDEX_TOKENS.get(kite_key) or 0)
+            if not index_token:
+                skipped.append({"symbol": kite_key, "reason": "missing_index_token"})
+                progress_print(f"   ⚠️ Skipped: missing index token ({fetch_mode})")
+                continue
+
+            all_candles = []
+            current_from = fetch_start_base
+            while current_from <= to_dt:
+                current_to = min(current_from + timedelta(days=HISTORICAL_CHUNK_DAYS), to_dt)
+                try:
+                    all_candles.extend(_fetch_kite_daily_candles(kite, index_token, current_from, current_to))
+                    auth_validated = True
+                except Exception as exc:
+                    token_error = _resolve_kite_access_token_error(exc)
+                    if token_error:
+                        progress_print(f"   ❌ {token_error}")
+                        raise ValueError(token_error) from exc
+                    skipped.append({"symbol": kite_key, "reason": f"kite_error:{exc}"})
+                    progress_print(f"   ⚠️ Kite fetch error: {exc}")
+                    all_candles = []
+                    break
+                current_from = current_to + timedelta(days=1)
+
+            if not all_candles:
+                progress_print("   ⏭️ No candles fetched")
+                continue
+
+            docs = _transform_scanner_index_candles(
+                str(index_row["normalized_symbol"]),
+                str(index_row["raw_symbol"]),
+                all_candles,
+                target_dates,
+            )
+            if not docs:
+                progress_print("   ⏭️ No valid trading-day records to insert")
+                continue
+
+            delete_result = index_collection.delete_many(
+                {
+                    "i_symbol": str(index_row["normalized_symbol"]),
+                    "ih_timestamp": {"$gte": delete_from, "$lte": delete_to},
+                }
+            )
+            index_deleted += int(delete_result.deleted_count or 0)
+            index_collection.insert_many(docs, ordered=False)
+            indexes_processed += 1
+            index_records_inserted += len(docs)
+            progress_print(
+                f"   ✅ Deleted {int(delete_result.deleted_count or 0)} old records | Inserted {len(docs)} records"
+            )
+            progress_print(
+                f"   📌 Progress: completed {processed_items}/{total_items} | total inserted {stock_records_inserted + index_records_inserted}"
+            )
+
+        if not stop_reason:
+            for row in stock_rows:
+                if _historical_sync_stop_requested:
+                    stop_reason = "Stopped by user request during stock processing."
+                    progress_print("\n🛑 Stop requested. Ending sync before remaining symbols.")
+                    break
+                symbol, token = _resolve_stock_kite_token(row)
+                processed_items += 1
+                progress_print(f"\n[{processed_items}/{total_items}] 📈 {symbol or '-'} (stock)")
+                if not symbol or not token.isdigit():
+                    skipped.append({"symbol": symbol or "-", "reason": "missing_kite_token"})
+                    progress_print("   ⚠️ Skipped: missing kite token")
+                    continue
+
+                all_candles: list[dict[str, Any]] = []
+                current_from = fetch_start_base
+                while current_from <= to_dt:
+                    current_to = min(current_from + timedelta(days=HISTORICAL_CHUNK_DAYS), to_dt)
+                    try:
+                        all_candles.extend(_fetch_kite_daily_candles(kite, int(token), current_from, current_to))
+                        auth_validated = True
+                    except Exception as exc:
+                        token_error = _resolve_kite_access_token_error(exc)
+                        if token_error:
+                            progress_print(f"   ❌ {token_error}")
+                            raise ValueError(token_error) from exc
+                        skipped.append({"symbol": symbol, "reason": f"kite_error:{exc}"})
+                        progress_print(f"   ⚠️ Kite fetch error: {exc}")
+                        all_candles = []
+                        break
+                    current_from = current_to + timedelta(days=1)
+
+                if not all_candles:
+                    progress_print("   ⏭️ No candles fetched")
+                    continue
+
+                docs = _transform_scanner_stock_candles(symbol, token, all_candles, target_dates)
+                if not docs:
+                    progress_print("   ⏭️ No valid trading-day records to insert")
+                    continue
+
+                delete_result = stock_collection.delete_many(
+                    {
+                        "h_symbol": symbol,
+                        "ch_timestamp": {"$gte": delete_from, "$lte": delete_to},
+                    }
+                )
+                stock_deleted += int(delete_result.deleted_count or 0)
+                stock_collection.insert_many(docs, ordered=False)
+                stocks_processed += 1
+                stock_records_inserted += len(docs)
+                progress_print(
+                    f"   ✅ Deleted {int(delete_result.deleted_count or 0)} old records | Inserted {len(docs)} records"
+                )
+                progress_print(
+                    f"   📌 Progress: completed {processed_items}/{total_items} | total inserted {stock_records_inserted + index_records_inserted}"
+                )
+
+        if not auth_validated and (stock_rows or index_rows):
+            progress_print("   ❌ Invalid Kite access token.")
+            raise ValueError("Invalid Kite access token.")
+
+        if stop_reason:
+            progress_print(f"\n🛑 Scanner historical data sync stopped.")
+            progress_print(f"   Reason       : {stop_reason}")
+        else:
+            progress_print("\n🎉 Scanner historical data sync completed.")
+        progress_print(f"   Trading days : {len(target_dates)}")
+        progress_print(f"   Indexes done : {indexes_processed}")
+        progress_print(f"   Stocks done  : {stocks_processed}")
+        progress_print(f"   Total insert : {stock_records_inserted + index_records_inserted}")
+        progress_print(f"   Total delete : {stock_deleted + index_deleted}")
+        progress_print(f"   Skipped      : {len(skipped)}")
+
+        return {
+            "status": "success",
+            "message": "Historical sync stopped by user." if stop_reason else "Historical sync completed.",
+            "stopped": bool(stop_reason),
+            "start_date": delete_from,
+            "end_date": delete_to,
+            "trading_days": sorted(target_dates),
+            "stocks_processed": stocks_processed,
+            "stock_records_inserted": stock_records_inserted,
+            "stock_records_deleted": stock_deleted,
+            "indexes_processed": indexes_processed,
+            "index_records_inserted": index_records_inserted,
+            "index_records_deleted": index_deleted,
+            "skipped": skipped,
+        }
+    finally:
+        _historical_sync_running = False
+        _historical_sync_stop_requested = False
 
 
 def _load_kite_quotes(symbols: list[str]) -> tuple[dict[str, float], dict[str, float]]:
@@ -853,6 +2034,47 @@ def _attach_kite_tokens(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return enriched_rows
 
 
+def _get_portfolio_settings(strategy_id: str) -> dict[str, Any]:
+    strategy_oid = _as_object_id(strategy_id)
+    db = MongoData()._db
+    portfolio_doc = db[PORTFOLIO_COLLECTION].find_one({"_id": strategy_oid})
+    if not portfolio_doc:
+        raise ValueError("Portfolio not found.")
+    return portfolio_doc
+
+
+def _build_investment_payload_from_scores(
+    strategy_id: str,
+    score_data: list[dict[str, Any]],
+    total_capital: float | None = None,
+    top_n: int | None = None,
+) -> list[dict[str, Any]]:
+    if not score_data:
+        return []
+
+    portfolio_doc = _get_portfolio_settings(strategy_id)
+    resolved_total_capital = _safe_float(
+        total_capital,
+        _safe_float(portfolio_doc.get("current_value"), _safe_float(portfolio_doc.get("starting_capital"))),
+    )
+    resolved_top_n = max(1, int(_safe_float(top_n, _safe_float(portfolio_doc.get("entry_rank"), 1))))
+
+    rows_df = pd.DataFrame(score_data)
+    if rows_df.empty:
+        return []
+
+    for column in ("rank", "last_price", "score", "perf_1M", "perf_3M", "perf_6M", "perf_1Y", "vol_1M", "vol_3M", "vol_6M", "vol_1Y"):
+        if column not in rows_df.columns:
+            rows_df[column] = 0.0
+
+    rows_df["rank"] = pd.to_numeric(rows_df["rank"], errors="coerce").fillna(0).astype(int)
+    rows_df["last_price"] = pd.to_numeric(rows_df["last_price"], errors="coerce").fillna(0.0)
+    rows_df["score"] = pd.to_numeric(rows_df["score"], errors="coerce").fillna(0.0)
+
+    investment_rows, _summary = _build_portfolio(rows_df, resolved_total_capital, resolved_top_n)
+    return investment_rows
+
+
 def _build_portfolio(score_rows: pd.DataFrame, total_capital: float, top_n: int) -> tuple[list[dict[str, Any]], dict[str, float]]:
     top_n = max(1, int(top_n or 1))
     equal_investment = float(total_capital) / float(top_n)
@@ -1332,35 +2554,6 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
             or stock_meta.get("exchange_token")
             or stock_meta.get("code")
         )
-        print(
-            "[SCANNER SAVE DEBUG] incoming_stock",
-            {
-                "symbol": symbol,
-                "symbol_token": stock.get("symbol_token"),
-                "kite_token": stock.get("kite_token"),
-                "token": stock.get("token"),
-                "tokens": stock.get("tokens"),
-                "instrument_token": stock.get("instrument_token"),
-                "exchange_token": stock.get("exchange_token"),
-                "code": stock.get("code"),
-            },
-        )
-        print(
-            "[SCANNER SAVE DEBUG] resolved_token",
-            {
-                "symbol": symbol,
-                "resolved_token": resolved_token,
-                "stock_meta": {
-                    "kite_token": stock_meta.get("kite_token"),
-                    "symbol_token": stock_meta.get("symbol_token"),
-                    "token": stock_meta.get("token"),
-                    "tokens": stock_meta.get("tokens"),
-                    "instrument_token": stock_meta.get("instrument_token"),
-                    "exchange_token": stock_meta.get("exchange_token"),
-                    "code": stock_meta.get("code"),
-                },
-            },
-        )
         investment_doc = {
             "entry_price": _safe_float(stock.get("last_price")),
             "position_qty": int(_safe_float(stock.get("qty"), 0)),
@@ -1399,7 +2592,6 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
             "secondary_investment_qty": stock.get("secondary_investment_qty"),
             "secondary_investment_rank": stock.get("secondary_investment_rank"),
         }
-        print("[SCANNER SAVE DEBUG] investment_doc_before_insert", investment_doc)
         investment_docs.append(investment_doc)
     if not investment_docs:
         return 0
@@ -1457,8 +2649,26 @@ def save_portfolio(portfolio_settings: dict[str, Any], invest_stock_data: list[d
     }
 
 
-def update_portfolio_investments(portfolio_strategy_id: str, invest_stock_data: list[dict[str, Any]]) -> dict[str, Any]:
-    inserted_count = save_investment_portfolio(invest_stock_data, portfolio_strategy_id)
+def update_portfolio_investments(
+    portfolio_strategy_id: str,
+    invest_stock_data: list[dict[str, Any]] | None,
+    *,
+    score_data: list[dict[str, Any]] | None = None,
+    total_capital: float | None = None,
+    top_n: int | None = None,
+) -> dict[str, Any]:
+    payload_rows = list(invest_stock_data or [])
+    if not payload_rows and score_data:
+        payload_rows = _build_investment_payload_from_scores(
+            portfolio_strategy_id,
+            score_data,
+            total_capital=total_capital,
+            top_n=top_n,
+        )
+    if not payload_rows:
+        raise ValueError("invest_stock_data or score_data is required.")
+
+    inserted_count = save_investment_portfolio(payload_rows, portfolio_strategy_id)
     _clear_portfolio_summary_cache()
     return {
         "status": "success",

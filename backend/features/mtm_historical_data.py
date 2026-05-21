@@ -55,6 +55,12 @@ def _parse_candle_datetime(candle: str) -> tuple[str, str]:
     if "T" in raw:
         date_part, time_part = raw.split("T", 1)
         hm = time_part[:5]          # 'HH:MM'
+        try:
+            parsed_time = datetime.strptime(hm, "%H:%M")
+            if (parsed_time.hour, parsed_time.minute) > (15, 30):
+                hm = "15:30"
+        except ValueError:
+            hm = "15:30"
         candle_ts = f"{date_part}T{hm}:00"
     else:
         date_part = raw[:10] if len(raw) >= 10 else date.today().isoformat()

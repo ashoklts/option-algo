@@ -118,12 +118,57 @@ _jobs_lock = multiprocessing.Lock()
 _LIST_CACHE_TTL_SECONDS = 30.0
 _list_cache: dict[str, dict] = {}
 _list_cache_lock = threading.Lock()
+
+
+def _clear_broker_configuration_access_token(db_handle, broker_doc_id: str) -> None:
+    if not broker_doc_id:
+        return
+    db_handle["broker_configuration"].update_one(
+        {"_id": ObjectId(broker_doc_id)},
+        {"$set": {
+            "access_token": "",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+
+def _validate_broker_configuration_session(item: dict, db_handle) -> tuple[bool, bool, str]:
+    access_token = str(item.get("access_token") or "").strip()
+    if not access_token:
+        return False, False, ""
+
+    broker_doc_id = str(item.get("_id") or "").strip()
+    broker_name = str(item.get("broker_name") or item.get("name") or "").strip().lower()
+    user_id = str(item.get("user_id") or "").strip()
+
+    try:
+        if "zerodha" in broker_name or "kite" in broker_name:
+            kite = get_kite_instance(access_token)
+            kite.profile()
+            return True, False, ""
+
+        if "flattrade" in broker_name:
+            from features.flattrade_broker import validate_session as validate_flattrade_session
+
+            ok, message = validate_flattrade_session(user_id=user_id, access_token=access_token)
+            if ok:
+                return True, False, ""
+            raise ValueError(message or "FlatTrade session invalid")
+
+        return True, False, ""
+    except Exception as exc:
+        try:
+            _clear_broker_configuration_access_token(db_handle, broker_doc_id)
+        except Exception:
+            pass
+        return False, True, str(exc)
 _ACTIVE_OPTION_CHAIN_CACHE: dict[str, dict[str, Any]] = {}
 _ACTIVE_OPTION_CHAIN_CACHE_LOCK = threading.Lock()
 _simulator_broker = SimulatorZerodhaBroker()
 _simulator_sessions: dict[str, StrategyEngine] = {}
 _shared_mongo = MongoData()
 IST = timezone(timedelta(hours=5, minutes=30))
+ALGO_TRADE_PORTFOLIO_COLLECTION = "algo_trade_portfolio"
 
 
 def _resolve_app_user_id(value: str | None = None) -> str:
@@ -547,33 +592,77 @@ def _load_strategy_time_difference_minutes(db: MongoData, activation_mode: str) 
     return 0
 
 
-def _resolve_daily_portfolio(db: MongoData, source_portfolio_oid, source_portfolio_doc: dict, activation_mode: str = ""):
-    """Find or create a saved_portfolios record for today (IST date) + activation mode.
+def _load_activation_portfolio_doc(db: MongoData, portfolio_id: str):
+    normalized_portfolio_id = str(portfolio_id or "").strip()
+    if not normalized_portfolio_id:
+        raise HTTPException(status_code=400, detail="portfolio_id is required")
+    try:
+        portfolio_oid = ObjectId(normalized_portfolio_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid portfolio_id")
 
-    Each trading day gets one portfolio per activation mode, e.g.:
-      "2026-05-19-live", "2026-05-19-forward-test", "2026-05-19-algo-backtest"
+    source_doc = db._db["saved_portfolios"].find_one({"_id": portfolio_oid}, {"_id": 1, "name": 1})
+    if source_doc:
+        return "source", portfolio_oid, source_doc
 
-    All activations with the same mode on the same day reuse the same document,
-    so every strategy is linked to a consistent daily portfolio_id.
+    daily_doc = db._db[ALGO_TRADE_PORTFOLIO_COLLECTION].find_one({"_id": portfolio_oid}, {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1})
+    if daily_doc:
+        return "daily", portfolio_oid, daily_doc
+
+    raise HTTPException(status_code=404, detail="Portfolio not found")
+
+
+def _get_source_portfolio_id_from_doc(portfolio_kind: str, portfolio_oid, portfolio_doc: dict) -> str:
+    if portfolio_kind == "daily":
+        resolved = str((portfolio_doc or {}).get("source_portfolio_id") or "").strip()
+        if resolved:
+            return resolved
+    return str(portfolio_oid)
+
+
+def _resolve_daily_portfolio(
+    db: MongoData,
+    source_portfolio_oid,
+    source_portfolio_doc: dict,
+    activation_mode: str = "",
+    trade_date_hint: str = "",
+):
+    """Find or create a daily runtime portfolio in algo_trade_portfolio.
+
+    Runtime portfolio identity is scoped by:
+      source_portfolio_id + trade_date + activation_mode
 
     Returns (portfolio_id_str, portfolio_doc_dict).
     """
-    ist_today = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
-    mode_slug = str(activation_mode or "algo-backtest").strip()
-    daily_name = f"{ist_today}-{mode_slug}"
+    normalized_mode = _normalize_runtime_activation_mode(activation_mode)
+    trade_date = _default_runtime_trade_date(normalized_mode, str(trade_date_hint or "").strip()[:10])
+    if not trade_date:
+        trade_date = datetime.now(IST).strftime("%Y-%m-%d")
 
-    existing = db._db["saved_portfolios"].find_one(
-        {"name": daily_name},
-        {"_id": 1, "name": 1},
+    source_portfolio_id = str(source_portfolio_oid)
+    source_portfolio_name = str((source_portfolio_doc or {}).get("name") or "").strip()
+    collection = db._db[ALGO_TRADE_PORTFOLIO_COLLECTION]
+    query = {
+        "source_portfolio_id": source_portfolio_id,
+        "trade_date": trade_date,
+        "activation_mode": normalized_mode,
+    }
+    existing = collection.find_one(
+        query,
+        {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1},
     )
     if existing:
         return str(existing["_id"]), existing
 
-    # Clone metadata from source portfolio
     source_full = db._db["saved_portfolios"].find_one({"_id": source_portfolio_oid}) or {}
     now_iso = datetime.utcnow().isoformat()
     new_doc = {
-        "name": daily_name,
+        "name": source_portfolio_name or f"{trade_date}-{normalized_mode}",
+        "source_portfolio_id": source_portfolio_id,
+        "source_portfolio_name": source_portfolio_name,
+        "trade_date": trade_date,
+        "activation_mode": normalized_mode,
+        "daily_key": f"{source_portfolio_id}:{trade_date}:{normalized_mode}",
         "strategy_ids": source_full.get("strategy_ids") or [],
         "strategies": source_full.get("strategies") or [],
         "qty_multiplier": int(source_full.get("qty_multiplier") or 1),
@@ -582,17 +671,15 @@ def _resolve_daily_portfolio(db: MongoData, source_portfolio_oid, source_portfol
         "updated_at": now_iso,
     }
     try:
-        result = db._db["saved_portfolios"].insert_one(new_doc)
-        return str(result.inserted_id), {"_id": result.inserted_id, "name": daily_name}
+        result = collection.insert_one(new_doc)
+        return str(result.inserted_id), {"_id": result.inserted_id, "name": new_doc["name"], "source_portfolio_id": source_portfolio_id, "trade_date": trade_date, "activation_mode": normalized_mode}
     except Exception:
-        # Race condition: another request created the same-named doc concurrently
-        fallback = db._db["saved_portfolios"].find_one(
-            {"name": daily_name},
-            {"_id": 1, "name": 1},
+        fallback = collection.find_one(
+            query,
+            {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1},
         )
         if fallback:
             return str(fallback["_id"]), fallback
-        # Last resort: keep the original source portfolio
         return str(source_portfolio_oid), source_portfolio_doc
 
 
@@ -2344,7 +2431,9 @@ def _build_algo_trade_config(strategy_detail: dict, strategy_state: dict, activa
 @router.post("/portfolio/prepare-activation")
 async def portfolio_prepare_activation(payload: dict):
     portfolio_id = str(payload.get("portfolio_id") or "").strip()
+    trade_portfolio_id = str(payload.get("trade_portfolio_id") or "").strip()
     activation_mode = str(payload.get("activation_mode") or "").strip() or "algo-backtest"
+    requested_current_datetime = str(payload.get("current_datetime") or "").strip()
     strategies = payload.get("strategies") or []
 
     if not portfolio_id:
@@ -2353,17 +2442,18 @@ async def portfolio_prepare_activation(payload: dict):
         raise HTTPException(status_code=400, detail="At least one strategy is required")
 
     db = MongoData()
-    try:
-        portfolio_oid = ObjectId(portfolio_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid portfolio_id")
-
-    portfolio_doc = db._db["saved_portfolios"].find_one({"_id": portfolio_oid}, {"_id": 1, "name": 1})
-    if not portfolio_doc:
-        raise HTTPException(status_code=404, detail="Portfolio not found")
-
-    # Resolve daily portfolio: find today's (IST) portfolio or create one
-    portfolio_id, portfolio_doc = _resolve_daily_portfolio(db, portfolio_oid, portfolio_doc, activation_mode)
+    portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, portfolio_id)
+    source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc)
+    if portfolio_kind == "daily":
+        trade_portfolio_id = str(portfolio_oid)
+    else:
+        trade_portfolio_id, portfolio_doc = _resolve_daily_portfolio(
+            db,
+            portfolio_oid,
+            portfolio_doc,
+            activation_mode,
+            requested_current_datetime,
+        )
 
     executed_col = db._db["executed_strategies"]
     now_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -2404,7 +2494,7 @@ async def portfolio_prepare_activation(payload: dict):
         ).strip() or None
         user_id = _resolve_app_user_id(item.get("user_id") or strategy_detail.get("user_id"))
         execution_number = executed_col.count_documents({
-            "portfolio_id": portfolio_id,
+            "portfolio_id": trade_portfolio_id,
             "source_strategy_id": source_strategy_id,
         }) + 1
         assigned_strategy_id = str(ObjectId())
@@ -2419,7 +2509,7 @@ async def portfolio_prepare_activation(payload: dict):
             "source_strategy_id": source_strategy_id,
             "strategy_id": source_strategy_id,
             "strategy_name": item.get("name") or strategy_detail.get("name") or "",
-            "portfolio_id": portfolio_id,
+            "portfolio_id": trade_portfolio_id,
             "portfolio_name": portfolio_doc.get("name") or "",
             "activation_mode": activation_mode,
             "broker": broker,
@@ -2451,7 +2541,8 @@ async def portfolio_prepare_activation(payload: dict):
 
     return {
         "success": True,
-        "portfolio_id": portfolio_id,
+        "portfolio_id": source_portfolio_id,
+        "trade_portfolio_id": trade_portfolio_id,
         "activation_mode": activation_mode,
         "split_executions": split_executions,
         "executed_strategies": prepared_rows,
@@ -2481,17 +2572,23 @@ async def portfolio_activate(payload: dict):
         raise HTTPException(status_code=400, detail="At least one trade record is required")
 
     db = MongoData()
-    try:
-        portfolio_oid = ObjectId(portfolio_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid portfolio_id")
-
-    portfolio_doc = db._db["saved_portfolios"].find_one({"_id": portfolio_oid}, {"_id": 1, "name": 1})
-    if not portfolio_doc:
-        raise HTTPException(status_code=404, detail="Portfolio not found")
-
-    # Resolve daily portfolio: find today's (IST) portfolio or create one
-    portfolio_id, portfolio_doc = _resolve_daily_portfolio(db, portfolio_oid, portfolio_doc, activation_mode)
+    if trade_portfolio_id:
+        portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, trade_portfolio_id)
+        resolved_trade_portfolio_id = str(portfolio_oid)
+        source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc) or portfolio_id
+    else:
+        portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, portfolio_id)
+        source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc)
+        if portfolio_kind == "daily":
+            resolved_trade_portfolio_id = str(portfolio_oid)
+        else:
+            resolved_trade_portfolio_id, portfolio_doc = _resolve_daily_portfolio(
+                db,
+                portfolio_oid,
+                portfolio_doc,
+                activation_mode,
+                requested_current_datetime,
+            )
 
     executed_col = db._db["executed_strategies"]
     collection_name = "algo_trades"
@@ -2510,11 +2607,11 @@ async def portfolio_activate(payload: dict):
             resolved_now = parsed_now
     now_ts = resolved_now.strftime("%Y-%m-%d %H:%M:%S.%f")
     raw_group_name = str((((trades[0] or {}).get("portfolio") or {}).get("group_name") or "")).strip() if trades else ""
-    base_portfolio_group_name = str(portfolio_doc.get("name") or raw_group_name or "Portfolio Activation").strip() or "Portfolio Activation"
+    base_portfolio_group_name = str(portfolio_doc.get("source_portfolio_name") or portfolio_doc.get("name") or raw_group_name or "Portfolio Activation").strip() or "Portfolio Activation"
     base_portfolio_group_name = re.sub(r" \(\d+\)$", "", base_portfolio_group_name).strip() or "Portfolio Activation"
     matching_group_names = []
     group_name_regex = "^" + re.escape(base_portfolio_group_name) + r"(?: \(\d+\))?$"
-    for existing in algo_trades_col.find({"portfolio.portfolio": portfolio_id, "portfolio.group_name": {"$regex": group_name_regex}}, {"portfolio.group_name": 1}):
+    for existing in algo_trades_col.find({"portfolio.trade_portfolio": resolved_trade_portfolio_id, "portfolio.group_name": {"$regex": group_name_regex}}, {"portfolio.group_name": 1}):
         existing_name = str(((existing.get("portfolio") or {}).get("group_name") or "")).strip()
         if existing_name:
             matching_group_names.append(existing_name)
@@ -2657,7 +2754,9 @@ async def portfolio_activate(payload: dict):
         doc["view_config"] = normalized_execution_settings.get("view_config") if isinstance(normalized_execution_settings.get("view_config"), dict) else {"advanced_exec_config_modal": True}
         doc.pop("broker_type", None)
         doc["portfolio"] = doc.get("portfolio") if isinstance(doc.get("portfolio"), dict) else {}
-        doc["portfolio"]["portfolio"] = portfolio_id
+        incoming_source_portfolio_id = str(doc["portfolio"].get("portfolio") or "").strip()
+        doc["portfolio"]["portfolio"] = incoming_source_portfolio_id or source_portfolio_id or portfolio_id
+        doc["portfolio"]["trade_portfolio"] = resolved_trade_portfolio_id
         doc["portfolio"]["group_name"] = resolved_portfolio_group_name
         if activation_mode == "algo-backtest" and requested_current_datetime:
             doc["creation_ts"] = now_ts
@@ -2686,7 +2785,8 @@ async def portfolio_activate(payload: dict):
 
     return {
         "success": True,
-        "portfolio_id": portfolio_id,
+        "portfolio_id": source_portfolio_id,
+        "trade_portfolio_id": resolved_trade_portfolio_id,
         "group_id": resolved_group_id,
         "activation_mode": activation_mode,
         "collection_name": collection_name,
@@ -3665,6 +3765,7 @@ async def list_broker_configurations(broker_type: str = ""):
                 "user_id": 1,
                 "access_token": 1,
                 "redirect_url": 1,
+                "postback_url": 1,
             },
         )
         records = []
@@ -3674,7 +3775,7 @@ async def list_broker_configurations(broker_type: str = ""):
                 continue
             broker_doc = dict(item)
             broker_doc["_id"] = broker_id
-            has_token = bool(str(item.get("access_token") or "").strip())
+            is_logged_in, session_expired, session_message = _validate_broker_configuration_session(item, db._db)
             records.append({
                 "_id": broker_id,
                 "name": _extract_broker_configuration_label(broker_doc, broker_id),
@@ -3685,7 +3786,9 @@ async def list_broker_configurations(broker_type: str = ""):
                 "login_time": str(item.get("login_time") or "").strip(),
                 "redirect_url": str(item.get("redirect_url") or "").strip(),
                 "postback_url": str(item.get("postback_url") or "").strip(),
-                "is_logged_in": has_token,
+                "is_logged_in": is_logged_in,
+                "session_expired": session_expired,
+                "session_message": session_message,
             })
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load broker configurations: {exc}") from exc
@@ -8148,7 +8251,11 @@ async def spot_historical_data(
         activation_mode – optional; algo-backtest | fast-forward | live
 
     Response:
-        { "NSE_01": { timestamp, close }, "NSE_00": { timestamp, close } }
+        {
+          "256265": { timestamp, close },
+          "SPOT_NIFTY": { timestamp, close },
+          "NSE_00": { timestamp, close }
+        }
     """
     from features.spot_historical_data import get_spot_historical_data
 

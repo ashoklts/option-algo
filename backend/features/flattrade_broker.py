@@ -174,6 +174,23 @@ def get_stored_access_token(db, broker_doc_id: str) -> str | None:
     return (doc or {}).get("access_token")
 
 
+def validate_session(user_id: str, access_token: str) -> tuple[bool, str]:
+    """
+    Validate a FlatTrade session token with a lightweight authenticated call.
+    """
+    adapter = get_flattrade_instance(user_id=user_id, access_token=access_token)
+    if adapter is None:
+        return False, "FlatTrade user_id or access_token missing"
+
+    try:
+        result = adapter._post("OrderBook", {"uid": adapter.user_id})
+        if isinstance(result, dict) and str(result.get("stat") or "").strip().lower() == "not_ok":
+            return False, str(result.get("emsg") or "FlatTrade session invalid")
+        return True, "FlatTrade session valid"
+    except Exception as exc:
+        return False, str(exc)
+
+
 # ── FlatTrade adapter ─────────────────────────────────────────────────────────
 
 class FlatTradeAdapter:

@@ -122,6 +122,18 @@ def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
         return
 
 
+def _subscribe_mode_option_token(activation_mode: str, token: str, symbol: str = '') -> None:
+    normalized_mode = str(activation_mode or '').strip().lower()
+    if normalized_mode == 'fast-forward':
+        try:
+            from features.fast_forward_event import _subscribe_option_token
+            _subscribe_option_token(token, symbol)
+            return
+        except Exception:
+            return
+    _subscribe_live_option_token(token, symbol)
+
+
 def _build_kite_quote_instrument(symbol: str, underlying: str) -> str:
     normalized_symbol = str(symbol or '').strip()
     if not normalized_symbol:
@@ -191,10 +203,15 @@ def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
         if normalized_trade_date:
             query['creation_ts'] = {'$regex': f'^{normalized_trade_date}'}
 
-        trades = list(db._db['algo_trades'].find(query, {'_id': 1, 'name': 1}))
+        trades = list(db._db['algo_trades'].find(query, {'_id': 1, 'name': 1, 'activation_mode': 1}))
         trade_ids = [str(item.get('_id') or '').strip() for item in trades if str(item.get('_id') or '').strip()]
         if not trade_ids:
             return 0
+        trade_mode_by_id = {
+            str(item.get('_id') or '').strip(): str(item.get('activation_mode') or '').strip().lower()
+            for item in trades
+            if str(item.get('_id') or '').strip()
+        }
 
         subscribed = 0
         dirty_trade_ids: list[str] = []
@@ -258,7 +275,8 @@ def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
 
             if not token:
                 continue
-            _subscribe_live_option_token(token, symbol)
+            trade_mode = trade_mode_by_id.get(str(row.get('trade_id') or '').strip(), 'live')
+            _subscribe_mode_option_token(trade_mode, token, symbol)
             subscribed += 1
 
         for _dtid in dirty_trade_ids:
@@ -282,7 +300,8 @@ def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
             if not mtoken:
                 continue
             msymbol = str(mrow.get('symbol') or '').strip()
-            _subscribe_live_option_token(mtoken, msymbol)
+            trade_mode = trade_mode_by_id.get(str(mrow.get('trade_id') or '').strip(), 'live')
+            _subscribe_mode_option_token(trade_mode, mtoken, msymbol)
             momentum_subscribed += 1
             entry_print(
                 f'[LIVE MOMENTUM PENDING SUBSCRIBE] '

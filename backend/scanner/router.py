@@ -1,6 +1,6 @@
 from typing import Any, List, Optional, Union
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from .service import (
@@ -20,8 +20,14 @@ from .service import (
     rebalance_portfolio,
     save_portfolio,
     backfill_stocks_list_kite_tokens,
+    backfill_index_stocks_kite_tokens,
+    get_scanner_historical_sync_status,
     get_previous_universe_stocks,
     remove_universe_field_from_stocks_list,
+    request_stop_scanner_historical_sync,
+    start_scanner_historical_data_sync,
+    sync_scanner_daily_market_snapshot,
+    sync_market_holidays,
     kite_sync_universe_stock_list,
     sync_universe_stock_list,
     update_portfolio_investments,
@@ -53,7 +59,10 @@ class EodScoringRequest(BaseModel):
 
 class UpdatePortfolioRequest(BaseModel):
     portfolio_strategy_id: str
-    invest_stock_data: list[dict[str, Any]]
+    invest_stock_data: Optional[list[dict[str, Any]]] = None
+    score_data: Optional[list[dict[str, Any]]] = None
+    total_capital: Optional[float] = None
+    top_n: Optional[int] = None
 
 
 class SavePortfolioRequest(BaseModel):
@@ -99,6 +108,67 @@ async def scanner_backfill_stocks_kite_tokens() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/backfill_index_stocks_kite_tokens")
+async def scanner_backfill_index_stocks_kite_tokens() -> dict[str, Any]:
+    try:
+        return backfill_index_stocks_kite_tokens()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/sync_market_holidays")
+async def scanner_sync_market_holidays(
+    year: int = Query(default=2026, ge=2000, le=2100),
+) -> dict[str, Any]:
+    try:
+        return sync_market_holidays(year)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/sync_historical_data")
+async def scanner_sync_historical_data(
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+) -> dict[str, Any]:
+    try:
+        return start_scanner_historical_data_sync(start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/sync_daily_market_snapshot")
+async def scanner_sync_daily_market_snapshot() -> dict[str, Any]:
+    try:
+        return sync_scanner_daily_market_snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/stop_historical_data_sync")
+async def scanner_stop_historical_data_sync() -> dict[str, Any]:
+    try:
+        return request_stop_scanner_historical_sync()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/historical_data_sync_status")
+async def scanner_historical_data_sync_status() -> dict[str, Any]:
+    try:
+        return get_scanner_historical_sync_status()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/remove_universe_field")
 async def scanner_remove_universe_field() -> dict[str, Any]:
     try:
@@ -140,7 +210,13 @@ async def scanner_eod_scoring_combained(body: EodScoringRequest) -> dict[str, An
 @router.post("/update_portfolio")
 async def scanner_update_portfolio(body: UpdatePortfolioRequest) -> dict[str, Any]:
     try:
-        return update_portfolio_investments(body.portfolio_strategy_id, body.invest_stock_data)
+        return update_portfolio_investments(
+            body.portfolio_strategy_id,
+            body.invest_stock_data,
+            score_data=body.score_data,
+            total_capital=body.total_capital,
+            top_n=body.top_n,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

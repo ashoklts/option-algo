@@ -11167,7 +11167,7 @@ async def update_socket(
     def _attach_live_tick_listener() -> None:
         nonlocal live_tick_listener
         nonlocal live_tick_source
-        if activation_mode not in {'live', 'fast-forward'}:
+        if activation_mode != 'live':
             _detach_live_tick_listener()
             return
         try:
@@ -11208,7 +11208,7 @@ async def update_socket(
     async def _live_tick_sender() -> None:
         while True:
             tick_payload = await live_tick_queue.get()
-            if activation_mode not in {'live', 'fast-forward'}:
+            if activation_mode != 'live':
                 continue
             try:
                 latest_tick_payload = dict(tick_payload or {})
@@ -11578,7 +11578,7 @@ async def update_socket(
                 # Fast-forward / live: _live_tick_sender handles LTP via tick listener.
                 # Timeout handler must not run the backtest simulation path for these modes.
                 # If no tick listener (Kite not connected), emit current IST time as fallback.
-                if activation_mode in {'fast-forward', 'live'}:
+                if activation_mode == 'live':
                     if _monitor_running and not live_tick_listener:
                         try:
                             from features.live_monitor_socket import _get_active_ticker_manager, _SPOT_TOKEN_BY_UNDERLYING
@@ -11633,7 +11633,7 @@ async def update_socket(
                             )
                         except Exception as _ltp_exc:
                             log.debug('live ltp_update error: %s', _ltp_exc)
-                    # Always skip backtest simulation for fast-forward / live mode
+                    # Always skip backtest simulation for live mode
                     continue
                 # backtest simulation path — only runs when autorun is enabled
                 if not autorun_enabled:
