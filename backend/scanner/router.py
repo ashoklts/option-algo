@@ -1,9 +1,12 @@
 from typing import Any, List, Optional, Union
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from .service import (
+    backfill_missing_tokens,
+    backfill_stocks_list_exchange,
+    delete_portfolio,
     exit_goldbees_strategy,
     generate_combained_stock_scores,
     generate_stock_scores,
@@ -12,12 +15,14 @@ from .service import (
     get_live_portfolio,
     get_combained_portfolio_detail,
     get_indexes,
+    get_portfolio_settings,
     get_portfolio_detail,
     get_portfolio_summary,
     get_sectors,
     invest_goldbees_strategy,
     rebalance_combained_portfolio,
     rebalance_portfolio,
+    run_scanner_backtest,
     save_portfolio,
     backfill_stocks_list_kite_tokens,
     backfill_index_stocks_kite_tokens,
@@ -28,12 +33,48 @@ from .service import (
     start_scanner_historical_data_sync,
     sync_scanner_daily_market_snapshot,
     sync_market_holidays,
+    parse_multi_strategy_reports,
+    run_backtest_from_file_inputs,
+    parse_single_file_inputs,
+    run_multi_backtest_from_payloads,
     kite_sync_universe_stock_list,
     sync_universe_stock_list,
     update_portfolio_investments,
+    get_kite_universe_stocks,
+    sync_kite_universe_to_db,
+    sync_all_kite_universes_to_db,
+    sync_stocks_industry_from_nse,
 )
 
 router = APIRouter(prefix="/scanner", tags=["scanner"])
+
+
+class RunBacktestRequest(BaseModel):
+    indexes: Optional[List[str]] = ["nifty_50"]
+    sectors: Optional[List[str]] = []
+    formula: Optional[str] = None
+    starting_capital: float = 1_000_000
+    entry_rank: int = 12
+    exit_rank: int = 25
+    rebalance_frequency: str = "monthly"
+    rebalance_date: Union[str, int] = "10"
+    alternative_rebalance_day: str = "next_day"
+    position_sizing: str = "equal_weight"
+    strategy_name: str = "My Strategy"
+    start_date: str = "2020-01-01"
+    end_date: str = "2026-01-01"
+    regime_filter_status: bool = True
+    regime_filter: str = "supertrend_1_2_5"
+    regime_filter_action: str = "go_cash"
+    regime_filter_indexes: str = "nifty_500"
+    uncorrelated_asset_status: bool = True
+    uncorrelated_asset_type: str = "gold_bees"
+    uncorrelated_asset_allocation: int = 100
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    stock_price_min: Optional[float] = None
+    stock_price_max: Optional[float] = None
+    score_model: Optional[str] = "current"
 
 
 class EodScoringRequest(BaseModel):
@@ -55,6 +96,7 @@ class EodScoringRequest(BaseModel):
     total_capital_1: Optional[float] = None
     score_date_1: Optional[str] = None
     formula_1: Optional[str] = None
+    score_model: Optional[str] = "current"
 
 
 class UpdatePortfolioRequest(BaseModel):
@@ -98,12 +140,70 @@ async def scanner_kite_sync_universe_stocks() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/universe_stocks/{filter_symbol}")
+async def scanner_universe_stocks(filter_symbol: str) -> dict[str, Any]:
+    try:
+        return get_kite_universe_stocks(filter_symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/sync_universe_to_db/{filter_symbol}")
+async def scanner_sync_universe_to_db(filter_symbol: str) -> dict[str, Any]:
+    try:
+        return sync_kite_universe_to_db(filter_symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/sync_all_universes_to_db")
+async def scanner_sync_all_universes_to_db() -> dict[str, Any]:
+    try:
+        return sync_all_kite_universes_to_db()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/sync_stocks_industry")
+async def scanner_sync_stocks_industry() -> dict[str, Any]:
+    try:
+        return sync_stocks_industry_from_nse()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/backfill_stocks_kite_tokens")
 async def scanner_backfill_stocks_kite_tokens() -> dict[str, Any]:
     try:
         return backfill_stocks_list_kite_tokens()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/backfill_missing_tokens")
+async def scanner_backfill_missing_tokens() -> dict[str, Any]:
+    try:
+        return backfill_missing_tokens()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/backfill_stocks_exchange")
+async def scanner_backfill_stocks_exchange() -> dict[str, Any]:
+    try:
+        return backfill_stocks_list_exchange()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -137,6 +237,17 @@ async def scanner_sync_historical_data(
 ) -> dict[str, Any]:
     try:
         return start_scanner_historical_data_sync(start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/sync_universe_historical_data")
+async def scanner_sync_universe_historical_data(
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+) -> dict[str, Any]:
+    try:
+        return start_scanner_historical_data_sync(start_date, end_date, use_universe_list=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -233,10 +344,34 @@ async def scanner_save_portfolio(body: SavePortfolioRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.delete("/portfolio/{portfolio_id}")
+async def scanner_delete_portfolio(portfolio_id: str) -> dict[str, Any]:
+    try:
+        return delete_portfolio(portfolio_id)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/portfolio_summary")
 async def scanner_portfolio_summary() -> list[dict[str, Any]]:
     try:
         return get_portfolio_summary()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/portfolio_settings/{strategy_id}")
+async def scanner_portfolio_settings(strategy_id: str) -> dict[str, Any]:
+    try:
+        return get_portfolio_settings(strategy_id)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -323,6 +458,91 @@ async def scanner_invest_goldbees(strategy_id: str) -> dict[str, Any]:
 async def scanner_exit_goldbees(strategy_id: str) -> dict[str, Any]:
     try:
         return exit_goldbees_strategy(strategy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/run_backtest")
+async def scanner_run_backtest(body: RunBacktestRequest) -> dict[str, Any]:
+    try:
+        payload = body.model_dump()
+        if payload.get("min_price") is None and payload.get("stock_price_min"):
+            payload["min_price"] = payload["stock_price_min"]
+        if payload.get("max_price") is None and payload.get("stock_price_max"):
+            payload["max_price"] = payload["stock_price_max"]
+        return run_scanner_backtest(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/multi_strategy_reports")
+async def scanner_multi_strategy_reports(
+    files: list[UploadFile] = File(...),
+    strategy_names: list[str] = Form(...),
+) -> dict[str, Any]:
+    try:
+        if len(files) != len(strategy_names):
+            raise ValueError("Each uploaded file must have a matching strategy name.")
+        payload_files = []
+        for file, strategy_name in zip(files, strategy_names):
+            payload_files.append({
+                "file_name": file.filename or "strategy_report.xls",
+                "strategy_name": strategy_name,
+                "content": await file.read(),
+            })
+        return parse_multi_strategy_reports(payload_files)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/rerun_backtest_from_files")
+async def scanner_rerun_backtest_from_files(
+    files: list[UploadFile] = File(...),
+    strategy_names: list[str] = Form(...),
+) -> dict[str, Any]:
+    try:
+        if len(files) != len(strategy_names):
+            raise ValueError("Each uploaded file must have a matching strategy name.")
+        payload_files = []
+        for file, strategy_name in zip(files, strategy_names):
+            payload_files.append({
+                "file_name": file.filename or "strategy_report.xls",
+                "strategy_name": strategy_name,
+                "content": await file.read(),
+            })
+        return run_backtest_from_file_inputs(payload_files)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/parse_file_input")
+async def scanner_parse_file_input(
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    try:
+        content = await file.read()
+        return parse_single_file_inputs(content, file.filename or "strategy.xls")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/run_backtest_multi")
+async def scanner_run_backtest_multi(body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        strategies = body.get("strategies")
+        if not isinstance(strategies, list) or not strategies:
+            raise ValueError("strategies must be a non-empty array.")
+        return run_multi_backtest_from_payloads(strategies)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from bson import ObjectId
-from fastapi import FastAPI, HTTPException, APIRouter, Query, Request
+from fastapi import FastAPI, HTTPException, APIRouter, Query, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -605,7 +605,10 @@ def _load_activation_portfolio_doc(db: MongoData, portfolio_id: str):
     if source_doc:
         return "source", portfolio_oid, source_doc
 
-    daily_doc = db._db[ALGO_TRADE_PORTFOLIO_COLLECTION].find_one({"_id": portfolio_oid}, {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1})
+    daily_doc = db._db[ALGO_TRADE_PORTFOLIO_COLLECTION].find_one(
+        {"_id": portfolio_oid},
+        {"_id": 1, "trade_portfolio": 1, "trade_group_portfolio": 1, "trade_index": 1, "trade_date": 1, "activation_mode": 1},
+    )
     if daily_doc:
         return "daily", portfolio_oid, daily_doc
 
@@ -620,17 +623,57 @@ def _get_source_portfolio_id_from_doc(portfolio_kind: str, portfolio_oid, portfo
     return str(portfolio_oid)
 
 
+def _load_source_portfolio_root(db: MongoData, portfolio_kind: str, portfolio_oid, portfolio_doc: dict):
+    if portfolio_kind == "source":
+        return portfolio_oid, portfolio_doc or {}
+
+    source_portfolio_id = str((portfolio_doc or {}).get("source_portfolio_id") or "").strip()
+    if source_portfolio_id:
+        try:
+            source_oid = ObjectId(source_portfolio_id)
+            source_doc = db._db["saved_portfolios"].find_one({"_id": source_oid}, {"_id": 1, "name": 1}) or {}
+            return source_oid, source_doc
+        except Exception:
+            pass
+    return portfolio_oid, {"_id": portfolio_oid, "name": str((portfolio_doc or {}).get("source_portfolio_name") or (portfolio_doc or {}).get("name") or "").strip()}
+
+
+def _normalize_trade_index(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _extract_trade_index(*candidates: Any) -> str:
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            nested_value = _extract_trade_index(
+                candidate.get("trade_index"),
+                candidate.get("ticker"),
+                candidate.get("underlying"),
+                ((candidate.get("config") or {}) if isinstance(candidate.get("config"), dict) else {}).get("Ticker"),
+                ((candidate.get("strategy_detail") or {}) if isinstance(candidate.get("strategy_detail"), dict) else {}).get("underlying"),
+                ((candidate.get("strategy") or {}) if isinstance(candidate.get("strategy"), dict) else {}).get("Ticker"),
+            )
+            if nested_value:
+                return nested_value
+            continue
+        normalized = _normalize_trade_index(candidate)
+        if normalized:
+            return normalized
+    return "NIFTY"
+
+
 def _resolve_daily_portfolio(
     db: MongoData,
     source_portfolio_oid,
     source_portfolio_doc: dict,
     activation_mode: str = "",
     trade_date_hint: str = "",
+    trade_index: str = "",
 ):
     """Find or create a daily runtime portfolio in algo_trade_portfolio.
 
     Runtime portfolio identity is scoped by:
-      source_portfolio_id + trade_date + activation_mode
+      trade_date + activation_mode + trade_index
 
     Returns (portfolio_id_str, portfolio_doc_dict).
     """
@@ -638,45 +681,58 @@ def _resolve_daily_portfolio(
     trade_date = _default_runtime_trade_date(normalized_mode, str(trade_date_hint or "").strip()[:10])
     if not trade_date:
         trade_date = datetime.now(IST).strftime("%Y-%m-%d")
+    normalized_trade_index = _extract_trade_index(trade_index)
 
-    source_portfolio_id = str(source_portfolio_oid)
-    source_portfolio_name = str((source_portfolio_doc or {}).get("name") or "").strip()
     collection = db._db[ALGO_TRADE_PORTFOLIO_COLLECTION]
     query = {
-        "source_portfolio_id": source_portfolio_id,
         "trade_date": trade_date,
         "activation_mode": normalized_mode,
+        "trade_index": normalized_trade_index,
     }
     existing = collection.find_one(
         query,
-        {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1},
+        {"_id": 1, "trade_portfolio": 1, "trade_group_portfolio": 1, "trade_index": 1, "trade_date": 1, "activation_mode": 1, "created_at": 1, "updated_at": 1},
     )
     if existing:
         return str(existing["_id"]), existing
 
-    source_full = db._db["saved_portfolios"].find_one({"_id": source_portfolio_oid}) or {}
+    new_oid = ObjectId()
     now_iso = datetime.utcnow().isoformat()
+    sibling_doc = collection.find_one(
+        {
+            "trade_date": trade_date,
+            "activation_mode": normalized_mode,
+            "trade_group_portfolio": {"$exists": True, "$ne": ""},
+        },
+        {"trade_group_portfolio": 1},
+    )
+    trade_group_portfolio = str((sibling_doc or {}).get("trade_group_portfolio") or "").strip() or str(ObjectId())
     new_doc = {
-        "name": source_portfolio_name or f"{trade_date}-{normalized_mode}",
-        "source_portfolio_id": source_portfolio_id,
-        "source_portfolio_name": source_portfolio_name,
+        "_id": new_oid,
+        "trade_portfolio": str(new_oid),
+        "trade_group_portfolio": trade_group_portfolio,
+        "trade_index": normalized_trade_index,
         "trade_date": trade_date,
         "activation_mode": normalized_mode,
-        "daily_key": f"{source_portfolio_id}:{trade_date}:{normalized_mode}",
-        "strategy_ids": source_full.get("strategy_ids") or [],
-        "strategies": source_full.get("strategies") or [],
-        "qty_multiplier": int(source_full.get("qty_multiplier") or 1),
-        "is_weekdays": bool(source_full.get("is_weekdays", True)),
         "created_at": now_iso,
         "updated_at": now_iso,
     }
     try:
         result = collection.insert_one(new_doc)
-        return str(result.inserted_id), {"_id": result.inserted_id, "name": new_doc["name"], "source_portfolio_id": source_portfolio_id, "trade_date": trade_date, "activation_mode": normalized_mode}
+        return str(result.inserted_id), {
+            "_id": result.inserted_id,
+            "trade_portfolio": str(new_doc["trade_portfolio"]),
+            "trade_group_portfolio": trade_group_portfolio,
+            "trade_index": normalized_trade_index,
+            "trade_date": trade_date,
+            "activation_mode": normalized_mode,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
     except Exception:
         fallback = collection.find_one(
             query,
-            {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1},
+            {"_id": 1, "trade_portfolio": 1, "trade_group_portfolio": 1, "trade_index": 1, "trade_date": 1, "activation_mode": 1, "created_at": 1, "updated_at": 1},
         )
         if fallback:
             return str(fallback["_id"]), fallback
@@ -1428,6 +1484,21 @@ async def _setup_logging():
         _refresh_active_option_chain_cache()
     except Exception:
         log.exception("Failed to preload active option chain cache at startup")
+
+
+@app.on_event("startup")
+async def _span_params_startup():
+    """Seed SPAN defaults to DB (if empty) and load into memory cache."""
+    import asyncio
+    async def _bg():
+        await asyncio.sleep(3)
+        try:
+            from features.span_file import save_defaults_to_db, fetch_span_file
+            await asyncio.to_thread(save_defaults_to_db)   # seed DB if empty
+            await asyncio.to_thread(fetch_span_file)       # load DB + any local files
+        except Exception:
+            log.exception("SPAN params startup failed — hardcoded defaults will be used")
+    asyncio.create_task(_bg())
 
 
 @app.on_event("startup")
@@ -2444,22 +2515,14 @@ async def portfolio_prepare_activation(payload: dict):
     db = MongoData()
     portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, portfolio_id)
     source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc)
-    if portfolio_kind == "daily":
-        trade_portfolio_id = str(portfolio_oid)
-    else:
-        trade_portfolio_id, portfolio_doc = _resolve_daily_portfolio(
-            db,
-            portfolio_oid,
-            portfolio_doc,
-            activation_mode,
-            requested_current_datetime,
-        )
+    source_root_oid, source_root_doc = _load_source_portfolio_root(db, portfolio_kind, portfolio_oid, portfolio_doc)
 
     executed_col = db._db["executed_strategies"]
     now_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
     split_executions = {}
     docs_to_insert = []
     prepared_rows = []
+    first_trade_portfolio_id = ""
 
     for index, item in enumerate(strategies):
         if not isinstance(item, dict):
@@ -2493,8 +2556,19 @@ async def portfolio_prepare_activation(payload: dict):
             or ""
         ).strip() or None
         user_id = _resolve_app_user_id(item.get("user_id") or strategy_detail.get("user_id"))
+        trade_index = _extract_trade_index(item, strategy_detail)
+        item_trade_portfolio_id, item_portfolio_doc = _resolve_daily_portfolio(
+            db,
+            source_root_oid,
+            source_root_doc,
+            activation_mode,
+            requested_current_datetime,
+            trade_index=trade_index,
+        )
+        if not first_trade_portfolio_id:
+            first_trade_portfolio_id = item_trade_portfolio_id
         execution_number = executed_col.count_documents({
-            "portfolio_id": trade_portfolio_id,
+            "portfolio_id": item_trade_portfolio_id,
             "source_strategy_id": source_strategy_id,
         }) + 1
         assigned_strategy_id = str(ObjectId())
@@ -2509,8 +2583,10 @@ async def portfolio_prepare_activation(payload: dict):
             "source_strategy_id": source_strategy_id,
             "strategy_id": source_strategy_id,
             "strategy_name": item.get("name") or strategy_detail.get("name") or "",
-            "portfolio_id": trade_portfolio_id,
-            "portfolio_name": portfolio_doc.get("name") or "",
+            "portfolio_id": item_trade_portfolio_id,
+            "portfolio_name": item_portfolio_doc.get("name") or "",
+            "trade_portfolio_id": item_trade_portfolio_id,
+            "trade_index": trade_index,
             "activation_mode": activation_mode,
             "broker": broker,
             "user_id": user_id,
@@ -2534,6 +2610,8 @@ async def portfolio_prepare_activation(payload: dict):
             "broker": broker,
             "user_id": user_id,
             "ticker": ticker,
+            "trade_portfolio_id": item_trade_portfolio_id,
+            "trade_index": trade_index,
         })
 
     if docs_to_insert:
@@ -2542,7 +2620,7 @@ async def portfolio_prepare_activation(payload: dict):
     return {
         "success": True,
         "portfolio_id": source_portfolio_id,
-        "trade_portfolio_id": trade_portfolio_id,
+        "trade_portfolio_id": first_trade_portfolio_id,
         "activation_mode": activation_mode,
         "split_executions": split_executions,
         "executed_strategies": prepared_rows,
@@ -2573,23 +2651,9 @@ async def portfolio_activate(payload: dict):
         raise HTTPException(status_code=400, detail="At least one trade record is required")
 
     db = MongoData()
-    if trade_portfolio_id:
-        portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, trade_portfolio_id)
-        resolved_trade_portfolio_id = str(portfolio_oid)
-        source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc) or portfolio_id
-    else:
-        portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, portfolio_id)
-        source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc)
-        if portfolio_kind == "daily":
-            resolved_trade_portfolio_id = str(portfolio_oid)
-        else:
-            resolved_trade_portfolio_id, portfolio_doc = _resolve_daily_portfolio(
-                db,
-                portfolio_oid,
-                portfolio_doc,
-                activation_mode,
-                requested_current_datetime,
-            )
+    portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, portfolio_id)
+    source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc)
+    source_root_oid, source_root_doc = _load_source_portfolio_root(db, portfolio_kind, portfolio_oid, portfolio_doc)
 
     executed_col = db._db["executed_strategies"]
     collection_name = "algo_trades"
@@ -2607,30 +2671,12 @@ async def portfolio_activate(payload: dict):
         if parsed_now is not None:
             resolved_now = parsed_now
     now_ts = resolved_now.strftime("%Y-%m-%d %H:%M:%S.%f")
-    raw_group_name = str((((trades[0] or {}).get("portfolio") or {}).get("group_name") or "")).strip() if trades else ""
-    base_portfolio_group_name = str(portfolio_doc.get("source_portfolio_name") or portfolio_doc.get("name") or raw_group_name or "Portfolio Activation").strip() or "Portfolio Activation"
-    base_portfolio_group_name = re.sub(r" \(\d+\)$", "", base_portfolio_group_name).strip() or "Portfolio Activation"
-    matching_group_names = []
-    group_name_regex = "^" + re.escape(base_portfolio_group_name) + r"(?: \(\d+\))?$"
-    for existing in algo_trades_col.find({"portfolio.trade_portfolio": resolved_trade_portfolio_id, "portfolio.group_name": {"$regex": group_name_regex}}, {"portfolio.group_name": 1}):
-        existing_name = str(((existing.get("portfolio") or {}).get("group_name") or "")).strip()
-        if existing_name:
-            matching_group_names.append(existing_name)
-
-    if base_portfolio_group_name not in matching_group_names:
-        resolved_portfolio_group_name = base_portfolio_group_name
-    else:
-        highest_group_index = 0
-        for existing_name in matching_group_names:
-            if existing_name == base_portfolio_group_name:
-                continue
-            suffix_match = re.search(r" \((\d+)\)$", existing_name)
-            if suffix_match:
-                highest_group_index = max(highest_group_index, int(suffix_match.group(1)))
-        resolved_portfolio_group_name = f"{base_portfolio_group_name} ({highest_group_index + 1})"
-
     strategy_time_difference_minutes = _load_strategy_time_difference_minutes(db, activation_mode)
     docs_to_insert = []
+    portfolio_group_meta_cache: dict[str, dict[str, str]] = {}
+    response_trade_portfolio_ids: list[str] = []
+    response_group_ids: list[str] = []
+    activation_batch_group_id = str(ObjectId())
 
     for index, item in enumerate(trades):
         if not isinstance(item, dict):
@@ -2644,6 +2690,57 @@ async def portfolio_activate(payload: dict):
             raise HTTPException(status_code=400, detail=f"Trade at index {index} is missing strategy_id")
 
         doc = dict(item)
+        item_trade_index = _extract_trade_index(doc)
+        item_trade_portfolio_id = str(doc.get("trade_portfolio_id") or trade_portfolio_id or "").strip()
+        item_portfolio_doc: dict = {}
+        if item_trade_portfolio_id:
+            item_portfolio_kind, item_portfolio_oid, item_portfolio_doc = _load_activation_portfolio_doc(db, item_trade_portfolio_id)
+            item_trade_portfolio_id = str(item_portfolio_oid)
+            item_trade_index = _extract_trade_index(item_portfolio_doc.get("trade_index"), item_trade_index)
+        else:
+            item_trade_portfolio_id, item_portfolio_doc = _resolve_daily_portfolio(
+                db,
+                source_root_oid,
+                source_root_doc,
+                activation_mode,
+                requested_current_datetime,
+                trade_index=item_trade_index,
+            )
+
+        cache_key = item_trade_portfolio_id
+        group_meta = portfolio_group_meta_cache.get(cache_key)
+        if group_meta is None:
+            raw_group_name = str((((doc or {}).get("portfolio") or {}).get("group_name") or "")).strip()
+            base_portfolio_group_name = str(item_portfolio_doc.get("source_portfolio_name") or item_portfolio_doc.get("name") or raw_group_name or "Portfolio Activation").strip() or "Portfolio Activation"
+            base_portfolio_group_name = re.sub(r" \(\d+\)$", "", base_portfolio_group_name).strip() or "Portfolio Activation"
+            matching_group_names = []
+            group_name_regex = "^" + re.escape(base_portfolio_group_name) + r"(?: \(\d+\))?$"
+            for existing in algo_trades_col.find({"portfolio.trade_portfolio": item_trade_portfolio_id, "portfolio.group_name": {"$regex": group_name_regex}}, {"portfolio.group_name": 1}):
+                existing_name = str(((existing.get("portfolio") or {}).get("group_name") or "")).strip()
+                if existing_name:
+                    matching_group_names.append(existing_name)
+
+            if base_portfolio_group_name not in matching_group_names:
+                resolved_portfolio_group_name = base_portfolio_group_name
+            else:
+                highest_group_index = 0
+                for existing_name in matching_group_names:
+                    if existing_name == base_portfolio_group_name:
+                        continue
+                    suffix_match = re.search(r" \((\d+)\)$", existing_name)
+                    if suffix_match:
+                        highest_group_index = max(highest_group_index, int(suffix_match.group(1)))
+                resolved_portfolio_group_name = f"{base_portfolio_group_name} ({highest_group_index + 1})"
+            group_meta = {
+                "group_name": resolved_portfolio_group_name,
+                "group_id": activation_batch_group_id,
+                "strategy_group_id": str(ObjectId()),
+            }
+            portfolio_group_meta_cache[cache_key] = group_meta
+            response_trade_portfolio_ids.append(item_trade_portfolio_id)
+            if group_meta["group_id"] not in response_group_ids:
+                response_group_ids.append(group_meta["group_id"])
+
         prepared_execution = executed_col.find_one(
             {"assigned_strategy_id": strategy_id},
             {"strategy_detail_snapshot": 1, "multiplier": 1, "source_strategy_id": 1, "broker": 1, "user_id": 1},
@@ -2757,8 +2854,16 @@ async def portfolio_activate(payload: dict):
         doc["portfolio"] = doc.get("portfolio") if isinstance(doc.get("portfolio"), dict) else {}
         incoming_source_portfolio_id = str(doc["portfolio"].get("portfolio") or "").strip()
         doc["portfolio"]["portfolio"] = incoming_source_portfolio_id or source_portfolio_id or portfolio_id
-        doc["portfolio"]["trade_portfolio"] = resolved_trade_portfolio_id
-        doc["portfolio"]["group_name"] = resolved_portfolio_group_name
+        doc["portfolio"]["trade_portfolio"] = item_trade_portfolio_id
+        doc["portfolio"]["trade_group_portfolio"] = str(item_portfolio_doc.get("trade_group_portfolio") or "").strip()
+        doc["portfolio"]["group_name"] = group_meta["group_name"]
+        doc["portfolio"]["group_id"] = group_meta["group_id"]
+        doc["portfolio"]["strategy_group_id"] = group_meta["strategy_group_id"]
+        doc["trade_portfolio"] = item_trade_portfolio_id
+        doc["trade_group_portfolio"] = str(item_portfolio_doc.get("trade_group_portfolio") or "").strip()
+        doc["strategy_group_id"] = group_meta["strategy_group_id"]
+        doc["trade_portfolio_id"] = item_trade_portfolio_id
+        doc["trade_index"] = item_trade_index
         if activation_mode == "algo-backtest" and requested_current_datetime:
             doc["creation_ts"] = now_ts
             doc["last_activation_ts"] = now_ts
@@ -2787,8 +2892,10 @@ async def portfolio_activate(payload: dict):
     return {
         "success": True,
         "portfolio_id": source_portfolio_id,
-        "trade_portfolio_id": resolved_trade_portfolio_id,
+        "trade_portfolio_id": response_trade_portfolio_ids[0] if response_trade_portfolio_ids else "",
+        "trade_portfolio_ids": response_trade_portfolio_ids,
         "group_id": resolved_group_id,
+        "group_ids": response_group_ids,
         "activation_mode": activation_mode,
         "collection_name": collection_name,
         "inserted_count": len(docs_to_insert),
@@ -3036,6 +3143,164 @@ async def calculate_margin_api(request: Request):
     if not body.get("legs"):
         return {"span_margin": 0, "exposure_margin": 0, "total_margin": 0, "premium_received": 0, "net_margin": 0, "legs": []}
     return await asyncio.to_thread(_calculate_margin_sync, body)
+
+
+@router.get("/span/refresh")
+async def refresh_span_file():
+    """
+    Manually trigger NSE + BSE SPAN file download and cache update.
+    Call once every ~5 trading days to keep margin params fresh.
+    Covers: all NSE index + stock options, all BSE index + stock options.
+    """
+    import asyncio
+    from features.span_file import (
+        fetch_span_file, get_cache_date, get_params, is_loaded,
+        DEFAULTS, _nse_cache, _bse_cache,
+    )
+
+    ok = await asyncio.to_thread(fetch_span_file)
+
+    # Index params summary
+    index_summary = {
+        u: {
+            "psr_pct":     get_params(u).get("psr_pct"),
+            "somc":        get_params(u).get("somc"),
+            "inter_month": get_params(u).get("inter_month"),
+            "from_file":   get_params(u).get("from_file", False),
+        }
+        for u in DEFAULTS
+    }
+
+    return {
+        "success":        ok,
+        "source":         "span_file" if (ok and is_loaded()) else "defaults",
+        "file_date":      get_cache_date() or None,
+        "nse_underlyings_loaded": len(_nse_cache),
+        "bse_underlyings_loaded": len(_bse_cache),
+        "index_params":   index_summary,
+    }
+
+
+@router.post("/span/upload")
+async def upload_span_file(file: UploadFile = File(...)):
+    """
+    Upload NSE or BSE SPAN zip file directly.
+    Filename must start with NSEFO_SPAN_ or BSEFO_SPAN_.
+
+    Steps:
+      1. Download NSEFO_SPAN_DDMMMYYYY.zip from NSE website (Derivatives → SPAN)
+      2. Download BSEFO_SPAN_DDMMMYYYY.zip from BSE website (Derivatives → SPAN)
+      3. POST each file to this endpoint
+      4. System auto-parses and caches — margin calc uses live params immediately
+    """
+    import asyncio
+    from features.span_file import fetch_span_file, get_cache_date, is_loaded, _SPAN_DIR, DEFAULTS, _nse_cache, _bse_cache, get_params
+
+    fname = file.filename or ""
+    fname_upper = fname.upper()
+
+    if not (fname_upper.startswith("NSEFO_SPAN_") or fname_upper.startswith("BSEFO_SPAN_")):
+        raise HTTPException(
+            status_code=400,
+            detail="Filename must start with NSEFO_SPAN_ or BSEFO_SPAN_ (e.g. NSEFO_SPAN_22MAY2026.zip)",
+        )
+
+    if not (fname_upper.endswith(".ZIP") or fname_upper.endswith(".SPN")):
+        raise HTTPException(status_code=400, detail="Only .zip or .spn files accepted")
+
+    # Save to span directory
+    import os
+    span_dir = os.path.abspath(_SPAN_DIR)
+    os.makedirs(span_dir, exist_ok=True)
+    save_path = os.path.join(span_dir, fname)
+
+    content = await file.read()
+    with open(save_path, "wb") as f:
+        f.write(content)
+
+    # Reload cache from disk
+    ok = await asyncio.to_thread(fetch_span_file)
+
+    index_summary = {
+        u: {
+            "psr_pct":     get_params(u).get("psr_pct"),
+            "somc":        get_params(u).get("somc"),
+            "inter_month": get_params(u).get("inter_month"),
+            "from_file":   get_params(u).get("from_file", False),
+        }
+        for u in DEFAULTS
+    }
+
+    return {
+        "success":               ok,
+        "saved_as":              save_path,
+        "source":                "span_file" if (ok and is_loaded()) else "defaults",
+        "file_date":             get_cache_date() or None,
+        "nse_underlyings_loaded": len(_nse_cache),
+        "bse_underlyings_loaded": len(_bse_cache),
+        "index_params":          index_summary,
+    }
+
+
+@router.get("/span/params")
+async def get_span_params():
+    """
+    View current SPAN params for all underlyings in DB.
+    Use this to verify what values are loaded.
+    """
+    from features.span_file import DEFAULTS, _db_cache, get_params
+    db = MongoData()
+    docs = list(db._db["span_params"].find({}, {"_id": 0}).sort("underlying", 1))
+    db.close()
+    return {
+        "count": len(docs),
+        "params": docs,
+        "in_memory_count": len(_db_cache),
+    }
+
+
+@router.put("/span/params")
+async def update_span_params(request: Request):
+    """
+    Update SPAN params in DB. Call this quarterly when NSE/BSE revises parameters.
+
+    Body: list of param objects OR single object.
+    Example (single index):
+      { "underlying": "NIFTY", "psr_pct": 0.093, "somc": 21000, "inter_month_pct": 0.0175, "vsr": 0.04 }
+
+    Example (bulk):
+      [
+        { "underlying": "NIFTY",     "psr_pct": 0.093, ... },
+        { "underlying": "BANKNIFTY", "psr_pct": 0.093, ... }
+      ]
+    """
+    import asyncio
+    from datetime import datetime
+    from features.span_file import load_from_db
+
+    body = await request.json()
+    items = body if isinstance(body, list) else [body]
+
+    db = MongoData()
+    updated = []
+    for item in items:
+        underlying = str(item.get("underlying") or "").strip().upper()
+        if not underlying:
+            continue
+        update_doc = {k: v for k, v in item.items() if k != "underlying"}
+        update_doc["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d")
+        update_doc["source"] = "manual"
+        db._db["span_params"].update_one(
+            {"underlying": underlying},
+            {"$set": {"underlying": underlying, **update_doc}},
+            upsert=True,
+        )
+        updated.append(underlying)
+    db.close()
+
+    # Reload memory cache
+    count = await asyncio.to_thread(load_from_db)
+    return {"updated": updated, "db_count": count}
 
 
 @router.get("/trades/list")
@@ -3465,17 +3730,30 @@ async def get_group_trade_history(group_id: str, status: str = "algo-backtest"):
             raise HTTPException(status_code=400, detail="group_id is required")
 
         group_query: dict[str, Any] = {
-            "portfolio.group_id": normalized_group_id,
+            "strategy_group_id": normalized_group_id,
             "activation_mode": normalized_status,
         }
         if normalized_date:
             group_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
         raw_trades = list(db._db["algo_trades"].find(group_query))
         if not raw_trades:
-            fallback_query: dict[str, Any] = {"portfolio.group_id": normalized_group_id}
+            fallback_query: dict[str, Any] = {"strategy_group_id": normalized_group_id}
             if normalized_date:
                 fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
             raw_trades = list(db._db["algo_trades"].find(fallback_query))
+        if not raw_trades:
+            legacy_query: dict[str, Any] = {
+                "portfolio.group_id": normalized_group_id,
+                "activation_mode": normalized_status,
+            }
+            if normalized_date:
+                legacy_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(legacy_query))
+        if not raw_trades:
+            legacy_fallback_query: dict[str, Any] = {"portfolio.group_id": normalized_group_id}
+            if normalized_date:
+                legacy_fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(legacy_fallback_query))
         if not raw_trades:
             raise HTTPException(status_code=404, detail="Strategy trade history not found for this group_id")
 
@@ -3505,17 +3783,43 @@ async def get_portfolio_trade_history(portfolio_id: str, status: str = "algo-bac
             raise HTTPException(status_code=400, detail="portfolio_id is required")
 
         portfolio_query: dict[str, Any] = {
-            "portfolio.portfolio": normalized_portfolio_id,
+            "trade_group_portfolio": normalized_portfolio_id,
             "activation_mode": normalized_status,
         }
         if normalized_date:
             portfolio_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
         raw_trades = list(db._db["algo_trades"].find(portfolio_query))
         if not raw_trades:
-            fallback_query: dict[str, Any] = {"portfolio.portfolio": normalized_portfolio_id}
+            fallback_query: dict[str, Any] = {"trade_group_portfolio": normalized_portfolio_id}
             if normalized_date:
                 fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
             raw_trades = list(db._db["algo_trades"].find(fallback_query))
+        if not raw_trades:
+            tp_query: dict[str, Any] = {
+                "trade_portfolio": normalized_portfolio_id,
+                "activation_mode": normalized_status,
+            }
+            if normalized_date:
+                tp_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(tp_query))
+        if not raw_trades:
+            tp_fallback_query: dict[str, Any] = {"trade_portfolio": normalized_portfolio_id}
+            if normalized_date:
+                tp_fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(tp_fallback_query))
+        if not raw_trades:
+            legacy_query: dict[str, Any] = {
+                "portfolio.portfolio": normalized_portfolio_id,
+                "activation_mode": normalized_status,
+            }
+            if normalized_date:
+                legacy_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(legacy_query))
+        if not raw_trades:
+            legacy_fallback_query: dict[str, Any] = {"portfolio.portfolio": normalized_portfolio_id}
+            if normalized_date:
+                legacy_fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(legacy_fallback_query))
         if not raw_trades:
             raise HTTPException(status_code=404, detail="Strategy trade history not found for this portfolio")
 
@@ -4669,7 +4973,7 @@ async def simulator_get_market_holidays() -> dict:
 @router.get("/simulator/get-option-chain")
 async def simulator_get_option_chain(timestamp: str = Query(...)) -> dict:
     try:
-        data = list(_shared_mongo._db["option_chain"].find({"timestamp": timestamp}, {"_id": 0}))
+        data = list(_shared_mongo._db["option_chain_historical_data"].find({"timestamp": timestamp}, {"_id": 0}))
         return {"status": "success", "timestamp": timestamp, "count": len(data), "data": data}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
@@ -5581,7 +5885,11 @@ def _kite_popup_html(
 
 @app.get("/broker/kite/access-token/{broker_doc_id}")
 async def kite_get_access_token(broker_doc_id: str):
-    token = get_stored_access_token(db._db, broker_doc_id)
+    _db = MongoData()
+    try:
+        token = get_stored_access_token(_db._db, broker_doc_id)
+    finally:
+        _db.close()
     if not token:
         raise HTTPException(status_code=404, detail="No access token found")
     return {"access_token": token}
@@ -7788,10 +8096,14 @@ async def get_option_chain(instrument: str):
 
 
 @app.get("/algo/option-chain-snapshot/{instrument}")
-async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")):
-    """Historical option chain at listen_timestamp for algo-backtest.
-    Returns the exact same shape as /algo/get-option-chain/{instrument} so the
-    frontend can consume both without any format differences."""
+async def get_option_chain_snapshot(
+    instrument: str,
+    ts: str = Query(default=""),
+    _activation_mode: str = Query(default="", alias="activation_mode"),
+):
+    """Historical option chain at listen_timestamp.
+    Returns the exact same shape as /algo/get-option-chain/{instrument}.
+    Falls back to Kite historical_data when DB data is more than 7 days stale."""
     normalized = str(instrument or "").strip().upper()
     norm_ts = str(ts or "").strip().replace(" ", "T").rstrip("Z")
     if not normalized:
@@ -7799,30 +8111,71 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
     if not norm_ts:
         return _build_full_option_chain_response(normalized)
 
+    req_date = norm_ts[:10]
+    day_start = f"{req_date}T00:00:00" if len(req_date) == 10 else ""
+    day_end = f"{req_date}T23:59:59" if len(req_date) == 10 else ""
+
     db = MongoData()
     try:
-        chain_col = db._db["option_chain"]
+        chain_col = db._db["option_chain_historical_data"]
 
-        # Step 1: find the exact minute-tick timestamp at or before norm_ts
+        # Step 1: find the nearest minute-tick timestamp at or before norm_ts
+        # within the requested trading day only, so replay never leaks into a
+        # previous day's snapshot when current-day rows are still loading.
+        pivot_query: dict[str, Any] = {
+            "underlying": normalized,
+            "timestamp": {"$lte": norm_ts},
+        }
+        if day_start and day_end:
+            pivot_query["timestamp"]["$gte"] = day_start
+
         pivot = chain_col.find_one(
-            {"underlying": normalized, "timestamp": {"$lte": norm_ts}},
+            pivot_query,
             {"_id": 0, "timestamp": 1},
             sort=[("timestamp", -1)],
         )
-        if not pivot:
-            return _build_full_option_chain_response(normalized)
-        pivot_ts = pivot["timestamp"]
+        pivot_ts = pivot["timestamp"] if pivot else None
 
-        # Step 2: all rows at that exact timestamp
+        # If same-day DB data is missing, try Kite fallback.
+        _stale = not pivot_ts
+        if pivot_ts and day_start and not (day_start <= pivot_ts <= day_end):
+            _stale = True
+
+        if _stale:
+            from features.option_chain_kite_snapshot import get_option_chain_kite_snapshot
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, lambda: get_option_chain_kite_snapshot(db, normalized, norm_ts)
+            )
+
+        # Step 2: all rows at that exact pivot timestamp
         raw_rows = list(chain_col.find(
             {"underlying": normalized, "timestamp": pivot_ts},
-            {"_id": 0, "expiry": 1, "strike": 1, "type": 1, "close": 1,
-             "iv": 1, "delta": 1, "oi": 1, "spot_price": 1, "timestamp": 1},
+            {"_id": 0, "expiry": 1, "strike": 1, "type": 1, "token": 1, "close": 1,
+             "iv": 1, "delta": 1, "oi": 1, "timestamp": 1},
         ))
         if not raw_rows:
-            raise HTTPException(status_code=404, detail="No rows at snapshot timestamp")
+            from features.option_chain_kite_snapshot import get_option_chain_kite_snapshot
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, lambda: get_option_chain_kite_snapshot(db, normalized, norm_ts)
+            )
 
-        spot = float((raw_rows[0].get("spot_price") or 0))
+        # Spot price: use $lte to always find nearest value
+        spot_query: dict[str, Any] = {
+            "underlying": normalized,
+            "timestamp": {"$lte": pivot_ts},
+        }
+        if day_start and day_end:
+            spot_query["timestamp"]["$gte"] = day_start
+
+        spot_doc = db._db["option_chain_index_spot"].find_one(
+            spot_query,
+            {"_id": 0, "close": 1, "spot_price": 1},
+            sort=[("timestamp", -1)],
+        )
+        _sd = spot_doc or {}
+        spot = float(_sd.get("close") or _sd.get("spot_price") or 0)
 
         # Step 3: build response in the SAME shape as _build_full_option_chain_response
         expiry_set: set[str] = set()
@@ -7842,6 +8195,7 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
                 "expiry": expiry,
                 "strike": float(strike),
                 "type": opt_type,
+                "token": str(row.get("token") or "").strip(),
                 "close": float(row.get("close") or 0),
                 "iv": float(row.get("iv") or 0) or None,
                 "delta": float(row.get("delta") or 0) or None,
@@ -7869,6 +8223,98 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
         }
     finally:
         db.close()
+
+
+@app.delete("/algo/option-chain-kite-cache")
+async def clear_option_chain_kite_cache(
+    underlying: str = Query(default=""),
+    date: str = Query(default=""),
+):
+    """Clear the in-process Kite option-chain day-cache so the next snapshot
+    request fetches fresh data from Kite.
+    ?underlying=NIFTY&date=2026-05-26  → clear one entry
+    ?underlying=NIFTY                  → clear all dates for that underlying
+    (no params)                        → clear everything"""
+    from features.option_chain_kite_snapshot import clear_day_cache
+    clear_day_cache(underlying.upper() or None, date or None)
+    return {"cleared": True, "underlying": underlying or "all", "date": date or "all"}
+
+
+@app.post("/algo/option-chain/backfill-today/{instrument}")
+async def backfill_option_chain_today(
+    instrument: str,
+    atm_range: int = Query(default=1000),
+):
+    """Legacy POST backfill (ATM-range only, no Greeks).  Use GET version instead."""
+    ul = str(instrument or "").strip().upper()
+    if not ul:
+        raise HTTPException(status_code=400, detail="instrument required")
+
+    from features.option_chain_kite_snapshot import backfill_today_to_db
+    db = MongoData()
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: backfill_today_to_db(db, ul, atm_range=atm_range)
+        )
+    finally:
+        db.close()
+    return result
+
+
+@app.get("/algo/option-chain/backfill-today/{instrument}")
+async def backfill_option_chain_today_get(
+    instrument: str,
+    max_days_ahead: int = Query(default=0, description="Expiries up to N days ahead. 0 = all expiries."),
+    workers: int = Query(default=8, description="Parallel Kite fetch workers (safe max 8)."),
+    date: str = Query(default="", description="Date to backfill (YYYY-MM-DD). Defaults to today."),
+    expiry: str = Query(default="", description="Exact expiry to backfill (YYYY-MM-DD)."),
+    catchup: bool = Query(default=False, description="Sync only missing current-day minutes from last stored timestamp."),
+):
+    """
+    Backfill today's full option chain (spot + India VIX + all expiries + Greeks) to DB.
+
+    Runs in the background — returns immediately.  Track progress with:
+      GET /algo/option-chain/backfill-status
+
+    What gets written:
+      • option_chain_index_spot     — spot price per minute
+      • india_vix_historical        — India VIX per minute
+      • option_chain_historical_data — close + IV + delta/gamma/theta/vega per strike per minute
+
+    After this runs, bar-replay snapshot API reads from DB (24ms) instead of
+    hitting Kite on-demand (~20s cold start).
+    """
+    ul = str(instrument or "").strip().upper()
+    expiry_filter = str(expiry or "").strip()[:10]
+    if not ul:
+        raise HTTPException(status_code=400, detail="instrument required")
+    if expiry_filter and len(expiry_filter) != 10:
+        raise HTTPException(status_code=400, detail="expiry must be YYYY-MM-DD")
+
+    from features.option_chain_backfill import start_backfill
+    return start_backfill(
+        ul,
+        date_str=date.strip() or None,
+        max_days_ahead=max_days_ahead,
+        workers=workers,
+        expiry_filter=expiry_filter or None,
+        sync_from_last=bool(catchup),
+    )
+
+
+@app.get("/algo/option-chain/backfill-status")
+async def get_backfill_status():
+    """Check progress of a running or completed backfill."""
+    from features.option_chain_backfill import get_backfill_status
+    return get_backfill_status()
+
+
+@app.get("/algo/option-chain/backfill-stop")
+async def stop_option_chain_backfill():
+    """Request the running option-chain backfill thread to stop."""
+    from features.option_chain_backfill import stop_backfill
+    return stop_backfill()
 
 
 _INDEX_KITE_SYMBOLS: dict[str, str] = {
@@ -8011,6 +8457,15 @@ async def get_live_greeks_chain(
             {"instrument": normalized, "expiry": {"$regex": f"^{live_expiry}"}},
             {"_id": 0, "strike": 1, "option_type": 1, "token": 1, "tokens": 1, "symbol": 1},
         ))
+
+        lot_size_defaults = {"NIFTY": 75, "BANKNIFTY": 15, "FINNIFTY": 40, "MIDCPNIFTY": 120, "SENSEX": 10}
+        expiry_date_str = str(live_expiry)[:10]
+        lot_doc = db._db["lot_sizes"].find_one({
+            "underlying": normalized,
+            "from_date": {"$lte": expiry_date_str},
+            "to_date": {"$gte": expiry_date_str},
+        })
+        lot_size = int(lot_doc["lot_size"]) if lot_doc else lot_size_defaults.get(normalized, 75)
     finally:
         db.close()
 
@@ -8136,6 +8591,7 @@ async def get_live_greeks_chain(
         "expiries": expiries_sorted,
         "spot_price": round(pricing_spot or spot_price, 2),
         "india_vix": india_vix,
+        "lot_size": lot_size,
         "chain": chain,
     }
 
@@ -8353,4 +8809,149 @@ async def system_status():
         "live_order_status": live_order_enabled,
         "live_order_status_label": "REAL ORDERS" if live_order_enabled else "SIMULATED ORDERS",
         "env_LIVE_ORDER_STATUS": os.getenv("LIVE_ORDER_STATUS", "not set"),
+    }
+
+
+# ─── Data Migration ───────────────────────────────────────────────────────────
+
+@app.get("/algo/admin/migrate-month")
+async def migrate_month(month: str = Query(..., description="YYYY-MM e.g. 2025-09")):
+    """
+    Migrate one month of option chain data from legacy `option_chain` collection
+    to the two new collections:
+      • option_chain_historical_data  — candle rows (no spot_price)
+      • option_chain_index_spot       — one spot-price row per minute per underlying
+
+    Safe to re-run: candles are upserted on (underlying, timestamp, expiry, strike, type).
+    Spot rows are upserted on (underlying, timestamp).
+
+    GET /algo/admin/migrate-month?month=2025-09
+    """
+    import re as _re
+    if not _re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM format, e.g. 2025-09")
+
+    from pymongo import UpdateOne, ASCENDING as _ASC
+    from features.mongo_data import MongoData
+
+    db   = MongoData()
+    src  = db._db["option_chain"]
+    dst  = db._db["option_chain_historical_data"]
+    spot = db._db["option_chain_index_spot"]
+
+    ts_start = f"{month}-01T00:00:00"
+    # Last day: works for any month length
+    import calendar as _cal
+    year_int, mon_int = int(month[:4]), int(month[5:7])
+    last_day = _cal.monthrange(year_int, mon_int)[1]
+    ts_end   = f"{month}-{last_day:02d}T23:59:59"
+
+    # ── Ensure indexes on dst and spot ───────────────────────────────────────
+    try:
+        dst.create_index(
+            [("underlying", _ASC), ("timestamp", _ASC), ("expiry", _ASC),
+             ("strike", _ASC), ("type", _ASC)],
+            name="chain_upsert_key", background=True,
+        )
+        spot.create_index(
+            [("underlying", _ASC), ("timestamp", _ASC)],
+            name="spot_upsert_key", background=True,
+        )
+    except Exception:
+        pass
+
+    # ── Stream source in batches ──────────────────────────────────────────────
+    BATCH = 5000
+    candle_ops: list = []
+    spot_seen:  set  = set()
+    spot_ops:   list = []
+
+    candles_upserted = 0
+    spot_upserted    = 0
+
+    cursor = src.find(
+        {"timestamp": {"$gte": ts_start, "$lte": ts_end}},
+        {"_id": 0, "timestamp": 1, "underlying": 1, "expiry": 1,
+         "strike": 1, "type": 1, "close": 1, "oi": 1,
+         "iv": 1, "delta": 1, "gamma": 1, "theta": 1, "vega": 1,
+         "rho": 1, "spot_price": 1},
+    ).batch_size(BATCH)
+
+    def _flush_candles():
+        nonlocal candles_upserted
+        if not candle_ops:
+            return
+        res = dst.bulk_write(candle_ops, ordered=False)
+        candles_upserted += res.upserted_count + res.modified_count
+        candle_ops.clear()
+
+    def _flush_spot():
+        nonlocal spot_upserted
+        if not spot_ops:
+            return
+        res = spot.bulk_write(spot_ops, ordered=False)
+        spot_upserted += res.upserted_count + res.modified_count
+        spot_ops.clear()
+
+    for doc in cursor:
+        ts         = doc.get("timestamp") or ""
+        underlying = doc.get("underlying") or ""
+        expiry     = doc.get("expiry") or ""
+        strike     = doc.get("strike")
+        otype      = doc.get("type") or ""
+        close      = doc.get("close")
+        sp         = doc.get("spot_price")
+
+        # ── Candle upsert ─────────────────────────────────────────────────
+        candle_doc = {
+            "timestamp":  ts,
+            "underlying": underlying,
+            "expiry":     expiry,
+            "strike":     strike,
+            "type":       otype,
+            "close":      close,
+            "oi":         doc.get("oi"),
+            "iv":         doc.get("iv"),
+            "delta":      doc.get("delta"),
+            "gamma":      doc.get("gamma"),
+            "theta":      doc.get("theta"),
+            "vega":       doc.get("vega"),
+            "rho":        doc.get("rho"),
+        }
+        candle_ops.append(UpdateOne(
+            {"underlying": underlying, "timestamp": ts,
+             "expiry": expiry, "strike": strike, "type": otype},
+            {"$setOnInsert": candle_doc},
+            upsert=True,
+        ))
+
+        # ── Spot upsert (one per minute per underlying) ───────────────────
+        minute_key = (underlying, ts[:16])   # "2025-09-01T09:16"
+        if sp is not None and minute_key not in spot_seen:
+            spot_seen.add(minute_key)
+            spot_ops.append(UpdateOne(
+                {"underlying": underlying, "timestamp": ts},
+                {"$setOnInsert": {
+                    "underlying": underlying,
+                    "timestamp":  ts,
+                    "spot_price": float(sp),
+                    "token":      "NSE_01",
+                }},
+                upsert=True,
+            ))
+
+        if len(candle_ops) >= BATCH:
+            _flush_candles()
+        if len(spot_ops) >= BATCH:
+            _flush_spot()
+
+    _flush_candles()
+    _flush_spot()
+
+    return {
+        "status":            "done",
+        "month":             month,
+        "candles_upserted":  candles_upserted,
+        "spot_upserted":     spot_upserted,
+        "ts_range":          f"{ts_start} → {ts_end}",
     }

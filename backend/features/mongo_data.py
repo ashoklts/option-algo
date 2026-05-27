@@ -199,7 +199,8 @@ class MongoData:
                     created_new_client = True
                 self._client = cached_client
             self._db     = self._client[DB_NAME]
-            self._chain  = self._db["option_chain"]
+            self._chain  = self._db["option_chain_historical_data"]
+            self._spot   = self._db["option_chain_index_spot"]
             self._hols   = self._db["market_holidays"]
             self._uri    = uri
             self._initialized = True
@@ -258,6 +259,25 @@ class MongoData:
                 name="uniq_spot_token_by_broker_instrument",
                 comment=self._comment("ensure_index", collection="instrument_spot_token", index="uniq_spot_token_by_broker_instrument"),
             )
+            # Backtest data tables — compound indexes for fast range queries
+            self._chain.create_index(
+                [("underlying", ASCENDING), ("timestamp", ASCENDING)],
+                background=True,
+                name="chain_underlying_timestamp",
+                comment=self._comment("ensure_index", collection="option_chain_historical_data", index="chain_underlying_timestamp"),
+            )
+            self._chain.create_index(
+                [("timestamp", ASCENDING), ("expiry", ASCENDING)],
+                background=True,
+                name="chain_timestamp_expiry",
+                comment=self._comment("ensure_index", collection="option_chain_historical_data", index="chain_timestamp_expiry"),
+            )
+            self._spot.create_index(
+                [("underlying", ASCENDING), ("timestamp", ASCENDING)],
+                background=True,
+                name="spot_underlying_timestamp",
+                comment=self._comment("ensure_index", collection="option_chain_index_spot", index="spot_underlying_timestamp"),
+            )
         except Exception as exc:
             _log.warning("[DB INDEX WARN] db=%s target=%s error=%s", DB_NAME, self._target, exc)
 
@@ -308,16 +328,17 @@ class MongoData:
         One bulk query — fetch all candles for the date range.
         Returns list of raw dicts from MongoDB.
         NOTE: Use load_day() per day for large ranges to avoid RAM blowup.
+        Candles come from option_chain_historical_data; spot prices from option_chain_index_spot.
         """
         ts_start = f"{start_date}T00:00:00"
         ts_end   = f"{end_date}T23:59:59"
-        result = list(self._chain.find(
+        candles = list(self._chain.find(
             {
                 "underlying": underlying,
                 "timestamp": {"$gte": ts_start, "$lte": ts_end},
             },
             {"_id": 0, "timestamp": 1, "expiry": 1, "strike": 1,
-             "type": 1, "close": 1, "high": 1, "low": 1, "spot_price": 1},
+             "type": 1, "close": 1, "high": 1, "low": 1, "delta": 1},
             comment=self._comment(
                 "load_range",
                 underlying=underlying,
@@ -325,25 +346,59 @@ class MongoData:
                 end=end_date,
             ),
         ))
-        return result
+        spot_map = self._load_spot_map(ts_start, ts_end, underlying)
+        for c in candles:
+            c["spot_price"] = spot_map.get(c["timestamp"][:16], 0)
+        return candles
+
+    def has_data(self, start_date: str, end_date: str, underlying: str) -> bool:
+        """Return True if option_chain_historical_data has at least one candle for this range."""
+        doc = self._chain.find_one(
+            {
+                "underlying": underlying,
+                "timestamp": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59"},
+            },
+            {"_id": 1},
+            comment=self._comment("has_data", underlying=underlying, start=start_date, end=end_date),
+        )
+        return doc is not None
+
+    def _load_spot_map(self, ts_start: str, ts_end: str, underlying: str) -> dict:
+        """
+        Fetch spot prices from option_chain_index_spot for the given time range.
+        Returns {timestamp_minute → spot_price} e.g. {"2025-11-03T09:16" → 25710.8}
+        """
+        spot_docs = list(self._spot.find(
+            {
+                "underlying": underlying,
+                "timestamp": {"$gte": ts_start, "$lte": ts_end},
+            },
+            {"_id": 0, "timestamp": 1, "spot_price": 1},
+            comment=self._comment("load_spot_map", underlying=underlying),
+        ))
+        return {d["timestamp"][:16]: float(d["spot_price"]) for d in spot_docs if d.get("spot_price")}
 
     def load_day(self, date: str, underlying: str) -> list:
         """
         Load candles for a single trading day only.
         Use this in the backtest loop to keep RAM constant regardless of range.
+        Candles come from option_chain_historical_data; spot prices from option_chain_index_spot.
         """
         ts_start = f"{date}T00:00:00"
         ts_end   = f"{date}T23:59:59"
-        result = list(self._chain.find(
+        candles = list(self._chain.find(
             {
                 "underlying": underlying,
                 "timestamp": {"$gte": ts_start, "$lte": ts_end},
             },
             {"_id": 0, "timestamp": 1, "expiry": 1, "strike": 1,
-             "type": 1, "close": 1, "high": 1, "low": 1, "spot_price": 1},
+             "type": 1, "close": 1, "high": 1, "low": 1, "delta": 1},
             comment=self._comment("load_day", underlying=underlying, date=date),
         ))
-        return result
+        spot_map = self._load_spot_map(ts_start, ts_end, underlying)
+        for c in candles:
+            c["spot_price"] = spot_map.get(c["timestamp"][:16], 0)
+        return candles
 
     def close(self):
         # Shared client stays alive for connection pooling; avoid closing it per request.

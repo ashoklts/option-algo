@@ -263,6 +263,14 @@ class _TickerManager:
                     f"response={response}"
                 )
 
+                # Start per-minute option chain writer so bar-replay has fresh DB data
+                try:
+                    from features.option_chain_minute_writer import start_option_chain_minute_writer
+                    start_option_chain_minute_writer()
+                    print("[KITE TICKER] option_chain_minute_writer started")
+                except Exception as _exc:
+                    logger.warning("option_chain_minute_writer start error: %s", _exc)
+
                 try:
                     from features.live_event import sync_live_open_position_subscriptions
                     from features.fast_forward_event import sync_fast_forward_open_position_subscriptions
@@ -362,6 +370,12 @@ class _TickerManager:
         with self._lock:
             # 1. Set flag first — _on_ticks ignores any in-flight ticks immediately
             self._stopped = True
+
+            try:
+                from features.option_chain_minute_writer import stop_option_chain_minute_writer
+                stop_option_chain_minute_writer()
+            except Exception:
+                pass
 
             if self._ticker:
                 try:

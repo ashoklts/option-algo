@@ -134,3 +134,128 @@ stop வேண்டும்னா
 http://localhost:8000/scanner/stop_historical_data_sync
 status பார்க்க
 http://localhost:8000/scanner/historical_data_sync_status
+
+
+http://localhost:8000/scanner/sync_daily_market_snapshot
+
+
+maring span fetch data  for every 5 days only
+GET http://127.0.0.1:8000/algo/span/refresh
+
+{
+  "success": true,
+  "source": "span_file",
+  "file_date": "22MAY2026",
+  "params": {
+    "NIFTY": {
+      "inter_month_charge": 1500,
+      "somc": 21000,
+      "psr_pct": 0.10
+    },
+    ...
+  }
+}
+
+
+
+NSE SPAN parameters file download site:nseindia.com
+BSE SPAN parameters file download site:bseindia.com
+
+Quarterly update பண்ண:
+
+PUT http://127.0.0.1:8000/algo/span/params
+Body:
+[
+  { "underlying": "NIFTY",     "psr_pct": 0.093, "somc": 21000, "inter_month_pct": 0.0175, "vsr": 0.04 },
+  { "underlying": "BANKNIFTY", "psr_pct": 0.093, "somc": 45000, "inter_month_pct": 0.0175, "vsr": 0.04 }
+]
+
+Current values பார்க்க:
+
+GET http://127.0.0.1:8000/algo/span/params
+algo
+
+
+GET http://localhost:8000/scanner/sync_market_holidays?year=2026
+
+
+
+GET http://localhost:8000/scanner/universe_stocks/nifty_50
+GET http://localhost:8000/scanner/universe_stocks/nifty_500
+GET http://localhost:8000/scanner/universe_stocks/nifty_midcap_100
+
+
+
+
+
+All stocks in scanner_stocks_list:
+
+
+
+
+http://localhost:8000/scanner/sync_historical_data?start_date=2018-01-01&end_date=2026-05-25
+
+
+Universe stocks (scanner_universe_stock_list) மட்டும்:
+
+
+http://localhost:8000/scanner/sync_universe_historical_data?start_date=2018-01-01&end_date=2026-05-25
+
+
+இப்போது scratch-ல் இருந்து all universes populate பண்ண இந்த ஒரே URL call பண்ணுங்கள்:
+
+
+GET http://localhost:8000/scanner/sync_all_universes_to_db
+இது 14 universes ஒரே call-ல் sync பண்ணும் — Kite instruments ஒரே முறை load ஆகும்.
+
+அல்லது single universe மட்டும்:
+
+GET http://localhost:8000/scanner/sync_universe_to_db/nifty_50
+GET http://localhost:8000/scanner/sync_universe_to_db/nifty_500
+
+
+update sectors for all stocks
+
+GET http://localhost:8000/scanner/sync_stocks_industry
+
+
+
+GET /algo/admin/migrate-month?month=2025-09
+
+
+http://localhost:8000/algo/admin/migrate-month?month=2025-09
+
+http://localhost:8000/algo/admin/migrate-month?month=2025-09
+
+
+GET http://localhost:8000/algo/option-chain/backfill-today/NIFTY
+GET http://localhost:8000/algo/option-chain/backfill-today/SENSEX
+
+
+GET http://localhost:8000/algo/option-chain/backfill-status
+
+
+GET http://localhost:8000/algo/option-chain/backfill-status
+
+
+curl "http://localhost:8000/algo/option-chain/backfill-today/NIFTY?expiry=2026-05-26"
+curl "http://localhost:8000/algo/option-chain/backfill-status"
+
+
+இந்த use caseக்காக common cron URL support add பண்ணிட்டேன்.
+
+Use this URL:
+
+
+
+curl "http://localhost:8000/algo/option-chain/backfill-today/all?catchup=1"
+
+Check status:
+
+curl "http://localhost:8000/algo/option-chain/backfill-status"
+
+stop request
+
+curl "http://localhost:8000/algo/option-chain/backfill-stop"
+
+curl "http://localhost:8000/algo/option-chain/backfill-today/NIFTY?expiry=2026-05-26&workers=4"

@@ -2,7 +2,7 @@
 create_index.py
 ---------------
 One-time setup script: Creates a MongoDB index on `timestamp` and `expiry`
-in the option_chain collection. Run once to enable fast range queries.
+in the option_chain_historical_data collection. Run once to enable fast range queries.
 
 Usage:
     python -m mini_strangle.create_index
@@ -13,7 +13,7 @@ import time
 
 def create_index(mongo_uri: str = "mongodb://localhost:27017/") -> None:
     client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
-    col = client["stock_data"]["option_chain"]
+    col = client["stock_data"]["option_chain_historical_data"]
 
     print("Existing indices:")
     for idx in col.list_indexes():

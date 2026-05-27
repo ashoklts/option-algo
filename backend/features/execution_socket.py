@@ -3475,9 +3475,11 @@ def _process_momentum_pending_feature_legs(
                 continue
             entry_print(f'[PENDING ENTRY] leg={leg_id} current_price={current_price} strike={strike} option={option_type} — entering immediately')
         else:
+            # Underlying momentum types track the index/spot; all others track the option price
+            _mom_check_price = spot_price if 'Underlying' in str(momentum_type or '') else current_price
             # ── Arm: set base/target price on first tick ──────────────────────
             if base_price <= 0 or target_price <= 0:
-                if current_price <= 0:
+                if _mom_check_price <= 0:
                     entry_print(f'[MOMENTUM PENDING] leg={leg_id} waiting for price data')
                     try:
                         feature_col.update_one(
@@ -3487,7 +3489,7 @@ def _process_momentum_pending_feature_legs(
                     except Exception:
                         pass
                     continue
-                base_price = current_price
+                base_price = _mom_check_price
                 target_price = _resolve_simple_momentum_target(base_price, momentum_type, momentum_value)
                 armed_now = now_ts
                 try:
@@ -3596,10 +3598,10 @@ def _process_momentum_pending_feature_legs(
                 # Placement still failing — fall through to tick-level trigger check
 
             # ── Check if momentum target is reached ───────────────────────────
-            if not _is_simple_momentum_triggered(current_price, target_price, momentum_type):
+            if not _is_simple_momentum_triggered(_mom_check_price, target_price, momentum_type):
                 runtime_print(
                     f'[MOMENTUM WAIT] leg={leg_id} type={momentum_type} value={momentum_value} '
-                    f'base={base_price} target={target_price} current={current_price} strike={strike}'
+                    f'base={base_price} target={target_price} current={_mom_check_price} strike={strike}'
                 )
                 try:
                     feature_col.update_one(
@@ -3612,7 +3614,7 @@ def _process_momentum_pending_feature_legs(
 
             print(
                 f'[MOMENTUM OK] leg={leg_id} type={momentum_type} value={momentum_value} '
-                f'base={base_price} target={target_price} current={current_price} — entering'
+                f'base={base_price} target={target_price} current={_mom_check_price} — entering'
             )
         is_sell_pos = _is_sell(position_str)
         all_leg_configs = _resolve_trade_leg_configs(trade)
@@ -4384,11 +4386,14 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
             token = str(current_chain_doc.get('token') or token or make_token(underlying, expiry, strike, option_type))
             symbol = str(current_chain_doc.get('symbol') or symbol or token)
 
+        # Underlying momentum types track the index/spot; all others track the option price
+        _mom_check_px = spot_price if 'Underlying' in str(_momentum_type or '') else current_option_price
+
         if base_price <= 0 or target_price <= 0:
-            if current_option_price <= 0:
+            if _mom_check_px <= 0:
                 entry_print(f'[MOMENTUM WAIT] leg={leg_id_log} type={_momentum_type} reason=base_price_missing')
                 return False, 'momentum_wait'
-            base_price = current_option_price
+            base_price = _mom_check_px
             target_price = _resolve_simple_momentum_target(base_price, _momentum_type, _momentum_value)
             try:
                 if is_pending_feature_leg and feature_row_id:
@@ -4450,17 +4455,17 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
             )
             return False, 'momentum_wait'
 
-        if not _is_simple_momentum_triggered(current_option_price, target_price, _momentum_type):
+        if not _is_simple_momentum_triggered(_mom_check_px, target_price, _momentum_type):
             runtime_print(
                 f'[MOMENTUM WAIT] leg={leg_id_log} type={_momentum_type} '
                 f'value={_momentum_value} base={base_price} target={target_price} '
-                f'current={current_option_price} strike={strike}'
+                f'current={_mom_check_px} strike={strike}'
             )
             return False, 'momentum_wait'
 
         runtime_print(
             f'[MOMENTUM OK] leg={leg_id_log} type={_momentum_type} value={_momentum_value} '
-            f'base={base_price} target={target_price} current={current_option_price} — proceeding to entry'
+            f'base={base_price} target={target_price} current={_mom_check_px} — proceeding to entry'
         )
         entry_price = current_option_price if _is_market_order(_leg_cfg_early, 'entry') else target_price
         resolved_chain_doc = current_chain_doc
@@ -11354,7 +11359,7 @@ async def update_socket(
     # For live/fast-forward: immediately load positions and emit on connect
     if activation_mode in {'live', 'fast-forward'}:
         try:
-            refresh_position_snapshot('initial_connect')
+            await asyncio.get_running_loop().run_in_executor(None, refresh_position_snapshot, 'initial_connect')
             await websocket.send_text(_build_message(
                 'update',
                 'Open position snapshot (initial)',
@@ -11466,10 +11471,8 @@ async def update_socket(
                     requested_date or requested_mode or requested_status
                 )
                 if should_refresh_now:
-                    refresh_position_snapshot(
-                        requested_reason
-                        or ('explicit_trigger' if requested_action == 'get-position' else 'subscription')
-                    )
+                    _refresh_reason = requested_reason or ('explicit_trigger' if requested_action == 'get-position' else 'subscription')
+                    await asyncio.get_running_loop().run_in_executor(None, refresh_position_snapshot, _refresh_reason)
                     # For live: re-subscribe option tokens to Kite WS so a refresh
                     # triggered by a client message also ensures subscription is current.
                     if activation_mode == 'live' and subscribe_tokens:

@@ -3123,13 +3123,16 @@ def resolve_pending_leg_entry(
         stored_base     = safe_float(leg.get('momentum_base_price') or 0)
         stored_target   = safe_float(leg.get('momentum_target_price') or 0)
 
+        # Underlying momentum types track the index/spot; all others track the option price
+        _mom_px = spot if 'Underlying' in momentum_type else entry_price
+
         if not stored_base:
             # Arm momentum — store base price for first time
             # (return None this tick; caller will write base_price; trigger next tick)
-            return {'__arm_momentum__': True, 'base_price': entry_price, 'momentum_type': momentum_type, 'momentum_value': momentum_value}
+            return {'__arm_momentum__': True, 'base_price': _mom_px, 'momentum_type': momentum_type, 'momentum_value': momentum_value}
 
         target_price = stored_target or compute_momentum_target(momentum_type, stored_base, momentum_value)
-        if not is_momentum_triggered(momentum_type, entry_price, target_price or 0):
+        if not is_momentum_triggered(momentum_type, _mom_px, target_price or 0):
             return None  # waiting for momentum trigger
 
     # ── Entry approved — build entry_trade ───────────────────────────────
