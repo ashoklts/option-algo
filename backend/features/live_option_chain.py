@@ -42,6 +42,7 @@ _CHAIN_TTL_SECONDS = 2.0
 # first thread fetches from Kite; the second waits for the first's result.
 _CHAIN_FETCHING: dict[tuple, threading.Event] = {}
 _CHAIN_MUTEX = threading.Lock()
+_FIRST_FULL_CHAIN_PRINTED: set[tuple[str, str]] = set()
 
 
 def _cache_get(key: tuple) -> dict | None:
@@ -55,18 +56,15 @@ def _cache_set(key: tuple, chain: dict) -> None:
     _CHAIN_CACHE[key] = (chain, time.perf_counter())
 
 
-# ── re-use BS helpers from kite_delta_chain ───────────────────────────────────
+# ── re-use BS helpers and broker credential helper from broker_gateway ─────────
 def _bs():
-    from features.kite_delta_chain import (  # type: ignore
-        _calc_iv, _calc_greeks, _time_to_expiry,
-        _get_kite_credentials, _RISK_FREE_RATE,
-        _DIVIDEND_YIELDS, _DEFAULT_DIVIDEND_YIELD,
-    )
+    from features.broker_gateway import get_bs_helpers, get_broker_credentials_from_db  # type: ignore
+    _calc_iv, _calc_greeks, _time_to_expiry, _RISK_FREE_RATE, _DIVIDEND_YIELDS, _DEFAULT_DIVIDEND_YIELD = get_bs_helpers()
     return (
         _calc_iv,
         _calc_greeks,
         _time_to_expiry,
-        _get_kite_credentials,
+        get_broker_credentials_from_db,   # same signature as _get_kite_credentials(db)
         _RISK_FREE_RATE,
         _DIVIDEND_YIELDS,
         _DEFAULT_DIVIDEND_YIELD,
@@ -117,16 +115,10 @@ def _find_atm_row(rows: list[dict], atm_strike: float) -> dict:
 
 
 def _get_kite_rest_client(db) -> Any | None:
-    """Return a configured KiteConnect instance using the shared credential path."""
+    """Return a configured broker REST client using the shared credential path."""
     try:
-        _, _, _, _get_kite_credentials, _, _, _ = _bs()
-        api_key, access_token = _get_kite_credentials(db)
-        if not api_key or not access_token:
-            return None
-        from kiteconnect import KiteConnect  # type: ignore
-        kite = KiteConnect(api_key=api_key)
-        kite.set_access_token(access_token)
-        return kite
+        from features.broker_gateway import get_broker_rest_client  # type: ignore
+        return get_broker_rest_client(db)
     except Exception:
         return None
 
@@ -186,6 +178,14 @@ def fetch_full_chain(
     _cached = _cache_get(_cache_key)
     if _cached is not None:
         entry_print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {expiry}')
+        try:
+            _print_combined_table(_cached, underlying, expiry, spot_price, leg_id)
+        except Exception as exc:
+            print(
+                f'[LIVE CHAIN] leg={leg_id} cached_chain_print_error '
+                f'underlying={underlying} expiry={expiry} error={exc}',
+                flush=True,
+            )
         return _cached
 
     # Serialize concurrent fetches for the same (underlying, expiry) key.
@@ -194,6 +194,14 @@ def fetch_full_chain(
         _cached = _cache_get(_cache_key)
         if _cached is not None:
             entry_print(f'[LIVE CHAIN] leg={leg_id} reusing cached chain {underlying} {expiry}')
+            try:
+                _print_combined_table(_cached, underlying, expiry, spot_price, leg_id)
+            except Exception as exc:
+                print(
+                    f'[LIVE CHAIN] leg={leg_id} cached_chain_print_error '
+                    f'underlying={underlying} expiry={expiry} error={exc}',
+                    flush=True,
+                )
             return _cached
         if _cache_key in _CHAIN_FETCHING:
             _wait_ev = _CHAIN_FETCHING[_cache_key]
@@ -208,11 +216,33 @@ def fetch_full_chain(
         _wait_ev.wait(timeout=10.0)
         _cached = _cache_get(_cache_key)
         if _cached is not None:
+            try:
+                _print_combined_table(_cached, underlying, expiry, spot_price, leg_id)
+            except Exception as exc:
+                print(
+                    f'[LIVE CHAIN] leg={leg_id} cached_chain_print_error '
+                    f'underlying={underlying} expiry={expiry} error={exc}',
+                    flush=True,
+                )
             return _cached
         return {'CE': [], 'PE': []}
 
-    # We are the fetcher — proceed with Kite API call.
+    # We are the fetcher — route to correct broker.
     try:
+        try:
+            from features.broker_gateway import _active_broker  # type: ignore
+            _broker = _active_broker()
+        except Exception:
+            _broker = 'kite'
+
+        if _broker == 'dhan':
+            try:
+                return _fetch_full_chain_from_dhan(db, underlying, expiry, spot_price, leg_id)
+            except Exception as exc:
+                log.warning('[DHAN CHAIN] leg=%s chain fetch error underlying=%s expiry=%s: %s',
+                            leg_id, underlying, expiry, exc)
+                return {'CE': [], 'PE': []}
+
         return _fetch_full_chain_from_kite(
             db, underlying, expiry, spot_price, leg_id,
         )
@@ -220,6 +250,122 @@ def fetch_full_chain(
         with _CHAIN_MUTEX:
             _CHAIN_FETCHING.pop(_cache_key, None)
         _wait_ev.set()
+
+
+def _fetch_full_chain_from_dhan(
+    db,
+    underlying: str,
+    expiry: str,
+    spot_price: float,
+    leg_id: str,
+) -> dict[str, list[dict]]:
+    """
+    Fetch option chain for Dhan broker.
+    LTPs come from:
+      1. dhan_ticker_manager.ltp_map (WebSocket, fastest)
+      2. Dhan REST POST /v2/marketfeed/ltp (fallback when WS data absent)
+    Spot comes from broker_ticker_manager.spot_map.
+    Contracts come from active_option_tokens (broker=dhan).
+    """
+    _cache_key = (underlying, expiry)
+    (
+        _calc_iv, _calc_greeks, _time_to_expiry,
+        _get_kite_credentials, _RISK_FREE_RATE, _DIVIDEND_YIELDS, _DEFAULT_DIVIDEND_YIELD,
+    ) = _bs()
+
+    # ── 1. Spot price ──────────────────────────────────────────────────────────
+    try:
+        from features.broker_gateway import broker_ticker_manager as _btm  # type: ignore
+        ws_spot = float(_btm.spot_map.get(underlying) or 0)
+        if ws_spot > 0:
+            spot_price = ws_spot
+    except Exception:
+        pass
+
+    # ── 2. Contracts from active_option_tokens (broker=dhan) ──────────────────
+    contracts: list[dict] = []
+    try:
+        tok_col = db._db['active_option_tokens']
+        contracts = list(tok_col.find(
+            {
+                'broker': 'dhan',
+                'instrument': str(underlying or '').strip().upper(),
+                'expiry': {'$regex': f'^{str(expiry or "").strip()[:10]}'},
+            },
+            {'_id': 0, 'strike': 1, 'option_type': 1, 'token': 1, 'tokens': 1, 'symbol': 1, 'ws_segment': 1},
+        ))
+    except Exception as exc:
+        log.warning('[DHAN CHAIN] leg=%s active_option_tokens error: %s', leg_id, exc)
+
+    if not contracts:
+        log.warning('[DHAN CHAIN] leg=%s no contracts found underlying=%s expiry=%s',
+                    leg_id, underlying, expiry)
+        return {'CE': [], 'PE': []}
+
+    ce_count = sum(1 for c in contracts if str(c.get('option_type') or '').upper() == 'CE')
+    pe_count = sum(1 for c in contracts if str(c.get('option_type') or '').upper() == 'PE')
+    entry_print(f'[DHAN CHAIN] leg={leg_id} underlying={underlying} expiry={expiry} spot={spot_price} CE={ce_count} PE={pe_count}')
+
+    # ── 3. LTP + OI via broker_gateway (WS first, REST /marketfeed/quote fallback) ──
+    all_tok_ids = [str(c.get('token') or c.get('tokens') or '').strip() for c in contracts]
+    all_tok_ids = [t for t in all_tok_ids if t]
+    ws_segments = {
+        str(c.get('token') or c.get('tokens') or '').strip(): str(c.get('ws_segment') or 'NSE_FNO')
+        for c in contracts if c.get('token') or c.get('tokens')
+    }
+    broker_quotes: dict[str, dict] = {}
+    try:
+        from features.broker_gateway import get_broker_rest_quotes  # type: ignore
+        broker_quotes = get_broker_rest_quotes(all_tok_ids, db._db, ws_segments)
+    except Exception as exc:
+        log.warning('[DHAN CHAIN] leg=%s broker_quotes error: %s', leg_id, exc)
+    ltp_count = sum(1 for v in broker_quotes.values() if v.get('ltp', 0) > 0)
+    entry_print(f'[DHAN CHAIN] leg={leg_id} quotes={len(broker_quotes)} with_ltp={ltp_count}')
+
+    # ── 4. Build chain rows ────────────────────────────────────────────────────
+    T = _time_to_expiry(expiry)
+    r = _RISK_FREE_RATE
+    q_yield = _DIVIDEND_YIELDS.get(str(underlying or '').strip().upper(), _DEFAULT_DIVIDEND_YIELD)
+
+    chain: dict[str, list[dict]] = {'CE': [], 'PE': []}
+    for contract in contracts:
+        opt = str(contract.get('option_type') or '').strip().upper()
+        if opt not in ('CE', 'PE'):
+            continue
+        stk = _safe_float(contract.get('strike'))
+        tok = str(contract.get('token') or contract.get('tokens') or '').strip()
+        sym = str(contract.get('symbol') or '').strip()
+        if not stk or not tok:
+            continue
+        bq = broker_quotes.get(tok) or {}
+        ltp = _safe_float(bq.get('ltp'))
+        if ltp > 0 and spot_price > 0:
+            iv = _calc_iv(ltp, spot_price, stk, T, r, opt, q_yield)
+            greeks = _calc_greeks(spot_price, stk, T, r, iv, opt, q_yield)
+        else:
+            iv, greeks = 0.0, {'delta': 0.0, 'gamma': 0.0, 'theta': 0.0, 'vega': 0.0}
+        chain[opt].append({
+            'strike': stk,
+            'ltp':    ltp,
+            'iv':     round(iv * 100, 2),
+            'delta':  greeks['delta'],
+            'gamma':  greeks['gamma'],
+            'theta':  greeks['theta'],
+            'vega':   greeks['vega'],
+            'oi':     int(bq.get('oi') or 0),
+            'volume': 0,
+            'token':  tok,
+            'symbol': sym,
+        })
+
+    chain['CE'].sort(key=lambda r: _safe_float(r.get('strike')))
+    chain['PE'].sort(key=lambda r: _safe_float(r.get('strike')))
+
+    ltp_count = sum(1 for row in chain['CE'] + chain['PE'] if row.get('ltp', 0) > 0)
+    entry_print(f'[DHAN CHAIN] leg={leg_id} chain_built CE={len(chain["CE"])} PE={len(chain["PE"])} with_ltp={ltp_count}')
+    _print_combined_table(chain, underlying, expiry, spot_price, leg_id)
+    _cache_set(_cache_key, chain)
+    return chain
 
 
 def _fetch_full_chain_from_kite(
@@ -413,10 +559,9 @@ def get_live_delta_for_strike(
 
     # ── Step 1: spot price from WS ltp_map ────────────────────────────────────
     try:
-        from features.kite_broker_ws import get_ltp_map  # type: ignore
-        from features.spot_atm_utils import KITE_INDEX_TOKENS  # type: ignore
-        ltp_map: dict = get_ltp_map() or {}
-        idx_token = str(KITE_INDEX_TOKENS.get(und, 0))
+        from features.broker_gateway import get_broker_ltp_map, BROKER_INDEX_TOKENS  # type: ignore
+        ltp_map: dict = get_broker_ltp_map() or {}
+        idx_token = str(BROKER_INDEX_TOKENS.get(und, 0))
         spot_price = _safe_float(ltp_map.get(idx_token))
     except Exception:
         ltp_map = {}
@@ -496,23 +641,31 @@ def _print_combined_table(
     pe_by_strike = {r['strike']: r for r in chain.get('PE', [])}
     all_strikes  = sorted(set(ce_by_strike) | set(pe_by_strike))
 
+    cache_key = (str(underlying or '').strip().upper(), str(expiry or '').strip()[:10])
+    should_print_stdout = cache_key not in _FIRST_FULL_CHAIN_PRINTED
     sep = '[LIVE CHAIN] ' + '─' * 110
-    entry_print(
+
+    def _emit(line: str) -> None:
+        entry_print(line)
+        if should_print_stdout:
+            print(line, flush=True)
+
+    _emit(
         f'\n[LIVE CHAIN] leg={leg_id}  {underlying}  expiry={expiry}  '
         f'spot={spot_price}  strikes={len(all_strikes)}'
     )
-    entry_print(sep)
-    entry_print(
+    _emit(sep)
+    _emit(
         f'[LIVE CHAIN] {"CE_LTP":>9}  {"CE_IV%":>7}  {"CE_Delta":>9}  │'
         f'  {"STRIKE":>7}  │  {"PE_Delta":>9}  {"PE_IV%":>7}  {"PE_LTP":>9}'
     )
-    entry_print(sep)
+    _emit(sep)
     atm = _atm_from_spot(spot_price, underlying)
     for s in all_strikes:
         ce = ce_by_strike.get(s, {})
         pe = pe_by_strike.get(s, {})
         atm_marker = ' ←ATM' if int(s) == atm else ''
-        entry_print(
+        _emit(
             f'[LIVE CHAIN] {_safe_float(ce.get("ltp")):>9.2f}  '
             f'{_safe_float(ce.get("iv")):>7.2f}  '
             f'{_safe_float(ce.get("delta")):>9.4f}  │'
@@ -522,7 +675,9 @@ def _print_combined_table(
             f'{_safe_float(pe.get("ltp")):>9.2f}'
             f'{atm_marker}'
         )
-    entry_print(sep + '\n')
+    _emit(sep + '\n')
+    if should_print_stdout:
+        _FIRST_FULL_CHAIN_PRINTED.add(cache_key)
 
 
 # ── strike selection from live chain ─────────────────────────────────────────

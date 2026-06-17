@@ -295,7 +295,7 @@ class LiveMonitorService:
         print('[LiveMonitor] background task created')
 
         # Attach Kite listener if credentials already available
-        from features.kite_broker_ws import add_tick_listener, is_configured
+        from features.broker_gateway import broker_add_tick_listener as add_tick_listener, broker_is_configured as is_configured
         if is_configured():
             add_tick_listener(self._on_kite_tick)
             print('[LiveMonitor] Kite tick listener registered at startup')
@@ -308,7 +308,7 @@ class LiveMonitorService:
         Called after Kite credentials are set (POST /kite/config or /live/start).
         Safe to call multiple times — duplicate listener is ignored.
         """
-        from features.kite_broker_ws import add_tick_listener
+        from features.broker_gateway import broker_add_tick_listener as add_tick_listener
         add_tick_listener(self._on_kite_tick)
         print('[LiveMonitor] Kite tick listener attached — monitoring active')
         self._bootstrap_kite_tokens_from_cache()
@@ -318,7 +318,7 @@ class LiveMonitorService:
         if self._task:
             self._task.cancel()
             self._task = None
-        from features.kite_broker_ws import remove_tick_listener
+        from features.broker_gateway import broker_remove_tick_listener as remove_tick_listener
         remove_tick_listener(self._on_kite_tick)
         if self._executor:
             self._executor.shutdown(wait=False)
@@ -815,10 +815,7 @@ class LiveMonitorService:
         Refreshes both '__live_monitor__' and '__live_entry_option__' so that
         tokens for SL/TP-hit (closed) legs are unsubscribed from Kite WS.
         """
-        from features.kite_broker_ws import (
-            extract_instrument_tokens,
-            refresh_user_tokens,
-        )
+        from features.broker_gateway import broker_extract_instrument_tokens as extract_instrument_tokens, broker_refresh_user_tokens as refresh_user_tokens
         positions = [{'token': t} for t in active_token_strs]
         num_toks  = extract_instrument_tokens(positions)
         refresh_user_tokens('__live_monitor__', num_toks)
@@ -835,10 +832,7 @@ class LiveMonitorService:
         On /live/start, aggressively register current open-leg tokens so the
         shared Kite socket subscribes immediately even before first tick cycle.
         """
-        from features.kite_broker_ws import (
-            extract_instrument_tokens,
-            register_user_tokens,
-        )
+        from features.broker_gateway import broker_extract_instrument_tokens as extract_instrument_tokens, broker_register_user_tokens as register_user_tokens
         positions = [{'token': t} for t in active_token_strs]
         num_toks = extract_instrument_tokens(positions)
         if not num_toks:

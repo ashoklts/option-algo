@@ -73,7 +73,13 @@ SHOW_PRINT_STATEMENT = False
 
 # MongoData wrapper  (thin pymongo helper — db._db is the raw pymongo Database)
 from features.mongo_data import MongoData  # type: ignore
-from features.debug_flags import runtime_print
+import builtins as _builtins_tc
+import features.debug_flags as _debug_flags_tc
+from features.debug_flags import runtime_print, trade_event_print
+
+def print(*_a, **_kw):  # suppress plain print() in fast-forward mode
+    if not _debug_flags_tc.fast_forward_mode:
+        _builtins_tc.print(*_a, **_kw)
 
 # Market data cache helpers (shared with execution_socket.py)
 from features.spot_atm_utils import (     # type: ignore
@@ -342,8 +348,10 @@ def get_chain_at_time(
     """
     Fetch option chain document at a specific historical timestamp.
 
-    Tries market_cache first (O(1)) then falls back to MongoDB.
-    Returns None if no matching chain document is found.
+    Backtest:      read from the preloaded market_cache.
+    Live/forward:  delegate to get_cached_chain_doc(db._db, ...) so the
+                   broker-specific active token lookup (Kite/Dhan) can
+                   supply live LTP, token, symbol, and IV before entry.
 
     Used by:
       - Strike resolution at entry time
@@ -351,13 +359,15 @@ def get_chain_at_time(
       - Backtest tick processing
     """
     try:
+        data_source = market_cache if market_cache else db._db
         return get_cached_chain_doc(
-            market_cache,
+            data_source,
             underlying,
             expiry,
             strike,
             option_type,
             now_ts,
+            cache=market_cache,
         )
     except Exception as exc:
         log.warning('get_chain_at_time error underlying=%s strike=%s: %s', underlying, strike, exc)
@@ -446,8 +456,8 @@ def get_vix_at_time(
         # Live / fast-forward: Kite WebSocket LTP first (same method as spot price)
         try:
             from features.spot_atm_utils import INDIA_VIX_KITE_TOKEN  # type: ignore
-            from features.kite_broker_ws import get_ltp_map             # type: ignore
-            ltp_map = get_ltp_map() or {}
+            from features.broker_gateway import get_broker_ltp_map  # type: ignore
+            ltp_map = get_broker_ltp_map() or {}
             vix_ltp = safe_float(ltp_map.get(str(INDIA_VIX_KITE_TOKEN)))
             if vix_ltp > 0:
                 return vix_ltp
@@ -1798,7 +1808,7 @@ def check_broker_sl_target(
             for t in open_trades:
                 fresh = ctx.db._db[COL_ALGO_TRADES].find_one({'_id': t['_id']}) or t
                 square_off_trade(ctx.db, fresh, ctx.now_ts, market_cache=ctx.market_cache)
-                print(f'  [BROKER {reason}] trade={str(t.get("_id") or "")[:16]} closed')
+                trade_event_print(f'  [BROKER {reason}] trade={str(t.get("_id") or "")[:16]} closed')
             # Step 2 — bulk-close all pending/import trades under this broker
             try:
                 res = ctx.db._db[COL_ALGO_TRADES].update_many(
@@ -2486,7 +2496,18 @@ def square_off_trade(
         or (trade_rec.get('config') or {}).get('Ticker')
         or ''
     )
+    activation_mode = str(trade_rec.get('activation_mode') or '').strip()
     all_open_closed = True
+
+    def _live_ltp(token: str) -> float:
+        """Get current LTP from Dhan ticker for live/fast-forward modes."""
+        if activation_mode not in {'live', 'fast-forward'} or not token:
+            return 0.0
+        try:
+            from features.live_monitor_socket import _get_active_ticker_manager
+            return float(_get_active_ticker_manager().ltp_map.get(token) or 0)
+        except Exception:
+            return 0.0
 
     # ── Close legs stored as dicts in algo_trades.legs[] ─────────────────
     for idx, leg in enumerate(trade_rec.get('legs') or []):
@@ -2503,19 +2524,19 @@ def square_off_trade(
         strike      = leg.get('strike')
         option_type = str(leg.get('option') or '')
 
-        chain_doc = None
-        if token:
-            chain_doc = get_chain_by_token_at_time(db, token, exit_timestamp, market_cache)
-        if not chain_doc and underlying and expiry and strike and option_type:
-            chain_doc = get_chain_at_time(db, underlying, expiry, strike, option_type, exit_timestamp, market_cache)
-
-        exit_price = resolve_chain_price(chain_doc)
+        exit_price = _live_ltp(token)
         if not exit_price:
-            entry_price = safe_float((leg.get('entry_trade') or {}).get('price'))
-            exit_price  = entry_price  # fallback to entry price if no chain data
+            chain_doc = None
+            if token:
+                chain_doc = get_chain_by_token_at_time(db, token, exit_timestamp, market_cache)
+            if not chain_doc and underlying and expiry and strike and option_type:
+                chain_doc = get_chain_at_time(db, underlying, expiry, strike, option_type, exit_timestamp, market_cache)
+            exit_price = resolve_chain_price(chain_doc)
+        if not exit_price:
+            exit_price = safe_float((leg.get('entry_trade') or {}).get('price'))
 
         close_leg_in_db(db, t_id, idx, exit_price, 'squared_off', exit_timestamp, leg_id=leg_id)
-        print(f'  [SQUARE OFF TOKEN LTP] trade={t_id} leg={leg_id} token={token} price={exit_price}')
+        trade_event_print(f'  [SQUARE OFF] leg={leg_id} token={token} price={exit_price} mode={activation_mode}')
 
     # ── Close legs already in position history (string refs) ─────────────
     history_open = list(history_col.find({'trade_id': t_id, 'status': OPEN_LEG_STATUS}))
@@ -2526,16 +2547,16 @@ def square_off_trade(
         strike      = hdoc.get('strike')
         option_type = str(hdoc.get('option') or hdoc.get('option_type') or '')
 
-        chain_doc = None
-        if token:
-            chain_doc = get_chain_by_token_at_time(db, token, exit_timestamp, market_cache)
-        if not chain_doc and underlying and expiry and strike and option_type:
-            chain_doc = get_chain_at_time(db, underlying, expiry, strike, option_type, exit_timestamp, market_cache)
-
-        exit_price = resolve_chain_price(chain_doc)
+        exit_price = _live_ltp(token)
         if not exit_price:
-            entry_price = safe_float((hdoc.get('entry_trade') or {}).get('price'))
-            exit_price  = entry_price
+            chain_doc = None
+            if token:
+                chain_doc = get_chain_by_token_at_time(db, token, exit_timestamp, market_cache)
+            if not chain_doc and underlying and expiry and strike and option_type:
+                chain_doc = get_chain_at_time(db, underlying, expiry, strike, option_type, exit_timestamp, market_cache)
+            exit_price = resolve_chain_price(chain_doc)
+        if not exit_price:
+            exit_price = safe_float((hdoc.get('entry_trade') or {}).get('price'))
 
         # History legs don't have an array index — use leg_id match
         try:
@@ -2551,7 +2572,7 @@ def square_off_trade(
             log.error('square_off_trade history update error leg=%s: %s', leg_id, exc)
             all_open_closed = False
 
-        print(f'  [SQUARE OFF] closed leg trade={t_id} leg={leg_id} price={exit_price} ts={exit_timestamp}')
+        trade_event_print(f'  [SQUARE OFF] closed leg trade={t_id} leg={leg_id} price={exit_price} ts={exit_timestamp}')
 
     # ── Verify all legs are now closed ────────────────────────────────────
     refreshed   = algo_col.find_one({'_id': t_id}) or {}
@@ -2565,7 +2586,7 @@ def square_off_trade(
 
     if all_open_closed and not pending_legs and not remaining_open_history:
         mark_trade_squared_off(db, t_id)
-        print(f'[SQUARE OFF] trade={t_id} marked SquaredOff')
+        trade_event_print(f'[SQUARE OFF] trade={t_id} marked SquaredOff')
         return True
 
     print(
@@ -2677,14 +2698,14 @@ def process_tick(
                 hdoc.setdefault('status', OPEN_LEG_STATUS)
                 legs.append(hdoc)
 
-        print('[BROKER TICK LEGS]', {
-            'mode': ctx.activation_mode,
-            'trade_id': trade_id,
-            'timestamp': ctx.now_ts,
-            'trade_legs_raw': len(trade.get('legs') or []),
-            'loaded_open_legs': len(legs),
-            'leg_ids': [str((leg or {}).get('id') or '') for leg in legs if isinstance(leg, dict)],
-        })
+        # print('[BROKER TICK LEGS]', {
+        #     'mode': ctx.activation_mode,
+        #     'trade_id': trade_id,
+        #     'timestamp': ctx.now_ts,
+        #     'trade_legs_raw': len(trade.get('legs') or []),
+        #     'loaded_open_legs': len(legs),
+        #     'leg_ids': [str((leg or {}).get('id') or '') for leg in legs if isinstance(leg, dict)],
+        # })
 
         # ── Per-leg loop ──────────────────────────────────────────────────
         for leg_index, leg in enumerate(legs):
@@ -3081,9 +3102,24 @@ def resolve_pending_leg_entry(
     leg_id      = str(leg.get('id') or '')
     all_configs = resolve_trade_leg_configs(trade)
     leg_cfg     = resolve_leg_cfg(leg_id, leg, all_configs)
-    underlying  = str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or '')
+    underlying  = str(
+        (trade.get('config') or {}).get('Ticker')
+        or (trade.get('strategy') or {}).get('Ticker')
+        or trade.get('ticker')
+        or ''
+    )
     option_type = str(leg.get('option') or leg_cfg.get('OptionType') or 'CE')
     sell_pos    = is_sell(str(leg.get('position') or leg_cfg.get('Position') or ''))
+
+    print(
+        f'[ENTRY CHECK] trade_id={trade_id} '
+        f'leg_id={leg_id or "-"} '
+        f'mode={ctx.activation_mode} '
+        f'now_ts={ctx.now_ts} '
+        f'underlying={underlying or "-"} '
+        f'option_type={option_type or "-"} '
+        f'leg_index={leg_index}'
+    )
 
     # 1. Entry time gate
     _entry_time_raw = str(
@@ -3093,26 +3129,68 @@ def resolve_pending_leg_entry(
     ).strip()
     entry_time = _entry_time_raw[11:16] if len(_entry_time_raw) >= 16 else _entry_time_raw[:5]
     if entry_time and ctx.now_ts[11:16] < entry_time:
+        print(
+            f'[ENTRY SKIP] trade_id={trade_id} '
+            f'leg_id={leg_id or "-"} '
+            f'reason=too_early '
+            f'entry_time={entry_time} '
+            f'current_time={ctx.now_ts[11:16]}'
+        )
         return None  # too early
 
     # 2. Resolve expiry
     expiry = resolve_leg_expiry(ctx.db, leg_cfg, underlying, ctx.now_ts, ctx.market_cache)
     if not expiry:
+        print(
+            f'[ENTRY SKIP] trade_id={trade_id} '
+            f'leg_id={leg_id or "-"} '
+            f'reason=expiry_missing '
+            f'underlying={underlying or "-"} '
+            f'now_ts={ctx.now_ts}'
+        )
         return None
 
     # 3. Resolve spot & strike
     spot = get_spot_at_time(ctx.db, underlying, ctx.now_ts, ctx.market_cache)
     if not spot:
+        print(
+            f'[ENTRY SKIP] trade_id={trade_id} '
+            f'leg_id={leg_id or "-"} '
+            f'reason=spot_missing '
+            f'underlying={underlying or "-"} '
+            f'expiry={expiry}'
+        )
         return None
 
     strike = resolve_leg_strike(ctx.db, leg_cfg, underlying, expiry, option_type, spot, ctx.now_ts, ctx.market_cache)
     if not strike:
+        print(
+            f'[ENTRY SKIP] trade_id={trade_id} '
+            f'leg_id={leg_id or "-"} '
+            f'reason=strike_missing '
+            f'underlying={underlying or "-"} '
+            f'expiry={expiry} '
+            f'spot={spot} '
+            f'option_type={option_type or "-"}'
+        )
         return None
 
     # 4. Fetch chain doc → entry price
-    chain_doc = get_chain_at_time(ctx.db, underlying, expiry, strike, option_type, ctx.now_ts, ctx.market_cache)
+    chain_doc = normalize_chain_fields(
+        get_chain_at_time(ctx.db, underlying, expiry, strike, option_type, ctx.now_ts, ctx.market_cache) or {}
+    )
     entry_price = resolve_chain_price(chain_doc)
     if not entry_price:
+        print(
+            f'[ENTRY SKIP] trade_id={trade_id} '
+            f'leg_id={leg_id or "-"} '
+            f'reason=chain_price_missing '
+            f'underlying={underlying or "-"} '
+            f'expiry={expiry} '
+            f'strike={strike} '
+            f'option_type={option_type or "-"} '
+            f'chain_keys={list((chain_doc or {}).keys())}'
+        )
         return None  # contract not listed / no data
 
     # 5. Momentum gate (if configured)
@@ -3126,10 +3204,27 @@ def resolve_pending_leg_entry(
         if not stored_base:
             # Arm momentum — store base price for first time
             # (return None this tick; caller will write base_price; trigger next tick)
+            print(
+                f'[ENTRY WAIT] trade_id={trade_id} '
+                f'leg_id={leg_id or "-"} '
+                f'reason=momentum_base_missing '
+                f'base_price={entry_price} '
+                f'momentum_type={momentum_type or "-"} '
+                f'momentum_value={momentum_value}'
+            )
             return {'__arm_momentum__': True, 'base_price': entry_price, 'momentum_type': momentum_type, 'momentum_value': momentum_value}
 
         target_price = stored_target or compute_momentum_target(momentum_type, stored_base, momentum_value)
         if not is_momentum_triggered(momentum_type, entry_price, target_price or 0):
+            print(
+                f'[ENTRY WAIT] trade_id={trade_id} '
+                f'leg_id={leg_id or "-"} '
+                f'reason=momentum_not_triggered '
+                f'momentum_type={momentum_type or "-"} '
+                f'base_price={stored_base} '
+                f'target_price={target_price} '
+                f'current_price={entry_price}'
+            )
             return None  # waiting for momentum trigger
 
     # ── Entry approved — build entry_trade ───────────────────────────────
@@ -3161,6 +3256,12 @@ def resolve_pending_leg_entry(
         'lot_size':           lot_size,
         'entry_iv':           entry_iv,
         'entry_vix':          entry_vix,
+        'ltp':                entry_price,
+        'chain_timestamp':    str((chain_doc or {}).get('timestamp') or ctx.now_ts),
+        'token':              str((chain_doc or {}).get('token') or ''),
+        'instrument_token':   str((chain_doc or {}).get('token') or ''),
+        'symbol':             str((chain_doc or {}).get('symbol') or ''),
+        'exchange':           str((chain_doc or {}).get('exchange') or ''),
     }
 
 
@@ -3288,7 +3389,19 @@ def process_pending_entries(
 
     for trade in running_trades:
         trade_id    = str(trade.get('_id') or '')
-        underlying  = str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or '')
+        underlying  = str(
+            (trade.get('config') or {}).get('Ticker')
+            or (trade.get('strategy') or {}).get('Ticker')
+            or trade.get('ticker')
+            or ''
+        )
+        print(
+            f'[ENTRY FLOW] trade_id={trade_id} '
+            f'mode={ctx.activation_mode} '
+            f'now_ts={ctx.now_ts} '
+            f'underlying={underlying or "-"} '
+            f'legs_count={len(trade.get("legs") or [])}'
+        )
 
         # Bootstrap: queue original legs only when legs array is completely empty.
         # String IDs (history refs) count as existing — do not re-bootstrap.
@@ -3296,8 +3409,20 @@ def process_pending_entries(
             queue_original_legs_if_needed(ctx.db, trade, ctx.now_ts)
             # Reload trade to get the newly pushed legs
             trade = ctx.db._db[COL_ALGO_TRADES].find_one({'_id': trade_id}) or trade
+            print(
+                f'[ENTRY FLOW] trade_id={trade_id} '
+                f'state=legs_bootstrapped '
+                f'legs_count={len(trade.get("legs") or [])}'
+            )
 
-        for leg_index, leg in get_pending_legs(trade):
+        pending_legs = get_pending_legs(trade)
+        print(
+            f'[ENTRY FLOW] trade_id={trade_id} '
+            f'state=pending_legs_loaded '
+            f'pending_count={len(pending_legs)}'
+        )
+
+        for leg_index, leg in pending_legs:
             result = resolve_pending_leg_entry(ctx, trade, leg, leg_index)
             if result is None:
                 continue
@@ -3331,6 +3456,9 @@ def process_pending_entries(
                         f'legs.{leg_index}.expiry_date':    entry_trade.get('expiry'),
                         f'legs.{leg_index}.strike':         entry_trade.get('strike'),
                         f'legs.{leg_index}.last_saw_price': entry_trade.get('price'),
+                        f'legs.{leg_index}.token':          entry_trade.get('token') or entry_trade.get('instrument_token'),
+                        f'legs.{leg_index}.symbol':         entry_trade.get('symbol'),
+                        f'legs.{leg_index}.exchange':       entry_trade.get('exchange'),
                     }},
                 )
             except Exception as exc:
@@ -3361,15 +3489,31 @@ def process_pending_entries(
                 log.error('position history store error trade=%s leg=%s: %s', trade_id, leg_id, exc)
 
             entries_executed.append({
-                'trade_id':    trade_id,
-                'leg_id':      leg_id,
-                'entry_price': entry_trade.get('price'),
-                'strike':      entry_trade.get('strike'),
-                'expiry':      entry_trade.get('expiry'),
-                'option_type': entry_trade.get('option_type'),
-                'timestamp':   ctx.now_ts,
+                'trade_id':         trade_id,
+                'leg_id':           leg_id,
+                'entry_price':      entry_trade.get('price'),
+                'ltp':              entry_trade.get('ltp') or entry_trade.get('price'),
+                'strike':           entry_trade.get('strike'),
+                'expiry':           entry_trade.get('expiry'),
+                'option_type':      entry_trade.get('option_type'),
+                'entry_iv':         entry_trade.get('entry_iv'),
+                'entry_vix':        entry_trade.get('entry_vix'),
+                'token':            entry_trade.get('token'),
+                'instrument_token': entry_trade.get('instrument_token') or entry_trade.get('token'),
+                'symbol':           entry_trade.get('symbol'),
+                'exchange':         entry_trade.get('exchange'),
+                'chain_timestamp':  entry_trade.get('chain_timestamp'),
+                'timestamp':        ctx.now_ts,
             })
             print(f'[POSITION ENTRY] trade={trade_id} leg={leg_id} strike={entry_trade.get("strike")} price={entry_trade.get("price")} ts={ctx.now_ts}')
+
+        if not any(str(item.get('trade_id') or '') == trade_id for item in entries_executed):
+            print(
+                f'[ENTRY FLOW] trade_id={trade_id} '
+                f'state=no_entries_taken '
+                f'pending_count={len(pending_legs)} '
+                f'now_ts={ctx.now_ts}'
+            )
 
     return entries_executed
 
@@ -3427,8 +3571,22 @@ def resolve_broker_ltp(
         if not normalized_token:
             return 0.0
         try:
-            from features.kite_ticker import ticker_manager
-            return safe_float(ticker_manager.get_ltp(normalized_token))
+            from features.broker_gateway import broker_ticker_manager, _active_broker  # type: ignore
+            # For Dhan: only use WS price if it arrived in the current tick (broker_ltp_map)
+            # or was received within the last 5 minutes — otherwise it's a stale initial-subscription price
+            if _active_broker() == 'dhan':
+                import time as _time
+                try:
+                    ltp_ts = broker_ticker_manager.ltp_ts_map.get(normalized_token)
+                    if ltp_ts:
+                        from datetime import datetime as _dt
+                        tick_age = (_time.time() -
+                                    _dt.fromisoformat(ltp_ts).timestamp())
+                        if tick_age > 300:  # older than 5 minutes = stale
+                            return 0.0
+                except Exception:
+                    return 0.0  # no timestamp = no fresh tick; don't use stale
+            return safe_float(broker_ticker_manager.get_ltp(normalized_token))
         except Exception:
             return 0.0
 
@@ -3557,6 +3715,7 @@ def process_broker_tick(
                 'loaded_leg_ids': [str((leg or {}).get('id') or '') for leg in legs[:10] if isinstance(leg, dict)],
             })
         ltp_map: dict[str, float] = {}
+        _is_live_mode = ctx.activation_mode in {'live', 'fast-forward'}
         for leg in legs:
             leg_id = str(leg.get('id') or '')
             if not leg_id:
@@ -3566,6 +3725,16 @@ def process_broker_tick(
             option_type = str(leg.get('option') or '')
             current_price = resolve_broker_ltp(broker_ltp_map, underlying, expiry, strike, option_type, leg)
             if not current_price:
+                if _is_live_mode:
+                    # In live/fast-forward: NEVER fall back to historical chain data for SL/TP checks.
+                    # A stale historical price (e.g. 345.65) would immediately trigger SL and exit
+                    # a position that just entered. Skip this leg until WS streams a real LTP.
+                    print(
+                        f'[LIVE LTP MISSING] leg={leg_id} token={str(leg.get("token") or "")} '
+                        f'underlying={underlying} strike={strike} option={option_type} '
+                        f'— skipping SL/TP check until live LTP arrives'
+                    )
+                    continue
                 chain_doc = get_chain_at_time(
                     ctx.db,
                     underlying,

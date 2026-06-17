@@ -5880,6 +5880,44 @@
         var n = Math.round(v * 100) / 100;
         return '₹ ' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
+
+    function pinMtmTooltip(chart) {
+        if (!chart || !chart.data || !chart.data.labels || !chart.data.labels.length) return;
+
+        var lastIndex = chart.data.labels.length - 1;
+        var activeElements = [];
+
+        (chart.data.datasets || []).forEach(function (dataset, datasetIndex) {
+            if (!dataset || dataset.label === 'Peak') return;
+            var pointValue = dataset.data && dataset.data[lastIndex];
+            if (pointValue == null) return;
+            activeElements.push({ datasetIndex: datasetIndex, index: lastIndex });
+        });
+
+        if (!activeElements.length) return;
+
+        chart.setActiveElements(activeElements);
+        if (chart.tooltip && typeof chart.tooltip.setActiveElements === 'function') {
+            var meta = chart.getDatasetMeta(activeElements[0].datasetIndex);
+            var point = meta && meta.data ? meta.data[lastIndex] : null;
+            var anchor = point && point.getProps ? point.getProps(['x', 'y'], true) : null;
+            chart.tooltip.setActiveElements(activeElements, anchor || { x: chart.chartArea.right, y: chart.chartArea.top });
+        }
+    }
+
+    var alwaysVisibleMtmTooltipPlugin = {
+        id: 'alwaysVisibleMtmTooltip',
+        afterInit: function (chart) {
+            pinMtmTooltip(chart);
+        },
+        afterUpdate: function (chart) {
+            pinMtmTooltip(chart);
+        },
+        resize: function (chart) {
+            pinMtmTooltip(chart);
+        }
+    };
+
     function fmtTime(ts) {
         if (!ts) return '';
         var d = new Date(ts);
@@ -6027,6 +6065,7 @@
             mtmChartInstance.data.datasets = datasets;
             mtmChartInstance.options.scales = scales;
             mtmChartInstance.update('none');
+            pinMtmTooltip(mtmChartInstance);
             return;
         }
 
@@ -6034,10 +6073,12 @@
         mtmChartInstance = new window.Chart(mtmChartCanvas, {
             type: 'line',
             data: { labels: labels, datasets: datasets },
+            plugins: [alwaysVisibleMtmTooltipPlugin],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: false,
+                events: [],
                 plugins: {
                     legend: { display: false },
                     tooltip: {
@@ -6056,6 +6097,7 @@
                 interaction: { mode: 'index', intersect: false }
             }
         });
+        pinMtmTooltip(mtmChartInstance);
     }
 
     // CSV download

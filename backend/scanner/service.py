@@ -4,8 +4,9 @@ import calendar
 import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from xml.etree import ElementTree as ET
 
 import numpy as np
 import pandas as pd
@@ -14,7 +15,7 @@ from bson.errors import InvalidId
 from pymongo import UpdateOne
 
 from features.mongo_data import MongoData
-from features.kite_broker import get_kite_instance
+from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance
 from features.spot_atm_utils import KITE_INDEX_TOKENS
 
 DEFAULT_FORMULA = "((70% * 6 Month Volatility) + (20% * 3 Month Performance) + (10% * 1 Year Performance)) / 3 Month Volatility"
@@ -48,8 +49,15 @@ INDEX_STOCKS_COLLECTION = "scanner_index_stocks"
 MARKET_HOLIDAYS_COLLECTION = "market_holidays"
 PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS = 10.0
 HISTORICAL_INTERVAL = "day"
-HISTORICAL_CHUNK_DAYS = 60
+HISTORICAL_CHUNK_DAYS = 2000   # Kite allows up to 2000 days per call for day interval
+DHAN_HISTORICAL_CHUNK_DAYS = 365   # Dhan allows up to 1 year per call
 HISTORICAL_LOOKBACK_BUFFER_DAYS = 10
+
+# Dhan security IDs for indices (used when broker=dhan)
+DHAN_INDEX_SECURITY_IDS: dict[str, int] = {
+    "NIFTY": 13, "BANKNIFTY": 25, "SENSEX": 51,
+    "FINNIFTY": 27, "MIDCPNIFTY": 11915,
+}
 
 SCANNER_INDEX_ALIASES: dict[str, tuple[str, str]] = {
     "GOLDBEES": ("GOLDBEES", "gold_bees"),
@@ -157,6 +165,8 @@ def _coerce_score_date(raw_value: Any) -> datetime:
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
+        if isinstance(value, str):
+            value = value.strip().replace(",", "").replace("%", "")
         numeric = float(value)
     except (TypeError, ValueError):
         return default
@@ -227,10 +237,10 @@ def get_scanner_historical_sync_status() -> dict[str, Any]:
     }
 
 
-def _scanner_historical_sync_worker(start_date: str, end_date: str) -> None:
+def _scanner_historical_sync_worker(start_date: str, end_date: str, use_universe_list: bool = False) -> None:
     global _historical_sync_last_result, _historical_sync_thread
     try:
-        result = sync_scanner_historical_data(start_date, end_date)
+        result = sync_scanner_historical_data(start_date, end_date, use_universe_list=use_universe_list)
         _historical_sync_last_result = result
     except Exception as exc:
         _historical_sync_last_result = {
@@ -243,22 +253,28 @@ def _scanner_historical_sync_worker(start_date: str, end_date: str) -> None:
         _historical_sync_thread = None
 
 
-def start_scanner_historical_data_sync(start_date: str, end_date: str) -> dict[str, Any]:
+def start_scanner_historical_data_sync(
+    start_date: str,
+    end_date: str,
+    use_universe_list: bool = False,
+) -> dict[str, Any]:
     global _historical_sync_thread, _historical_sync_last_result
     with _historical_sync_lock:
         if _historical_sync_running or (_historical_sync_thread and _historical_sync_thread.is_alive()):
             raise ValueError("Historical sync is already running.")
 
+        source_label = "universe_list" if use_universe_list else "stocks_list"
         _historical_sync_last_result = {
             "status": "started",
-            "message": "Historical sync started in background.",
+            "message": f"Historical sync started in background (source={source_label}).",
             "start_date": start_date,
             "end_date": end_date,
+            "source": source_label,
             "started_at": datetime.utcnow().isoformat(),
         }
         _historical_sync_thread = threading.Thread(
             target=_scanner_historical_sync_worker,
-            args=(start_date, end_date),
+            args=(start_date, end_date, use_universe_list),
             daemon=True,
             name="scanner-historical-sync",
         )
@@ -266,9 +282,10 @@ def start_scanner_historical_data_sync(start_date: str, end_date: str) -> dict[s
 
     return {
         "status": "success",
-        "message": "Historical sync started in background.",
+        "message": f"Historical sync started in background (source={source_label}).",
         "start_date": start_date,
         "end_date": end_date,
+        "source": source_label,
         "running": True,
     }
 
@@ -308,6 +325,7 @@ def _load_stock_meta_map(symbols: list[str]) -> dict[str, dict[str, Any]]:
                 "instrument_token": 1,
                 "exchange_token": 1,
                 "code": 1,
+                "dhan_security_id": 1,
             },
         )
     )
@@ -350,6 +368,11 @@ def _load_kite_credentials() -> tuple[str, str]:
     return api_key, access_token
 
 
+def _load_kite_access_token() -> str:
+    _, access_token = _load_kite_credentials()
+    return access_token
+
+
 def _build_kite_client_from_config():
     from kiteconnect import KiteConnect  # type: ignore
 
@@ -362,6 +385,100 @@ def _build_kite_client_from_config():
     kite = KiteConnect(api_key=api_key)
     kite.set_access_token(access_token)
     return kite
+
+
+def _load_dhan_credentials() -> tuple[str, str]:
+    """Returns (client_id, access_token) for Dhan from kite_market_config."""
+    db = MongoData()._db
+    cfg = db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
+    client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
+    access_token = str(cfg.get("access_token") or "").strip()
+    return client_id, access_token
+
+
+def _resolve_stock_dhan_security_id(stock: dict[str, Any]) -> tuple[str, str]:
+    """Returns (symbol, nse_security_id) for a stock record. NSE only."""
+    symbol = str(stock.get("symbol") or stock.get("tradingsymbol") or "").strip().upper()
+
+    def _clean(val: Any) -> str:
+        raw = str(val or "").strip()
+        try:
+            return str(int(float(raw))) if raw else ""
+        except (ValueError, TypeError):
+            return raw
+
+    nse_id = _clean(stock.get("dhan_security_id"))
+    return symbol, nse_id
+
+
+def _fetch_dhan_daily_candles(
+    access_token: str,
+    security_id: str,
+    exchange_segment: str,
+    instrument: str,
+    from_date: datetime,
+    to_date: datetime,
+    *,
+    _retry: int = 3,
+) -> list[dict[str, Any]]:
+    import requests as _req
+    url = "https://api.dhan.co/v2/charts/historical"
+    headers = {"access-token": access_token, "Content-Type": "application/json"}
+    body = {
+        "securityId": str(security_id),
+        "exchangeSegment": exchange_segment,
+        "instrument": instrument,
+        "expiryCode": 0,
+        "fromDate": from_date.strftime("%Y-%m-%d"),
+        "toDate": to_date.strftime("%Y-%m-%d"),
+    }
+    # DH-904 = explicit rate limit; DH-905 = sometimes rate limit in disguise
+    _RATE_LIMIT_CODES = {"DH-904", "DH-905"}
+    for attempt in range(1, _retry + 1):
+        resp = _req.post(url, json=body, headers=headers, timeout=30)
+        if resp.status_code == 429:
+            wait = 2 * attempt
+            print(f"[DHAN] 429 — sleeping {wait}s (attempt {attempt}/{_retry})", flush=True)
+            time.sleep(wait)
+            continue
+        if resp.status_code == 400:
+            try:
+                err_json = resp.json()
+            except Exception:
+                err_json = {}
+            err_code = err_json.get("errorCode", "")
+            if err_code in _RATE_LIMIT_CODES:
+                wait = 2 * attempt
+                print(f"[DHAN] {err_code} rate-limit — sleeping {wait}s (attempt {attempt}/{_retry})", flush=True)
+                time.sleep(wait)
+                continue
+            raise Exception(f"400 — {err_json}")
+        if not resp.ok:
+            try:
+                err_detail = resp.json()
+            except Exception:
+                err_detail = resp.text[:200]
+            raise Exception(f"{resp.status_code} {resp.reason} — {err_detail}")
+        data = resp.json()
+        opens = data.get("open") or []
+        highs = data.get("high") or []
+        lows = data.get("low") or []
+        closes = data.get("close") or []
+        volumes = data.get("volume") or []
+        timestamps = data.get("timestamp") or []
+        candles = []
+        for i in range(len(timestamps)):
+            dt = datetime.utcfromtimestamp(timestamps[i]) + timedelta(hours=5, minutes=30)
+            candles.append({
+                "date": dt,
+                "open": opens[i] if i < len(opens) else 0.0,
+                "high": highs[i] if i < len(highs) else 0.0,
+                "low": lows[i] if i < len(lows) else 0.0,
+                "close": closes[i] if i < len(closes) else 0.0,
+                "volume": volumes[i] if i < len(volumes) else 0,
+            })
+        return candles
+    raise Exception(f"Dhan rate-limit (DH-904/905) after {_retry} retries for security_id={security_id}")
 
 
 def _parse_ymd_date(value: Any, *, field_name: str) -> datetime:
@@ -384,7 +501,7 @@ def _load_market_holiday_dates() -> set[str]:
 
 def _resolve_stock_kite_token(stock: dict[str, Any]) -> tuple[str, str]:
     symbol = str(stock.get("symbol") or stock.get("tradingsymbol") or "").strip().upper()
-    token = str(
+    raw_token = str(
         stock.get("kite_token")
         or stock.get("token")
         or stock.get("tokens")
@@ -393,6 +510,10 @@ def _resolve_stock_kite_token(stock: dict[str, Any]) -> tuple[str, str]:
         or stock.get("code")
         or ""
     ).strip()
+    try:
+        token = str(int(float(raw_token))) if raw_token else ""
+    except (ValueError, TypeError):
+        token = raw_token
     return symbol, token
 
 
@@ -1184,7 +1305,11 @@ def sync_market_holidays(year: int | None = None) -> dict[str, Any]:
     }
 
 
-def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, Any]:
+def sync_scanner_historical_data(
+    start_date: str,
+    end_date: str,
+    use_universe_list: bool = False,
+) -> dict[str, Any]:
     def progress_print(message: str = "") -> None:
         print(message, flush=True)
     global _historical_sync_running, _historical_sync_stop_requested
@@ -1201,10 +1326,21 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
     _historical_sync_stop_requested = False
 
     try:
-        progress_print("🔐 Loading Kite market config credentials...")
+        from features.broker_gateway import _active_broker
         db = MongoData()._db
-        kite = _build_kite_client_from_config()
-        progress_print("✅ Kite client ready.")
+        broker = _active_broker()
+        kite = None
+        dhan_access_token = ""
+        if broker == "dhan":
+            progress_print("🔐 Loading Dhan credentials...")
+            _, dhan_access_token = _load_dhan_credentials()
+            if not dhan_access_token:
+                raise ValueError("Dhan access token not configured.")
+            progress_print("✅ Dhan client ready.")
+        else:
+            progress_print("🔐 Loading Kite market config credentials...")
+            kite = _build_kite_client_from_config()
+            progress_print("✅ Kite client ready.")
         auth_validated = False
 
         holiday_dates = _load_market_holiday_dates()
@@ -1212,7 +1348,7 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
         current = from_dt
         while current <= to_dt:
             date_str = current.strftime("%Y-%m-%d")
-            if date_str not in holiday_dates:
+            if current.weekday() < 5 and date_str not in holiday_dates:
                 target_dates.add(date_str)
             current += timedelta(days=1)
 
@@ -1232,25 +1368,48 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
                 "indexes_processed": 0,
             }
 
-        rows = list(
-            db[STOCKS_COLLECTION].find(
-                {},
-                {
-                    "_id": 0,
-                    "symbol": 1,
-                    "tradingsymbol": 1,
-                    "name": 1,
-                    "series": 1,
-                    "kite_token": 1,
-                    "token": 1,
-                    "tokens": 1,
-                    "instrument_token": 1,
-                    "exchange_token": 1,
-                    "code": 1,
-                },
+        stock_fields = {
+            "_id": 0, "symbol": 1, "tradingsymbol": 1, "name": 1, "series": 1,
+            "kite_token": 1, "token": 1, "tokens": 1,
+            "instrument_token": 1, "exchange_token": 1, "code": 1,
+            "dhan_security_id": 1,
+        }
+
+        if use_universe_list:
+            # Collect unique symbols from all active universe records
+            universe_records = list(db[UNIVERSE_STOCK_LIST_COLLECTION].find(
+                {"universe_period_end_date": ""},
+                {"_id": 0, "filter_symbol": 1, "stocks": 1},
+            ))
+            universe_symbols: set[str] = set()
+            for rec in universe_records:
+                for sym in (rec.get("stocks") or []):
+                    sym = str(sym or "").strip().upper()
+                    if sym:
+                        universe_symbols.add(sym)
+            progress_print(
+                f"📂 Source: scanner_universe_stock_list — "
+                f"{len(universe_records)} active records, {len(universe_symbols)} unique symbols"
             )
-        )
-        nse_instrument_map = _load_kite_nse_instrument_map(kite)
+            rows = list(db[STOCKS_COLLECTION].find(
+                {"symbol": {"$in": list(universe_symbols)}},
+                stock_fields,
+            ))
+            # Report symbols in universe but missing from stocks_list
+            found_symbols = {str(r.get("symbol") or "").strip().upper() for r in rows}
+            missing_from_stocks = sorted(universe_symbols - found_symbols)
+            if missing_from_stocks:
+                progress_print(
+                    f"⚠️ {len(missing_from_stocks)} universe symbols not in scanner_stocks_list "
+                    f"(no token): {missing_from_stocks[:10]}"
+                )
+        else:
+            progress_print("📂 Source: scanner_stocks_list")
+            rows = list(db[STOCKS_COLLECTION].find({}, stock_fields))
+        if broker == "dhan":
+            nse_instrument_map = {}
+        else:
+            nse_instrument_map = _load_kite_nse_instrument_map(kite)
         index_rows = _load_scanner_index_master(db, nse_instrument_map)
 
         stock_rows: list[dict[str, Any]] = []
@@ -1269,13 +1428,52 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
         indexes_processed = 0
         stock_records_inserted = 0
         index_records_inserted = 0
-        stock_deleted = 0
-        index_deleted = 0
+        stocks_skipped_existing = 0
+        indexes_skipped_existing = 0
         skipped: list[dict[str, str]] = []
         processed_items = 0
         stop_reason = ""
 
-        # Replace only the requested window; fetch a short lookback so previous close remains correct.
+        # Pre-load symbols that already have data in this date range (avoid Kite API calls for them)
+        existing_stock_symbols: set[str] = set(
+            stock_collection.distinct(
+                "h_symbol",
+                {"ch_timestamp": {"$gte": delete_from, "$lte": delete_to}},
+            )
+        )
+        existing_index_symbols: set[str] = set(
+            index_collection.distinct(
+                "i_symbol",
+                {"ih_timestamp": {"$gte": delete_from, "$lte": delete_to}},
+            )
+        )
+        progress_print(
+            f"📋 Already have data: {len(existing_stock_symbols)} stocks, {len(existing_index_symbols)} indexes — will skip these"
+        )
+
+        # Pre-load company names: symbol → company_name
+        all_symbols = [str(r.get("symbol") or "").strip().upper() for r in stock_rows if r.get("symbol")]
+        company_name_map: dict[str, str] = {}
+        for doc in db[STOCKS_COLLECTION].find(
+            {"symbol": {"$in": all_symbols}},
+            {"_id": 0, "symbol": 1, "company_name": 1, "name": 1},
+        ):
+            sym = str(doc.get("symbol") or "").strip().upper()
+            company_name_map[sym] = str(doc.get("company_name") or doc.get("name") or "").strip()
+
+        # Pre-load universe membership: symbol → [filter_symbol, ...]
+        universe_membership: dict[str, list[str]] = {}
+        for rec in db[UNIVERSE_STOCK_LIST_COLLECTION].find(
+            {"universe_period_end_date": ""},
+            {"_id": 0, "filter_symbol": 1, "stocks": 1},
+        ):
+            filter_sym = str(rec.get("filter_symbol") or "").strip()
+            for sym in (rec.get("stocks") or []):
+                sym = str(sym or "").strip().upper()
+                if sym:
+                    universe_membership.setdefault(sym, []).append(filter_sym)
+
+        # Fetch a short lookback so previous close remains correct for new inserts.
         fetch_start_base = from_dt - timedelta(days=HISTORICAL_LOOKBACK_BUFFER_DAYS)
 
         for _, index_row in sorted(index_rows.items()):
@@ -1284,50 +1482,77 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
                 progress_print("\n🛑 Stop requested. Ending sync before remaining symbols.")
                 break
             kite_key = str(index_row["kite_key"]).strip().upper()
+            normalized_symbol = str(index_row["normalized_symbol"]).strip()
             processed_items += 1
             progress_print(f"\n[{processed_items}/{total_items}] 📉 {kite_key or '-'} (index)")
-            fetch_mode = str(index_row.get("fetch_mode") or "").strip().lower() or (
-                "token" if kite_key in KITE_INDEX_TOKENS else "nse"
-            )
-            if fetch_mode == "nse":
-                inst = _resolve_nse_index_instrument(
-                    nse_instrument_map,
-                    kite_key,
-                    str(index_row.get("raw_symbol") or ""),
-                    str(index_row.get("normalized_symbol") or ""),
-                )
-                index_token = int(str((inst or {}).get("instrument_token") or "0").strip() or 0)
-            else:
-                index_token = int(KITE_INDEX_TOKENS.get(kite_key) or 0)
-            if not index_token:
-                skipped.append({"symbol": kite_key, "reason": "missing_index_token"})
-                progress_print(f"   ⚠️ Skipped: missing index token ({fetch_mode})")
+
+            if normalized_symbol in existing_index_symbols:
+                indexes_skipped_existing += 1
+                progress_print(f"   ⏭️ Skipped: data already exists for this date range")
                 continue
 
-            all_candles = []
-            current_from = fetch_start_base
-            while current_from <= to_dt:
-                current_to = min(current_from + timedelta(days=HISTORICAL_CHUNK_DAYS), to_dt)
-                try:
-                    all_candles.extend(_fetch_kite_daily_candles(kite, index_token, current_from, current_to))
-                    auth_validated = True
-                except Exception as exc:
-                    token_error = _resolve_kite_access_token_error(exc)
-                    if token_error:
-                        progress_print(f"   ❌ {token_error}")
-                        raise ValueError(token_error) from exc
-                    skipped.append({"symbol": kite_key, "reason": f"kite_error:{exc}"})
-                    progress_print(f"   ⚠️ Kite fetch error: {exc}")
-                    all_candles = []
-                    break
-                current_from = current_to + timedelta(days=1)
+            if broker == "dhan":
+                dhan_index_id = DHAN_INDEX_SECURITY_IDS.get(kite_key, 0)
+                if not dhan_index_id:
+                    skipped.append({"symbol": kite_key, "reason": "missing_dhan_index_security_id"})
+                    progress_print(f"   ⚠️ Skipped: no Dhan security_id for index {kite_key}")
+                    continue
+                all_candles = []
+                current_from = fetch_start_base
+                while current_from <= to_dt:
+                    current_to = min(current_from + timedelta(days=DHAN_HISTORICAL_CHUNK_DAYS), to_dt)
+                    try:
+                        time.sleep(0.4)
+                        all_candles.extend(_fetch_dhan_daily_candles(dhan_access_token, str(dhan_index_id), "IDX_I", "INDEX", current_from, current_to))
+                        auth_validated = True
+                    except Exception as exc:
+                        skipped.append({"symbol": kite_key, "reason": f"dhan_error:{exc}"})
+                        progress_print(f"   ⚠️ Dhan fetch error: {exc}")
+                        all_candles = []
+                        break
+                    current_from = current_to + timedelta(days=1)
+            else:
+                fetch_mode = str(index_row.get("fetch_mode") or "").strip().lower() or (
+                    "token" if kite_key in KITE_INDEX_TOKENS else "nse"
+                )
+                if fetch_mode == "nse":
+                    inst = _resolve_nse_index_instrument(
+                        nse_instrument_map,
+                        kite_key,
+                        str(index_row.get("raw_symbol") or ""),
+                        str(index_row.get("normalized_symbol") or ""),
+                    )
+                    index_token = int(str((inst or {}).get("instrument_token") or "0").strip() or 0)
+                else:
+                    index_token = int(KITE_INDEX_TOKENS.get(kite_key) or 0)
+                if not index_token:
+                    skipped.append({"symbol": kite_key, "reason": "missing_index_token"})
+                    progress_print(f"   ⚠️ Skipped: missing index token ({fetch_mode})")
+                    continue
+                all_candles = []
+                current_from = fetch_start_base
+                while current_from <= to_dt:
+                    current_to = min(current_from + timedelta(days=HISTORICAL_CHUNK_DAYS), to_dt)
+                    try:
+                        all_candles.extend(_fetch_kite_daily_candles(kite, index_token, current_from, current_to))
+                        auth_validated = True
+                    except Exception as exc:
+                        token_error = _resolve_kite_access_token_error(exc)
+                        if token_error:
+                            progress_print(f"   ❌ {token_error}")
+                            raise ValueError(token_error) from exc
+                        skipped.append({"symbol": kite_key, "reason": f"kite_error:{exc}"})
+                        progress_print(f"   ⚠️ Kite fetch error: {exc}")
+                        all_candles = []
+                        break
+                    current_from = current_to + timedelta(days=1)
 
             if not all_candles:
                 progress_print("   ⏭️ No candles fetched")
                 continue
 
             docs = _transform_scanner_index_candles(
-                str(index_row["normalized_symbol"]),
+                normalized_symbol,
                 str(index_row["raw_symbol"]),
                 all_candles,
                 target_dates,
@@ -1336,19 +1561,10 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
                 progress_print("   ⏭️ No valid trading-day records to insert")
                 continue
 
-            delete_result = index_collection.delete_many(
-                {
-                    "i_symbol": str(index_row["normalized_symbol"]),
-                    "ih_timestamp": {"$gte": delete_from, "$lte": delete_to},
-                }
-            )
-            index_deleted += int(delete_result.deleted_count or 0)
             index_collection.insert_many(docs, ordered=False)
             indexes_processed += 1
             index_records_inserted += len(docs)
-            progress_print(
-                f"   ✅ Deleted {int(delete_result.deleted_count or 0)} old records | Inserted {len(docs)} records"
-            )
+            progress_print(f"   ✅ Inserted {len(docs)} records")
             progress_print(
                 f"   📌 Progress: completed {processed_items}/{total_items} | total inserted {stock_records_inserted + index_records_inserted}"
             )
@@ -1359,30 +1575,71 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
                     stop_reason = "Stopped by user request during stock processing."
                     progress_print("\n🛑 Stop requested. Ending sync before remaining symbols.")
                     break
-                symbol, token = _resolve_stock_kite_token(row)
+                if broker == "dhan":
+                    symbol, dhan_nse_id = _resolve_stock_dhan_security_id(row)
+                    token = dhan_nse_id
+                else:
+                    symbol, token = _resolve_stock_kite_token(row)
+                    dhan_nse_id = ""
                 processed_items += 1
                 progress_print(f"\n[{processed_items}/{total_items}] 📈 {symbol or '-'} (stock)")
                 if not symbol or not token.isdigit():
-                    skipped.append({"symbol": symbol or "-", "reason": "missing_kite_token"})
-                    progress_print("   ⚠️ Skipped: missing kite token")
+                    company = company_name_map.get(symbol, "")
+                    universes = universe_membership.get(symbol, [])
+                    universe_str = ", ".join(universes) if universes else "not in any universe"
+                    token_field = "dhan_security_id" if broker == "dhan" else "kite_token"
+                    skipped.append({
+                        "symbol": symbol or "-",
+                        "reason": f"missing_{token_field}",
+                        "company_name": company,
+                        "universes": universes,
+                    })
+                    progress_print(
+                        f"   ⚠️ Skipped: missing {token_field}"
+                        f" | company={company or '-'}"
+                        f" | universe={universe_str}"
+                    )
+                    continue
+
+                if symbol in existing_stock_symbols:
+                    stocks_skipped_existing += 1
+                    progress_print(f"   ⏭️ Skipped: data already exists for this date range")
                     continue
 
                 all_candles: list[dict[str, Any]] = []
                 current_from = fetch_start_base
                 while current_from <= to_dt:
-                    current_to = min(current_from + timedelta(days=HISTORICAL_CHUNK_DAYS), to_dt)
-                    try:
-                        all_candles.extend(_fetch_kite_daily_candles(kite, int(token), current_from, current_to))
-                        auth_validated = True
-                    except Exception as exc:
-                        token_error = _resolve_kite_access_token_error(exc)
-                        if token_error:
-                            progress_print(f"   ❌ {token_error}")
-                            raise ValueError(token_error) from exc
-                        skipped.append({"symbol": symbol, "reason": f"kite_error:{exc}"})
-                        progress_print(f"   ⚠️ Kite fetch error: {exc}")
-                        all_candles = []
-                        break
+                    if broker == "dhan":
+                        current_to = min(current_from + timedelta(days=DHAN_HISTORICAL_CHUNK_DAYS), to_dt)
+                        if not dhan_nse_id:
+                            skipped.append({"symbol": symbol, "reason": "missing_dhan_nse_security_id"})
+                            progress_print(f"   ⚠️ Skipped: no NSE dhan_security_id")
+                            all_candles = []
+                            break
+                        try:
+                            time.sleep(0.7)
+                            batch = _fetch_dhan_daily_candles(dhan_access_token, dhan_nse_id, "NSE_EQ", "EQUITY", current_from, current_to)
+                            all_candles.extend(batch)
+                            auth_validated = True
+                        except Exception as exc:
+                            skipped.append({"symbol": symbol, "reason": f"dhan_error:{exc}"})
+                            progress_print(f"   ⚠️ Dhan fetch error: {exc}")
+                            all_candles = []
+                            break
+                    else:
+                        current_to = min(current_from + timedelta(days=HISTORICAL_CHUNK_DAYS), to_dt)
+                        try:
+                            all_candles.extend(_fetch_kite_daily_candles(kite, int(token), current_from, current_to))
+                            auth_validated = True
+                        except Exception as exc:
+                            token_error = _resolve_kite_access_token_error(exc)
+                            if token_error:
+                                progress_print(f"   ❌ {token_error}")
+                                raise ValueError(token_error) from exc
+                            skipped.append({"symbol": symbol, "reason": f"kite_error:{exc}"})
+                            progress_print(f"   ⚠️ Kite fetch error: {exc}")
+                            all_candles = []
+                            break
                     current_from = current_to + timedelta(days=1)
 
                 if not all_candles:
@@ -1394,26 +1651,18 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
                     progress_print("   ⏭️ No valid trading-day records to insert")
                     continue
 
-                delete_result = stock_collection.delete_many(
-                    {
-                        "h_symbol": symbol,
-                        "ch_timestamp": {"$gte": delete_from, "$lte": delete_to},
-                    }
-                )
-                stock_deleted += int(delete_result.deleted_count or 0)
                 stock_collection.insert_many(docs, ordered=False)
                 stocks_processed += 1
                 stock_records_inserted += len(docs)
-                progress_print(
-                    f"   ✅ Deleted {int(delete_result.deleted_count or 0)} old records | Inserted {len(docs)} records"
-                )
+                progress_print(f"   ✅ Inserted {len(docs)} records")
                 progress_print(
                     f"   📌 Progress: completed {processed_items}/{total_items} | total inserted {stock_records_inserted + index_records_inserted}"
                 )
 
         if not auth_validated and (stock_rows or index_rows):
-            progress_print("   ❌ Invalid Kite access token.")
-            raise ValueError("Invalid Kite access token.")
+            broker_label = "Dhan" if broker == "dhan" else "Kite"
+            progress_print(f"   ❌ Invalid {broker_label} access token.")
+            raise ValueError(f"Invalid {broker_label} access token.")
 
         if stop_reason:
             progress_print(f"\n🛑 Scanner historical data sync stopped.")
@@ -1421,10 +1670,9 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
         else:
             progress_print("\n🎉 Scanner historical data sync completed.")
         progress_print(f"   Trading days : {len(target_dates)}")
-        progress_print(f"   Indexes done : {indexes_processed}")
-        progress_print(f"   Stocks done  : {stocks_processed}")
+        progress_print(f"   Indexes done : {indexes_processed} (skipped existing: {indexes_skipped_existing})")
+        progress_print(f"   Stocks done  : {stocks_processed} (skipped existing: {stocks_skipped_existing})")
         progress_print(f"   Total insert : {stock_records_inserted + index_records_inserted}")
-        progress_print(f"   Total delete : {stock_deleted + index_deleted}")
         progress_print(f"   Skipped      : {len(skipped)}")
 
         return {
@@ -1436,15 +1684,87 @@ def sync_scanner_historical_data(start_date: str, end_date: str) -> dict[str, An
             "trading_days": sorted(target_dates),
             "stocks_processed": stocks_processed,
             "stock_records_inserted": stock_records_inserted,
-            "stock_records_deleted": stock_deleted,
+            "stocks_skipped_existing": stocks_skipped_existing,
             "indexes_processed": indexes_processed,
             "index_records_inserted": index_records_inserted,
-            "index_records_deleted": index_deleted,
+            "indexes_skipped_existing": indexes_skipped_existing,
             "skipped": skipped,
         }
     finally:
         _historical_sync_running = False
         _historical_sync_stop_requested = False
+
+
+def _get_active_broker() -> str:
+    try:
+        db = MongoData()._db
+        cfg = db["kite_market_config"].find_one({"enabled": True}, {"broker": 1}) or {}
+        return str(cfg.get("broker") or "kite").strip().lower()
+    except Exception:
+        return "kite"
+
+
+def _load_dhan_equity_quotes(symbols: list[str]) -> tuple[dict[str, float], dict[str, float]]:
+    normalized = [str(s or "").strip().upper() for s in symbols if str(s or "").strip()]
+    if not normalized:
+        return {}, {}
+    try:
+        import requests as _req
+        db = MongoData()._db
+        cfg = db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
+        access_token = str(cfg.get("access_token") or "").strip()
+        client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
+        if not access_token:
+            return {}, {}
+
+        rows = list(db[STOCKS_COLLECTION].find(
+            {"symbol": {"$in": normalized}},
+            {"_id": 0, "symbol": 1, "dhan_security_id": 1},
+        ))
+        symbol_to_sid: dict[str, str] = {}
+        sid_to_symbol: dict[str, str] = {}
+        for row in rows:
+            sym = str(row.get("symbol") or "").strip().upper()
+            sid = str(row.get("dhan_security_id") or "").strip()
+            if sym and sid:
+                symbol_to_sid[sym] = sid
+                sid_to_symbol[sid] = sym
+
+        if not symbol_to_sid:
+            return {}, {}
+
+        resp = _req.post(
+            "https://api.dhan.co/v2/marketfeed/ltp",
+            headers={
+                "access-token": access_token,
+                "client-id": client_id,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json={"NSE_EQ": [int(s) for s in symbol_to_sid.values()]},
+            timeout=15,
+        )
+        if not resp.ok:
+            return {}, {}
+
+        raw = resp.json()
+        eq_data = (raw.get("data") or {}).get("NSE_EQ") or raw.get("NSE_EQ") or {}
+
+        ltp_map: dict[str, float] = {}
+        for sid, v in eq_data.items():
+            sym = sid_to_symbol.get(str(sid), "")
+            if not sym:
+                continue
+            if isinstance(v, dict):
+                ltp = _safe_float(v.get("last_price") or v.get("ltp") or v.get("lastTradedPrice"))
+            else:
+                ltp = _safe_float(v)
+            if ltp > 0:
+                ltp_map[sym] = round(ltp, 2)
+
+        return ltp_map, {}
+    except Exception:
+        return {}, {}
 
 
 def _load_kite_quotes(symbols: list[str]) -> tuple[dict[str, float], dict[str, float]]:
@@ -1498,12 +1818,15 @@ def _build_live_price_map(
         }
     )
     if prefetched_ltp_map is None or prefetched_close_map is None:
-        kite_ltp_map, kite_close_map = _load_kite_quotes(active_symbols)
-        close_map = dict(kite_close_map)
+        if _get_active_broker() == "dhan":
+            broker_ltp_map, broker_close_map = _load_dhan_equity_quotes(active_symbols)
+        else:
+            broker_ltp_map, broker_close_map = _load_kite_quotes(active_symbols)
+        close_map = dict(broker_close_map)
         if allow_history_fallback:
             for symbol, close in _load_latest_closes(active_symbols).items():
                 close_map.setdefault(symbol.upper(), close)
-        ltp_map: dict[str, float] = dict(kite_ltp_map)
+        ltp_map: dict[str, float] = dict(broker_ltp_map)
     else:
         close_map = {
             symbol.upper(): round(_safe_float(prefetched_close_map.get(symbol)), 2)
@@ -1616,10 +1939,7 @@ def _build_portfolio_snapshot(
                 {
                     "company_name": company_map.get(symbol, symbol or "N/A"),
                     "kite_token": investment_row.get("kite_token") or stock_meta.get("kite_token") or stock_meta.get("token") or "",
-                    "token": investment_row.get("token") or stock_meta.get("token") or stock_meta.get("tokens") or stock_meta.get("instrument_token") or stock_meta.get("exchange_token") or stock_meta.get("code") or "",
-                    "tokens": investment_row.get("tokens") or stock_meta.get("tokens") or stock_meta.get("token") or "",
-                    "instrument_token": investment_row.get("instrument_token") or stock_meta.get("instrument_token") or stock_meta.get("token") or stock_meta.get("tokens") or "",
-                    "exchange_token": investment_row.get("exchange_token") or stock_meta.get("exchange_token") or stock_meta.get("code") or "",
+                    "dhan_token": investment_row.get("dhan_token") or stock_meta.get("dhan_security_id") or "",
                     "investment_amount": round(entry_price * quantity, 2),
                     "ltp": round(ltp, 2),
                     "overall_pnl_amount": round(overall_pnl_amount, 2),
@@ -1653,6 +1973,7 @@ def _build_portfolio_snapshot(
         "combained_portfilio": bool(portfolio_doc.get("combained_portfilio")),
         "holdings": active_holdings,
         "created_at": _serialize_value(portfolio_doc.get("created_at")),
+        "broker": _get_active_broker(),
     }
 
     if include_investments:
@@ -1715,6 +2036,319 @@ UNIVERSE_STOCK_LIST_COLLECTION = "scanner_universe_stock_list"
 _INITIAL_START_DATE = "01-01-1999"
 
 
+_NSE_INDEX_CSV_URLS: dict[str, str] = {
+    "nifty_50":               "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv",
+    "nifty_next_50":          "https://nsearchives.nseindia.com/content/indices/ind_niftynext50list.csv",
+    "nifty_100":              "https://nsearchives.nseindia.com/content/indices/ind_nifty100list.csv",
+    "nifty_200":              "https://nsearchives.nseindia.com/content/indices/ind_nifty200list.csv",
+    "nifty_500":              "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv",
+    "nifty_midcap_50":        "https://nsearchives.nseindia.com/content/indices/ind_niftymidcap50list.csv",
+    "nifty_midcap_100":       "https://nsearchives.nseindia.com/content/indices/ind_niftymidcap100list.csv",
+    "nifty_midcap_150":       "https://nsearchives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
+    "nifty_smallcap_50":      "https://nsearchives.nseindia.com/content/indices/ind_niftysmallcap50list.csv",
+    "nifty_smallcap_100":     "https://nsearchives.nseindia.com/content/indices/ind_niftysmallcap100list.csv",
+    "nifty_smallcap_250":     "https://nsearchives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
+    "nifty_large_midcap_250": "https://nsearchives.nseindia.com/content/indices/ind_niftylargemidcap250list.csv",
+}
+
+
+def _fetch_nse_csv(csv_url: str) -> "pd.DataFrame":
+    import urllib.request
+    import io
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.nseindia.com/",
+    }
+    req = urllib.request.Request(csv_url, headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        content = resp.read().decode("utf-8", errors="ignore")
+    return pd.read_csv(pd.io.common.StringIO(content))
+
+
+def _fetch_nse_index_symbols(csv_url: str) -> list[str]:
+    df = _fetch_nse_csv(csv_url)
+    for col in ("Symbol", "SYMBOL", "symbol", "TradingSymbol", "tradingsymbol"):
+        if col in df.columns:
+            return [str(s).strip().upper() for s in df[col].dropna() if str(s).strip()]
+    return []
+
+
+def _fetch_nse_index_symbol_industry(csv_url: str) -> dict[str, str]:
+    """Returns {SYMBOL: Industry} from NSE CSV."""
+    df = _fetch_nse_csv(csv_url)
+    sym_col = next((c for c in ("Symbol", "SYMBOL", "symbol") if c in df.columns), None)
+    ind_col = next((c for c in ("Industry", "INDUSTRY", "industry") if c in df.columns), None)
+    if not sym_col or not ind_col:
+        return {}
+    result: dict[str, str] = {}
+    for _, row in df.iterrows():
+        sym = str(row[sym_col] or "").strip().upper()
+        ind = str(row[ind_col] or "").strip()
+        if sym and ind:
+            result[sym] = ind
+    return result
+
+
+def sync_stocks_industry_from_nse() -> dict[str, Any]:
+    """Fetch industry for all stocks from NSE CSVs and update scanner_stocks_list."""
+    import io
+
+    # Build symbol → industry map from all universe CSVs
+    symbol_industry: dict[str, str] = {}
+    csv_errors: list[str] = []
+
+    for filter_symbol, csv_url in _NSE_INDEX_CSV_URLS.items():
+        try:
+            data = _fetch_nse_index_symbol_industry(csv_url)
+            symbol_industry.update(data)
+            print(f"  {filter_symbol}: {len(data)} symbols with industry", flush=True)
+        except Exception as exc:
+            csv_errors.append(f"{filter_symbol}: {exc}")
+            print(f"  {filter_symbol}: failed — {exc}", flush=True)
+
+    if not symbol_industry:
+        raise ValueError("Could not fetch industry data from any NSE CSV.")
+
+    # Update scanner_stocks_list
+    db = MongoData()._db
+    now = datetime.utcnow()
+    updated = 0
+    not_found = 0
+
+    from pymongo import UpdateOne
+    ops = []
+    for symbol, industry in symbol_industry.items():
+        ops.append(UpdateOne(
+            {"symbol": symbol},
+            {"$set": {"industry": industry, "updated_at": now}},
+        ))
+
+    if ops:
+        result = db[STOCKS_COLLECTION].bulk_write(ops, ordered=False)
+        updated = result.modified_count
+        not_found = len(ops) - result.matched_count
+
+    return {
+        "status": "success",
+        "source": "NSE CSV",
+        "total_symbols_with_industry": len(symbol_industry),
+        "stocks_updated": updated,
+        "stocks_not_found_in_db": not_found,
+        "csv_errors": csv_errors,
+    }
+
+
+def get_kite_universe_stocks(filter_symbol: str) -> dict[str, Any]:
+    filter_symbol = str(filter_symbol or "").strip().lower()
+    if not filter_symbol:
+        raise ValueError("Universe filter_symbol is required.")
+
+    csv_url = _NSE_INDEX_CSV_URLS.get(filter_symbol)
+    if not csv_url:
+        supported = sorted(_NSE_INDEX_CSV_URLS.keys())
+        raise ValueError(
+            f"Universe '{filter_symbol}' not supported. "
+            f"Supported: {supported}"
+        )
+
+    # Step 1: Fetch constituent symbols from NSE CSV
+    try:
+        nse_symbols = _fetch_nse_index_symbols(csv_url)
+    except Exception as exc:
+        raise ValueError(f"Failed to fetch NSE index CSV for '{filter_symbol}': {exc}") from exc
+
+    if not nse_symbols:
+        raise ValueError(f"No symbols found in NSE CSV for '{filter_symbol}'.")
+
+    # Step 2: Fetch all NSE EQ instruments from Kite to get tokens + company names
+    kite = _build_kite_client_from_config()
+    nse_eq_map: dict[str, dict] = {}
+    for inst in kite.instruments("NSE") or []:
+        sym = str(inst.get("tradingsymbol") or "").strip().upper()
+        if sym and str(inst.get("instrument_type") or "").strip().upper() == "EQ":
+            nse_eq_map[sym] = inst
+
+    # Step 3: Build enriched stock list
+    stock_list: list[dict[str, Any]] = []
+    missing_tokens: list[str] = []
+
+    for symbol in sorted(nse_symbols):
+        inst = nse_eq_map.get(symbol)
+        if inst:
+            stock_list.append({
+                "symbol": symbol,
+                "company_name": str(inst.get("name") or symbol).strip(),
+                "kite_token": str(inst.get("instrument_token") or "").strip(),
+                "exchange_token": str(inst.get("exchange_token") or "").strip(),
+                "exchange": "NSE",
+                "has_token": bool(inst.get("instrument_token")),
+            })
+        else:
+            missing_tokens.append(symbol)
+            stock_list.append({
+                "symbol": symbol,
+                "company_name": symbol,
+                "kite_token": "",
+                "exchange_token": "",
+                "exchange": "NSE",
+                "has_token": False,
+            })
+
+    return {
+        "status": "success",
+        "filter_symbol": filter_symbol,
+        "source": "NSE CSV + Kite instruments",
+        "total": len(stock_list),
+        "missing_token_count": len(missing_tokens),
+        "missing_tokens": missing_tokens,
+        "stocks": stock_list,
+    }
+
+
+def _sync_one_universe(
+    filter_symbol: str,
+    nse_eq_map: dict[str, dict],
+    db: Any,
+    now: datetime,
+) -> dict[str, Any]:
+    """Core logic: fetch NSE CSV → upsert scanner_stocks_list → replace universe stocks array."""
+    csv_url = _NSE_INDEX_CSV_URLS.get(filter_symbol)
+    if not csv_url:
+        return {"filter_symbol": filter_symbol, "status": "error", "reason": "unsupported_universe"}
+
+    try:
+        nse_symbols = _fetch_nse_index_symbols(csv_url)
+    except Exception as exc:
+        return {"filter_symbol": filter_symbol, "status": "error", "reason": f"csv_fetch_failed:{exc}"}
+
+    if not nse_symbols:
+        return {"filter_symbol": filter_symbol, "status": "error", "reason": "no_symbols_in_csv"}
+
+    added: list[str] = []
+    skipped_existing: list[str] = []
+    missing_token: list[str] = []
+    final_symbols: list[str] = []
+
+    for symbol in sorted({s.strip().upper() for s in nse_symbols if s.strip()}):
+        final_symbols.append(symbol)
+        inst = nse_eq_map.get(symbol)
+        kite_token = str(inst.get("instrument_token") or "").strip() if inst else ""
+        exchange_token = str(inst.get("exchange_token") or "").strip() if inst else ""
+        company_name = str(inst.get("name") or "").strip() if inst else ""
+
+        existing = db[STOCKS_COLLECTION].find_one({"symbol": symbol}, {"_id": 1})
+        if existing:
+            skipped_existing.append(symbol)
+        else:
+            db[STOCKS_COLLECTION].insert_one({
+                "symbol": symbol,
+                "tradingsymbol": symbol,
+                "company_name": company_name,
+                "exchange": "NSE",
+                "kite_token": kite_token,
+                "instrument_token": kite_token,
+                "exchange_token": exchange_token,
+                "created_at": now,
+                "updated_at": now,
+            })
+            added.append(symbol)
+            if not kite_token:
+                missing_token.append(symbol)
+
+    # Replace stocks array in scanner_universe_stock_list
+    universe_result = db[UNIVERSE_STOCK_LIST_COLLECTION].update_one(
+        {"filter_symbol": filter_symbol, "universe_period_end_date": ""},
+        {"$set": {"stocks": final_symbols, "updated_at": now}},
+    )
+    if universe_result.matched_count == 0:
+        db[UNIVERSE_STOCK_LIST_COLLECTION].insert_one({
+            "universe_id": str(ObjectId()),
+            "filter_symbol": filter_symbol,
+            "stocks": final_symbols,
+            "universe_period_start_date": _INITIAL_START_DATE,
+            "universe_period_end_date": "",
+            "created_at": now,
+            "updated_at": now,
+        })
+        universe_action = "created"
+    else:
+        universe_action = "updated"
+
+    return {
+        "filter_symbol": filter_symbol,
+        "status": "success",
+        "nse_symbols_fetched": len(nse_symbols),
+        "stocks_list": {
+            "added": len(added),
+            "skipped_existing": len(skipped_existing),
+            "missing_token": len(missing_token),
+            "missing_token_symbols": missing_token,
+        },
+        "universe_list": {
+            "action": universe_action,
+            "stocks_count": len(final_symbols),
+        },
+    }
+
+
+def sync_kite_universe_to_db(filter_symbol: str) -> dict[str, Any]:
+    filter_symbol = str(filter_symbol or "").strip().lower()
+    if not filter_symbol:
+        raise ValueError("Universe filter_symbol is required.")
+    if filter_symbol not in _NSE_INDEX_CSV_URLS:
+        raise ValueError(f"Universe '{filter_symbol}' not supported. Supported: {sorted(_NSE_INDEX_CSV_URLS.keys())}")
+
+    kite = _build_kite_client_from_config()
+    nse_eq_map: dict[str, dict] = {}
+    for inst in kite.instruments("NSE") or []:
+        sym = str(inst.get("tradingsymbol") or "").strip().upper()
+        if sym and str(inst.get("instrument_type") or "").strip().upper() == "EQ":
+            nse_eq_map[sym] = inst
+
+    db = MongoData()._db
+    now = datetime.utcnow()
+    result = _sync_one_universe(filter_symbol, nse_eq_map, db, now)
+    if result.get("status") == "error":
+        raise ValueError(result.get("reason", "unknown error"))
+    return {"status": "success", "source": "NSE CSV + Kite instruments", **result}
+
+
+def sync_all_kite_universes_to_db() -> dict[str, Any]:
+    """Sync ALL supported universes — loads Kite instruments only once."""
+    kite = _build_kite_client_from_config()
+    nse_eq_map: dict[str, dict] = {}
+    for inst in kite.instruments("NSE") or []:
+        sym = str(inst.get("tradingsymbol") or "").strip().upper()
+        if sym and str(inst.get("instrument_type") or "").strip().upper() == "EQ":
+            nse_eq_map[sym] = inst
+
+    db = MongoData()._db
+    now = datetime.utcnow()
+
+    results: list[dict[str, Any]] = []
+    for filter_symbol in sorted(_NSE_INDEX_CSV_URLS.keys()):
+        print(f"  Syncing {filter_symbol}...", flush=True)
+        result = _sync_one_universe(filter_symbol, nse_eq_map, db, now)
+        results.append(result)
+
+    success_count = sum(1 for r in results if r.get("status") == "success")
+    total_added = sum(r.get("stocks_list", {}).get("added", 0) for r in results)
+    total_skipped = sum(r.get("stocks_list", {}).get("skipped_existing", 0) for r in results)
+
+    return {
+        "status": "success",
+        "source": "NSE CSV + Kite instruments",
+        "universes_total": len(results),
+        "universes_success": success_count,
+        "universes_failed": len(results) - success_count,
+        "total_stocks_added_to_stocks_list": total_added,
+        "total_stocks_skipped_existing": total_skipped,
+        "results": results,
+    }
+
+
 def get_previous_universe_stocks(filter_symbol: str) -> dict[str, Any]:
     db = MongoData()._db
     filter_symbol = filter_symbol.strip()
@@ -1766,6 +2400,26 @@ def remove_universe_field_from_stocks_list() -> dict[str, Any]:
         "status": "success",
         "matched": result.matched_count,
         "modified": result.modified_count,
+    }
+
+
+def backfill_stocks_list_exchange() -> dict[str, Any]:
+    db = MongoData()._db
+    result = db[STOCKS_COLLECTION].update_many(
+        {
+            "$or": [
+                {"exchange": {"$exists": False}},
+                {"exchange": ""},
+                {"exchange": None},
+            ]
+        },
+        {"$set": {"exchange": "NSE"}},
+    )
+    return {
+        "status": "success",
+        "matched": result.matched_count,
+        "modified": result.modified_count,
+        "exchange": "NSE",
     }
 
 
@@ -1853,6 +2507,48 @@ def kite_sync_universe_stock_list() -> dict[str, Any]:
     }
 
 
+def _resolve_kite_instrument(
+    symbol: str,
+    nse_eq_map: dict[str, dict],
+    bse_eq_map: dict[str, dict],
+    nse_index_map: dict[str, dict],
+) -> tuple[dict[str, Any], str]:
+    """Try NSE EQ → BSE EQ → NSE INDEX → KITE_INDEX_TOKENS. Returns (inst, exchange)."""
+    inst = nse_eq_map.get(symbol)
+    if inst:
+        return inst, "NSE"
+
+    inst = bse_eq_map.get(symbol)
+    if inst:
+        return inst, "BSE"
+
+    # Try NSE INDEX using SCANNER_INDEX_ALIASES to resolve raw symbol
+    alias = SCANNER_INDEX_ALIASES.get(symbol)
+    if alias:
+        kite_key = alias[0]
+        # Direct KITE_INDEX_TOKENS match
+        index_token = KITE_INDEX_TOKENS.get(kite_key)
+        if index_token:
+            return {"instrument_token": str(index_token), "exchange_token": "", "tradingsymbol": symbol}, "NSE"
+        # Try DEFAULT_SCANNER_INDEXES raw_symbol in nse_index_map
+        default_idx = next(
+            (d for d in DEFAULT_SCANNER_INDEXES if str(d.get("lookup_symbol") or "").strip().upper() == kite_key),
+            None,
+        )
+        if default_idx:
+            raw_sym = str(default_idx.get("raw_symbol") or "").strip().upper()
+            inst = nse_index_map.get(raw_sym)
+            if inst:
+                return inst, "NSE"
+
+    # Try NSE INDEX directly by symbol
+    inst = nse_index_map.get(symbol)
+    if inst:
+        return inst, "NSE"
+
+    return {}, ""
+
+
 def backfill_stocks_list_kite_tokens() -> dict[str, Any]:
     db = MongoData()._db
     now = datetime.utcnow()
@@ -1862,14 +2558,25 @@ def backfill_stocks_list_kite_tokens() -> dict[str, Any]:
         raise ValueError("Kite access token not configured.")
 
     kite = get_kite_instance(access_token)
-    raw_instruments = kite.instruments("NSE") or []
 
-    # Build map: tradingsymbol → instrument data (EQ only)
-    kite_map: dict[str, dict] = {}
-    for inst in raw_instruments:
+    # Build NSE EQ, NSE INDEX, BSE EQ maps
+    nse_eq_map: dict[str, dict] = {}
+    nse_index_map: dict[str, dict] = {}
+    for inst in kite.instruments("NSE") or []:
+        sym = str(inst.get("tradingsymbol") or "").strip().upper()
+        itype = str(inst.get("instrument_type") or "").strip().upper()
+        if not sym:
+            continue
+        if itype == "EQ":
+            nse_eq_map[sym] = inst
+        elif itype == "INDEX":
+            nse_index_map[sym] = inst
+
+    bse_eq_map: dict[str, dict] = {}
+    for inst in kite.instruments("BSE") or []:
         sym = str(inst.get("tradingsymbol") or "").strip().upper()
         if sym and str(inst.get("instrument_type") or "").strip().upper() == "EQ":
-            kite_map[sym] = inst
+            bse_eq_map[sym] = inst
 
     # ── Step 1: Update kite tokens for existing stocks_list symbols ──────────
     stocks = list(db[STOCKS_COLLECTION].find({}, {"_id": 1, "symbol": 1}))
@@ -1884,7 +2591,7 @@ def backfill_stocks_list_kite_tokens() -> dict[str, Any]:
             continue
         existing_symbols.add(symbol)
 
-        inst = kite_map.get(symbol)
+        inst, exchange = _resolve_kite_instrument(symbol, nse_eq_map, bse_eq_map, nse_index_map)
         if not inst:
             not_found_in_kite.append(symbol)
             continue
@@ -1892,6 +2599,7 @@ def backfill_stocks_list_kite_tokens() -> dict[str, Any]:
         db[STOCKS_COLLECTION].update_one(
             {"_id": row["_id"]},
             {"$set": {
+                "exchange": exchange,
                 "kite_token": str(inst.get("instrument_token") or "").strip(),
                 "instrument_token": str(inst.get("instrument_token") or "").strip(),
                 "exchange_token": str(inst.get("exchange_token") or "").strip(),
@@ -1901,7 +2609,6 @@ def backfill_stocks_list_kite_tokens() -> dict[str, Any]:
         updated += 1
 
     # ── Step 2: Check universe stocks — find missing from stocks_list ─────────
-    # Get all active universe records
     universe_records = list(db[UNIVERSE_STOCK_LIST_COLLECTION].find(
         {"universe_period_end_date": ""},
         {"_id": 0, "filter_symbol": 1, "stocks": 1},
@@ -1917,15 +2624,14 @@ def backfill_stocks_list_kite_tokens() -> dict[str, Any]:
             if not sym or sym in existing_symbols:
                 continue
 
-            # Symbol is in universe but missing from stocks_list — add it
-            inst = kite_map.get(sym)
+            inst, exchange = _resolve_kite_instrument(sym, nse_eq_map, bse_eq_map, nse_index_map)
             db[STOCKS_COLLECTION].insert_one({
                 "symbol": sym,
                 "tradingsymbol": sym,
-                "exchange": "NSE",
-                "kite_token": str(inst.get("instrument_token") or "").strip() if inst else "",
-                "instrument_token": str(inst.get("instrument_token") or "").strip() if inst else "",
-                "exchange_token": str(inst.get("exchange_token") or "").strip() if inst else "",
+                "exchange": exchange or "NSE",
+                "kite_token": str(inst.get("instrument_token") or "").strip(),
+                "instrument_token": str(inst.get("instrument_token") or "").strip(),
+                "exchange_token": str(inst.get("exchange_token") or "").strip(),
                 "created_at": now,
             })
             existing_symbols.add(sym)
@@ -1940,6 +2646,272 @@ def backfill_stocks_list_kite_tokens() -> dict[str, Any]:
         "not_found_in_kite_count": len(not_found_in_kite),
         "missing_from_stocks_list_added": missing_from_stocks_list,
         "missing_added_count": len(newly_added),
+    }
+
+
+def backfill_dhan_security_ids() -> dict[str, Any]:
+    """
+    Downloads Dhan scrip master CSV and saves dhan_security_id (NSE) and
+    dhan_bse_security_id (BSE) into scanner_stocks_list.
+    Some stocks fail on NSE_EQ historical API but work via BSE_EQ.
+    """
+    import io
+    import requests as _req
+
+    DHAN_SCRIP_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
+
+    resp = _req.get(DHAN_SCRIP_MASTER_URL, timeout=60)
+    resp.raise_for_status()
+
+    df = pd.read_csv(io.StringIO(resp.text), dtype=str)
+    df.columns = [c.strip() for c in df.columns]
+
+    exch_col = next((c for c in df.columns if "EXM_EXCH_ID" in c.upper() or c.upper() == "SEM_EXM_EXCH_ID"), None)
+    seg_col  = next((c for c in df.columns if c.upper() == "SEM_SEGMENT"), None)
+    sym_col  = next((c for c in df.columns if "TRADING_SYMBOL" in c.upper()), None)
+    sid_col  = next((c for c in df.columns if "SECURITY_ID" in c.upper()), None)
+    inst_col = next((c for c in df.columns if "INSTRUMENT_NAME" in c.upper()), None)
+
+    missing = [n for n, c in [("exch", exch_col), ("segment", seg_col), ("symbol", sym_col), ("security_id", sid_col)] if not c]
+    if missing:
+        raise ValueError(f"Dhan scrip master missing columns {missing}. Found: {list(df.columns)}")
+
+    def _build_map(exchange: str) -> dict[str, str]:
+        mask = (
+            (df[exch_col].str.strip().str.upper() == exchange) &
+            (df[seg_col].str.strip().str.upper() == "E")
+        )
+        if inst_col:
+            mask = mask & (df[inst_col].str.strip().str.upper() == "EQUITY")
+        result: dict[str, str] = {}
+        for _, r in df[mask].iterrows():
+            sym = str(r[sym_col] or "").strip().upper()
+            sid = str(r[sid_col] or "").strip()
+            if sym and sid:
+                result[sym] = sid
+        return result
+
+    nse_map = _build_map("NSE")
+    bse_map = _build_map("BSE")
+
+    db = MongoData()._db
+    now = datetime.utcnow()
+
+    stocks = list(db[STOCKS_COLLECTION].find({}, {"_id": 1, "symbol": 1, "tradingsymbol": 1}))
+    updated = 0
+    not_found: list[str] = []
+
+    for row in stocks:
+        symbol = str(row.get("symbol") or row.get("tradingsymbol") or "").strip().upper()
+        if not symbol:
+            continue
+        nse_sid = nse_map.get(symbol)
+        bse_sid = bse_map.get(symbol)
+        if not nse_sid and not bse_sid:
+            not_found.append(symbol)
+            continue
+        update_fields: dict[str, Any] = {"updated_at": now}
+        if nse_sid:
+            update_fields["dhan_security_id"] = nse_sid
+        if bse_sid:
+            update_fields["dhan_bse_security_id"] = bse_sid
+        db[STOCKS_COLLECTION].update_one(
+            {"_id": row["_id"]},
+            {"$set": update_fields},
+        )
+        updated += 1
+
+    return {
+        "status": "success",
+        "total": len(stocks),
+        "updated": updated,
+        "not_found_in_dhan": not_found,
+        "not_found_count": len(not_found),
+    }
+
+
+_MISSING_STOCK_SYMBOLS = [
+    "TATAMOTORS", "LTIM", "AKZOINDIA", "DUMMYDBRLT", "GSPL", "RELINFRA",
+    "DBREALTY", "CIGNITITEC", "DHANI", "INFIBEAM", "JAIBALAJI", "JCHAC",
+    "KRN", "RAJESHEXPO", "SEQUENT", "STLTECH", "SUNDARMHLD",
+]
+
+_MISSING_INDEX_SYMBOLS = [
+    "NIFTY50", "NIFTY500", "NIFTYMIDCAP100", "NIFTY100",
+    "NIFTYNXT50", "NIFTYSMLCAP100", "NIFTY200",
+]
+
+
+def backfill_missing_tokens() -> dict[str, Any]:
+    db = MongoData()._db
+    now = datetime.utcnow()
+
+    kite = _build_kite_client_from_config()
+
+    # Build instrument maps: NSE EQ, NSE INDEX, BSE EQ
+    nse_eq_map: dict[str, dict] = {}
+    nse_index_map: dict[str, dict] = {}
+    bse_eq_map: dict[str, dict] = {}
+    for inst in kite.instruments("NSE") or []:
+        sym = str(inst.get("tradingsymbol") or "").strip().upper()
+        itype = str(inst.get("instrument_type") or "").strip().upper()
+        if not sym:
+            continue
+        if itype == "EQ":
+            nse_eq_map[sym] = inst
+        elif itype == "INDEX":
+            nse_index_map[sym] = inst
+    for inst in kite.instruments("BSE") or []:
+        sym = str(inst.get("tradingsymbol") or "").strip().upper()
+        if sym and str(inst.get("instrument_type") or "").strip().upper() == "EQ":
+            bse_eq_map[sym] = inst
+
+    stocks_updated: list[dict] = []
+    stocks_already_have_token: list[str] = []
+    stocks_not_found: list[dict] = []
+
+    # ── Stocks ─────────────────────────────────────────────────────────────────
+    for symbol in _MISSING_STOCK_SYMBOLS:
+        row = db[STOCKS_COLLECTION].find_one(
+            {"symbol": symbol},
+            {"_id": 1, "kite_token": 1, "company_name": 1},
+        )
+        existing_token = str((row or {}).get("kite_token") or "").strip()
+        try:
+            token_ok = bool(existing_token and int(float(existing_token)) > 0)
+        except (ValueError, TypeError):
+            token_ok = False
+
+        if token_ok:
+            stocks_already_have_token.append(symbol)
+            continue
+
+        inst, exchange = _resolve_kite_instrument(symbol, nse_eq_map, bse_eq_map, nse_index_map)
+        raw_token = str(inst.get("instrument_token") or "").strip() if inst else ""
+        try:
+            resolved_token = str(int(float(raw_token))) if raw_token else ""
+        except (ValueError, TypeError):
+            resolved_token = ""
+
+        if resolved_token:
+            company_name = str(inst.get("name") or "").strip() or symbol
+            update_fields = {
+                "kite_token": resolved_token,
+                "instrument_token": resolved_token,
+                "exchange_token": str(inst.get("exchange_token") or "").strip(),
+                "exchange": exchange,
+                "tradingsymbol": str(inst.get("tradingsymbol") or symbol).strip(),
+                "updated_at": now,
+            }
+            if company_name and company_name != symbol:
+                update_fields["company_name"] = company_name
+            if row:
+                db[STOCKS_COLLECTION].update_one({"_id": row["_id"]}, {"$set": update_fields})
+            else:
+                db[STOCKS_COLLECTION].insert_one({"symbol": symbol, **update_fields})
+            stocks_updated.append({
+                "symbol": symbol,
+                "token": resolved_token,
+                "exchange": exchange,
+                "company_name": company_name,
+            })
+        else:
+            db_company = str((row or {}).get("company_name") or "").strip()
+            kite_company = str((inst or {}).get("name") or "").strip() if inst else ""
+            stocks_not_found.append({
+                "symbol": symbol,
+                "company_name": db_company or kite_company or symbol,
+            })
+
+    # ── Indexes ────────────────────────────────────────────────────────────────
+    indexes_updated: list[dict] = []
+    indexes_already_have_token: list[str] = []
+    indexes_not_found: list[dict] = []
+
+    for symbol in _MISSING_INDEX_SYMBOLS:
+        alias = SCANNER_INDEX_ALIASES.get(symbol)
+        if not alias:
+            indexes_not_found.append({"symbol": symbol, "reason": "no_alias"})
+            continue
+        kite_key, normalized_symbol = alias
+
+        # Resolve index token
+        index_token_int = int(KITE_INDEX_TOKENS.get(kite_key) or 0)
+        exchange_token_str = ""
+        if not index_token_int:
+            default_idx = next(
+                (d for d in DEFAULT_SCANNER_INDEXES if str(d.get("lookup_symbol") or "").strip().upper() == kite_key),
+                None,
+            )
+            raw_sym = str((default_idx or {}).get("raw_symbol") or "").strip().upper()
+            nse_inst = nse_index_map.get(raw_sym) if raw_sym else None
+            if nse_inst:
+                index_token_int = int(str(nse_inst.get("instrument_token") or "0") or 0)
+                exchange_token_str = str(nse_inst.get("exchange_token") or "").strip()
+
+        if not index_token_int:
+            indexes_not_found.append({"symbol": symbol, "kite_key": kite_key, "reason": "token_not_found"})
+            continue
+
+        token_str = str(index_token_int)
+
+        # Update scanner_index_stocks (match by normalized_symbol or symbol)
+        idx_row = db[INDEX_STOCKS_COLLECTION].find_one(
+            {"$or": [{"normalized_symbol": normalized_symbol}, {"symbol": kite_key}, {"filter_symbol": symbol.lower()}]},
+            {"_id": 1, "kite_token": 1},
+        )
+        existing_idx_token = str((idx_row or {}).get("kite_token") or "").strip()
+        try:
+            idx_token_ok = bool(existing_idx_token and int(float(existing_idx_token)) > 0)
+        except (ValueError, TypeError):
+            idx_token_ok = False
+
+        if idx_token_ok:
+            indexes_already_have_token.append(symbol)
+        elif idx_row:
+            db[INDEX_STOCKS_COLLECTION].update_one(
+                {"_id": idx_row["_id"]},
+                {"$set": {
+                    "kite_token": token_str,
+                    "instrument_token": token_str,
+                    "exchange_token": exchange_token_str,
+                    "normalized_symbol": normalized_symbol,
+                    "updated_at": now,
+                }},
+            )
+
+        # Also update scanner_stocks_list if this index symbol exists there
+        stock_row = db[STOCKS_COLLECTION].find_one({"symbol": symbol}, {"_id": 1})
+        if stock_row:
+            db[STOCKS_COLLECTION].update_one(
+                {"_id": stock_row["_id"]},
+                {"$set": {"kite_token": token_str, "instrument_token": token_str, "updated_at": now}},
+            )
+
+        indexes_updated.append({
+            "symbol": symbol,
+            "kite_key": kite_key,
+            "normalized_symbol": normalized_symbol,
+            "token": token_str,
+        })
+
+    # Print company names for still-missing stocks
+    if stocks_not_found:
+        print("\n❌ Stocks still missing token — search by company name:", flush=True)
+        for item in stocks_not_found:
+            print(f"   {item['symbol']:20} → company: {item['company_name']}", flush=True)
+
+    return {
+        "status": "success",
+        "stocks_updated": stocks_updated,
+        "stocks_updated_count": len(stocks_updated),
+        "stocks_already_have_token": stocks_already_have_token,
+        "stocks_not_found": stocks_not_found,
+        "stocks_not_found_count": len(stocks_not_found),
+        "indexes_updated": indexes_updated,
+        "indexes_updated_count": len(indexes_updated),
+        "indexes_already_have_token": indexes_already_have_token,
+        "indexes_not_found": indexes_not_found,
     }
 
 
@@ -2058,7 +3030,7 @@ def _compute_metrics(history: pd.DataFrame) -> pd.DataFrame:
         vol_col = f"vol_{suffix}"
         df[perf_col] = df.groupby("h_symbol")["ch_closing_price"].pct_change(periods=periods) * 100.0
         df[vol_col] = df.groupby("h_symbol")["ret"].transform(
-            lambda series: series.rolling(periods, min_periods=5).std() * 100.0
+            lambda series: series.rolling(periods, min_periods=5).std() * np.sqrt(252) * 100.0
         )
 
     metric_columns = [column for column in df.columns if column.startswith(("perf_", "vol_"))]
@@ -2101,14 +3073,12 @@ def _attach_kite_tokens(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             or stock_meta.get("code")
             or ""
         )
+        dhan_token = str(row.get("dhan_token") or row.get("dhan_security_id") or stock_meta.get("dhan_security_id") or "").strip()
         enriched_rows.append(
             {
                 **row,
                 "kite_token": resolved_token,
-                "symbol_token": row.get("symbol_token") or resolved_token,
-                "token": row.get("token") or resolved_token,
-                "tokens": row.get("tokens") or resolved_token,
-                "instrument_token": row.get("instrument_token") or resolved_token,
+                "dhan_token": dhan_token,
             }
         )
     return enriched_rows
@@ -2121,6 +3091,10 @@ def _get_portfolio_settings(strategy_id: str) -> dict[str, Any]:
     if not portfolio_doc:
         raise ValueError("Portfolio not found.")
     return portfolio_doc
+
+
+def get_portfolio_settings(strategy_id: str) -> dict[str, Any]:
+    return _serialize_doc(_get_portfolio_settings(strategy_id))
 
 
 def _build_investment_payload_from_scores(
@@ -2186,6 +3160,7 @@ def _build_portfolio(score_rows: pd.DataFrame, total_capital: float, top_n: int)
 
 
 def generate_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
+    score_model = str(payload.get("score_model") or "current").strip().lower()
     index_names = _normalize_list_payload(payload.get("index_name") or payload.get("index_names"))
     sectors = _normalize_list_payload(payload.get("sectors"))
     min_price = payload.get("min_price")
@@ -2215,6 +3190,7 @@ def generate_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
             "message": "No stocks found for the selected filters.",
         }
 
+    # Load 500 days so compute_sigma_scores_core has enough data for its 400-day filter
     hist_start = score_date - timedelta(days=LOOKBACK_DAYS)
     hist_end = score_date - timedelta(days=1)
     history = _load_history(meta["symbol"].tolist(), hist_start, hist_end)
@@ -2224,12 +3200,22 @@ def generate_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
             "message": "No historical data found for the selected filters.",
         }
 
-    history = _compute_metrics(history)
-    history["score"] = _evaluate_scores(history, formula).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    # Use compute_sigma_scores_core (400/401-day lookback) — exact same logic as sigma-backtest
+    from scanner.backtest_engine import compute_sigma_scores_core, parse_dynamic_formula
+    expr = parse_dynamic_formula(formula)
+    score_ts = pd.Timestamp(score_date)
+    history_df = (
+        history.set_index("ch_timestamp").sort_index()
+        if not isinstance(history.index, pd.DatetimeIndex)
+        else history
+    )
+    latest = compute_sigma_scores_core(history_df, score_ts, expr, meta, "sigma", score_model)
+    if latest is None or latest.empty:
+        return {"status": "no_data", "message": "No stocks scored."}
 
-    latest = history.groupby("h_symbol", as_index=False).tail(1).copy()
-    latest = latest.merge(meta, left_on="h_symbol", right_on="symbol", how="inner")
-    latest["last_price"] = latest["ch_closing_price"].round(2)
+    latest["last_price"] = latest.get("last_price", pd.Series(dtype=float))
+    if "last_price" not in latest.columns or latest["last_price"].isna().all():
+        latest["last_price"] = latest.get("ch_closing_price", pd.Series(dtype=float)).round(2)
 
     if min_price not in (None, "", 0, "0"):
         latest = latest[latest["last_price"] >= float(min_price)]
@@ -2242,8 +3228,9 @@ def generate_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
             "message": "No stocks matched the selected price range.",
         }
 
+    # Re-rank after price filter (compute_sigma_scores_core already ranked, but filter may change order)
     latest["rank"] = latest["score"].rank(ascending=False, method="first").astype(int)
-    latest = latest.sort_values(["rank", "symbol"]).reset_index(drop=True)
+    latest = latest.sort_values("rank").reset_index(drop=True)
 
     ordered_columns = [
         "rank",
@@ -2350,7 +3337,10 @@ def get_portfolio_summary() -> list[dict[str, Any]]:
             if symbol:
                 all_active_symbols.add(symbol)
 
-    prefetched_ltp_map, prefetched_close_map = _load_kite_quotes(sorted(all_active_symbols))
+    if _get_active_broker() == "dhan":
+        prefetched_ltp_map, prefetched_close_map = _load_dhan_equity_quotes(sorted(all_active_symbols))
+    else:
+        prefetched_ltp_map, prefetched_close_map = _load_kite_quotes(sorted(all_active_symbols))
     for symbol, close in _load_latest_closes(sorted(all_active_symbols)).items():
         prefetched_close_map.setdefault(symbol.upper(), close)
 
@@ -2574,6 +3564,7 @@ def _build_combained_portfolio_snapshot(portfolio_doc: dict[str, Any], investmen
         "uncorrelated_asset_status": bool(serialized_portfolio.get("uncorrelated_asset_status", False)),
         "uncorrelated_asset_allocation": _safe_float(serialized_portfolio.get("uncorrelated_asset_allocation")),
         "uncorrelated_asset_type": serialized_portfolio.get("uncorrelated_asset_type", "gold_bees"),
+        "score_model": str(serialized_portfolio.get("score_model") or "current").strip().lower(),
         "created_at": _serialize_value(portfolio_doc.get("created_at")),
         "timestamp": datetime.utcnow().isoformat(),
         "stocks_ltp": {key: round(_safe_float(value), 2) for key, value in ltp_map.items()},
@@ -2608,7 +3599,7 @@ def generate_combained_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
-def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: str) -> int:
+def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: str, entry_date: datetime | None = None) -> int:
     strategy_oid = _as_object_id(strategy_id)
     db = MongoData()._db
     stock_meta_map = _load_stock_meta_map(
@@ -2618,7 +3609,7 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
     for stock in invest_stocks:
         symbol = str(stock.get("symbol") or "").strip()
         stock_meta = stock_meta_map.get(symbol, {})
-        resolved_token = (
+        kite_token = (
             stock.get("kite_token")
             or stock.get("symbol_token")
             or stock.get("token")
@@ -2627,12 +3618,16 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
             or stock.get("exchange_token")
             or stock.get("code")
             or stock_meta.get("kite_token")
-            or stock_meta.get("symbol_token")
             or stock_meta.get("token")
             or stock_meta.get("tokens")
             or stock_meta.get("instrument_token")
             or stock_meta.get("exchange_token")
             or stock_meta.get("code")
+        )
+        dhan_token = (
+            stock.get("dhan_token")
+            or stock.get("dhan_security_id")
+            or stock_meta.get("dhan_security_id")
         )
         investment_doc = {
             "entry_price": _safe_float(stock.get("last_price")),
@@ -2651,17 +3646,13 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
             "vol_3M": _safe_float(stock.get("vol_3M")),
             "vol_6M": _safe_float(stock.get("vol_6M")),
             "vol_1Y": _safe_float(stock.get("vol_1Y")),
-            "entry_date": datetime.utcnow(),
+            "entry_date": entry_date or datetime.utcnow(),
             "strategy_id": strategy_oid,
             "position_status": 1,
             "exited_qty": 0,
             "symbol_type": "equity",
-            "kite_token": resolved_token,
-            "symbol_token": resolved_token,
-            "token": resolved_token,
-            "tokens": resolved_token,
-            "instrument_token": resolved_token,
-            "exchange_token": stock.get("exchange_token") or stock_meta.get("exchange_token") or stock.get("code") or stock_meta.get("code"),
+            "kite_token": kite_token,
+            "dhan_token": dhan_token,
             "indentification": stock.get("indentification"),
             "primary_investment_amount": stock.get("primary_investment_amount"),
             "primary_investment_investment": stock.get("primary_investment_investment"),
@@ -2675,29 +3666,7 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
         investment_docs.append(investment_doc)
     if not investment_docs:
         return 0
-    insert_result = db[INVESTMENT_COLLECTION].insert_many(investment_docs)
-    inserted_ids = list(insert_result.inserted_ids or [])
-    post_insert_updates: list[UpdateOne] = []
-    for inserted_id, investment_doc in zip(inserted_ids, investment_docs):
-        resolved_token = investment_doc.get("symbol_token") or investment_doc.get("kite_token") or investment_doc.get("token")
-        if resolved_token in (None, ""):
-            continue
-        post_insert_updates.append(
-            UpdateOne(
-                {"_id": inserted_id},
-                {
-                    "$set": {
-                        "symbol_token": resolved_token,
-                        "kite_token": resolved_token,
-                        "token": resolved_token,
-                        "tokens": resolved_token,
-                        "instrument_token": resolved_token,
-                    }
-                },
-            )
-        )
-    if post_insert_updates:
-        db[INVESTMENT_COLLECTION].bulk_write(post_insert_updates, ordered=False)
+    db[INVESTMENT_COLLECTION].insert_many(investment_docs)
     _clear_portfolio_summary_cache()
     return len(investment_docs)
 
@@ -2721,12 +3690,25 @@ def save_portfolio(portfolio_settings: dict[str, Any], invest_stock_data: list[d
         raise ValueError("invest_stock_data is required.")
 
     portfolio_strategy_id = save_portfolio_settings(portfolio_settings)
-    inserted_count = save_investment_portfolio(invest_stock_data, portfolio_strategy_id)
+    raw_score_date = portfolio_settings.get("score_date")
+    score_entry_date = _coerce_score_date(raw_score_date) if raw_score_date else None
+    inserted_count = save_investment_portfolio(invest_stock_data, portfolio_strategy_id, entry_date=score_entry_date)
     return {
         "status": "success",
         "portfolio_strategy_id": portfolio_strategy_id,
         "inserted_investments": inserted_count,
     }
+
+
+def delete_portfolio(portfolio_id: str) -> dict[str, Any]:
+    object_id = _as_object_id(portfolio_id)
+    db = MongoData()._db
+    result = db[PORTFOLIO_COLLECTION].delete_one({"_id": object_id})
+    if result.deleted_count == 0:
+        raise ValueError(f"Portfolio not found: {portfolio_id}")
+    db[INVESTMENT_COLLECTION].delete_many({"strategy_id": object_id})
+    _clear_portfolio_summary_cache()
+    return {"status": "success", "deleted_portfolio_id": portfolio_id}
 
 
 def update_portfolio_investments(
@@ -2786,6 +3768,8 @@ def _update_position_as_exited(investment_id: ObjectId, exit_price: float, exit_
 
 def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
     detail = get_portfolio_detail(strategy_id)
+    raw_score_model = (detail.get("portfolio") or {}).get("score_model")
+    score_model = str(raw_score_model).strip().lower() if raw_score_model else "old"
     score_request = {
         "index_name": detail.get("strategy_index"),
         "sectors": detail.get("sector"),
@@ -2795,6 +3779,7 @@ def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
         "total_capital": detail.get("starting_capital"),
         "score_date": datetime.now().strftime("%Y-%m-%d"),
         "formula": detail.get("formula"),
+        "score_model": score_model,
     }
     score_result = generate_stock_scores(score_request)
     stocks_scored = score_result.get("stocks_scored", [])
@@ -2807,7 +3792,9 @@ def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
     exited_stocks: list[dict[str, Any]] = []
     update_status: list[dict[str, Any]] = []
     insert_status: list[dict[str, Any]] = []
+    new_stocks_detail: list[dict[str, Any]] = []
     exit_stock_investment_amount = 0.0
+    total_realized_profit = 0.0
 
     exit_rank_threshold = int(_safe_float(detail.get("exit_rank"), 0))
     entry_rank_threshold = int(_safe_float(detail.get("entry_rank"), 0))
@@ -2816,20 +3803,26 @@ def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
         current_rank = int(_safe_float((score_map.get(symbol) or {}).get("rank"), 999999))
         if symbol and current_rank > exit_rank_threshold:
             ltp = _safe_float(stock.get("ltp"), _safe_float(stock.get("entry_price")))
+            entry_price = _safe_float(stock.get("entry_price"))
             qty = int(_safe_float(stock.get("position_qty"), 0))
             exit_value = qty * ltp
+            realized_profit = round((ltp - entry_price) * qty, 2)
             ok = _update_position_as_exited(_as_object_id(stock.get("_id")), ltp, qty, current_rank)
             update_status.append({"symbol": symbol, "status": "Updated" if ok else "Failed"})
             exited_stocks.append(
                 {
                     "symbol": symbol,
+                    "entry_price": round(entry_price, 2),
                     "exit_price": round(ltp, 2),
                     "exit_date": datetime.utcnow().isoformat(),
                     "exit_qty": qty,
+                    "entry_value": round(entry_price * qty, 2),
                     "exit_value": round(exit_value, 2),
+                    "realized_profit": realized_profit,
                 }
             )
             exit_stock_investment_amount += exit_value
+            total_realized_profit += realized_profit
 
     remaining_payment += exit_stock_investment_amount
     active_symbols = {str(p.get("symbol") or "").strip() for p in active_positions if int(p.get("position_status", 1) or 1) == 1}
@@ -2860,16 +3853,28 @@ def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
             }
         )
         insert_status.append({"symbol": stock.get("symbol"), "status": "Inserted"})
+        new_stocks_detail.append({
+            "symbol": stock.get("symbol"),
+            "rank": stock.get("rank"),
+            "sector": stock.get("sector"),
+            "entry_price": round(ltp, 2),
+            "qty": qty,
+            "investment_amount": round(investment_amount, 2),
+            "score": round(_safe_float(stock.get("score")), 4),
+        })
         remaining_payment -= investment_amount
         _clear_portfolio_summary_cache()
 
     return {
         "total_investment_before": round(total_investment_amount, 2),
-        "exit_stock_value": round(exit_stock_investment_amount, 2),
+        "exit_stock_value": round(sum(s["exit_value"] for s in exited_stocks), 2),
+        "total_realized_profit": round(total_realized_profit, 2),
         "remaining_capital_after": round(remaining_payment, 2),
+        "new_buy_amount": round(sum(s["investment_amount"] for s in new_stocks_detail), 2),
         "exited_count": len(exited_stocks),
-        "new_buy_count": len(insert_status),
+        "new_buy_count": len(new_stocks_detail),
         "exited_stocks": exited_stocks,
+        "new_stocks": new_stocks_detail,
         "update_status": update_status,
         "insert_status": insert_status,
     }
@@ -2992,3 +3997,1175 @@ def exit_goldbees_strategy(strategy_id: str) -> dict[str, Any]:
         "exited_stocks": exited_stocks,
         "update_status": update_status,
     }
+
+
+# =====================================================================
+# Scanner Backtest
+# =====================================================================
+def run_scanner_backtest(payload: dict[str, Any]) -> dict[str, Any]:
+    score_model = str(payload.get("score_model") or "current").strip().lower()
+
+    from scanner.backtest_engine import (
+        ultra_backtest_v2_fastest_fixed_v3,
+        load_index_daily,
+        load_stocks_bulk,
+        get_universe_stocks,
+    )
+
+    INDICATOR_SETTINGS: dict[str, dict[str, Any]] = {
+        "supertrend_1_2_5": {"name": "supertrend", "params": (1, 2.5)},
+    }
+    DEFAULT_FORMULA = "((70% * 6 Month Volatility) + (20% * 3 Month Performance) + (10% * 1 Year Performance)) / 3 Month Volatility"
+    DEFAULT_FILTER_ACTION = "go_cash"
+    DEFAULT_UNIVERSES = ["nifty_50", "nifty_500"]
+    DEFAULT_GOLD_ALLOC = 0.85
+
+    # Basic portfolio settings
+    capital = float(payload.get("starting_capital", 1_000_000))
+    indexes = payload.get("indexes", DEFAULT_UNIVERSES)
+    entry_rank = int(payload.get("entry_rank", 12))
+    exit_rank = int(payload.get("exit_rank", 40))
+    rebalance_frequency = str(payload.get("rebalance_frequency", "Monthly"))
+    rebalance_day = int(payload.get("rebalance_date", 10))
+    min_price = payload.get("min_price")
+    max_price = payload.get("max_price")
+    formula = str(payload.get("formula", DEFAULT_FORMULA)).strip() or DEFAULT_FORMULA
+    strategy_name = str(payload.get("strategy_name", "My Strategy")).strip() or "My Strategy"
+
+    start_date_str = payload.get("start_date")
+    end_date_str = payload.get("end_date")
+    start_dt = datetime.strptime(str(start_date_str), "%Y-%m-%d")
+    end_dt = datetime.strptime(str(end_date_str), "%Y-%m-%d")
+
+    # Regime filter
+    exit_regime_filter_status = bool(payload.get("regime_filter_status", True))
+    regime_filter = str(payload.get("regime_filter", "supertrend_1_2_5"))
+    indicator_cfg = INDICATOR_SETTINGS.get(regime_filter, INDICATOR_SETTINGS["supertrend_1_2_5"])
+    indicator_name = indicator_cfg["name"]
+    regime_filter_indexes = str(payload.get("regime_filter_indexes", "nifty_500")).strip()
+    regime_filter_action = str(payload.get("regime_filter_action", DEFAULT_FILTER_ACTION))
+
+    # Uncorrelated asset
+    uncorrelated_asset_status = bool(payload.get("uncorrelated_asset_status", True))
+    uncorrelated_asset_type = str(payload.get("uncorrelated_asset_type", "gold_bees"))
+    uncorrelated_asset_allocation = int(payload.get("uncorrelated_asset_allocation", 85))
+    gold_alloc = uncorrelated_asset_allocation / 100.0 if uncorrelated_asset_type == "gold_bees" else DEFAULT_GOLD_ALLOC
+
+    print(f"\n=== Scanner Backtest Configuration ===")
+    print(f"Strategy: {strategy_name} | Indexes: {indexes} | Capital: {capital:,.0f}")
+    print(f"Entry: {entry_rank} | Exit: {exit_rank} | {rebalance_frequency} day={rebalance_day}")
+    print(f"Regime: {indicator_name} ({regime_filter_indexes}) → {regime_filter_action}")
+    print(f"Gold: {uncorrelated_asset_type} alloc={gold_alloc:.0%} | Start: {start_dt.date()} | End: {end_dt.date()}")
+
+    # Load data
+    stock_symbols = get_universe_stocks(indexes)
+    print(f"Loaded {len(stock_symbols)} symbols.")
+
+    df_index = load_index_daily(regime_filter_indexes, start_dt, end_dt)
+    df_gold = load_index_daily(uncorrelated_asset_type, start_dt, end_dt)
+    extended_start = pd.Timestamp(start_dt) - pd.Timedelta(days=500)
+    df_stocks = load_stocks_bulk(stock_symbols, extended_start, end_dt, min_price, max_price)
+
+    print("Running backtest...")
+    (
+        metrics,
+        eq_df,
+        trades_df,
+        monthly_json,
+        monthly_stats_json,
+        equity_curve_json,
+        snapshots_df,
+        monthly_equity_json,
+        yearly_equity_json,
+        daily_json,
+        weekly_json,
+        monthly_final_json,
+        yearly_final_json,
+        quarterly_json,
+        monthly_closed_json,
+        closed_trades_df,
+        regime_events,
+    ) = ultra_backtest_v2_fastest_fixed_v3(
+        df_index,
+        df_stocks,
+        df_gold,
+        start_date=start_dt,
+        end_date=end_dt,
+        top_n=entry_rank,
+        initial_capital=capital,
+        gold_alloc=gold_alloc,
+        FORMULA=formula,
+        EXIT_RANK=exit_rank,
+        EXIT_REGIME_FILTER_STATUS=exit_regime_filter_status,
+        UNCORRELATED_ASSET_STATUS=uncorrelated_asset_status,
+        INDICATOR_NAME=indicator_name,
+        INDICATOR_PARAMS={"atr_period": indicator_cfg["params"][0], "multiplier": indicator_cfg["params"][1]},
+        FILTER_ACTION=regime_filter_action,
+        REBALANCE_FREQUENCY=rebalance_frequency,
+        REBALANCE_DAY_OR_WEEK=rebalance_day,
+        UNIVERSE_INDEXES=indexes,
+        score_model=score_model,
+    )
+
+    # Serialize closed_trades_df — convert Timestamps to ISO strings for JSON safety
+    closed_trades_json: list[dict[str, Any]] = []
+    if closed_trades_df is not None and not closed_trades_df.empty:
+        ct = closed_trades_df.copy()
+        for col in ["buy_date", "sell_date"]:
+            if col in ct.columns:
+                ct[col] = ct[col].apply(lambda v: v.strftime("%Y-%m-%d") if pd.notna(v) and hasattr(v, "strftime") else (str(v) if pd.notna(v) else None))
+        closed_trades_json = ct.to_dict(orient="records")
+
+    # Build flat regime events rows for Excel
+    regime_excel_rows = []
+    for ev in (regime_events or []):
+        base = {
+            "Signal Date": ev.get("signal_date", ""),
+            "Signal": ev.get("signal", ""),
+            "Trade Date": ev.get("sell_date", ev.get("buy_date", "")),
+        }
+        if ev.get("signal") == "Sell":
+            for s in ev.get("stocks_sold", []):
+                regime_excel_rows.append({**base, "Action": s.get("action", "SELL_SIGNAL"), "Symbol": s["symbol"], "Qty": s["qty"], "Price": s["price"], "Rank": s.get("rank", "")})
+            for s in ev.get("stocks_skipped", []):
+                regime_excel_rows.append({**base, "Action": "SKIPPED_NO_PRICE", "Symbol": s["symbol"], "Qty": "", "Price": "", "Rank": ""})
+            g = ev.get("gold_bought")
+            if g:
+                regime_excel_rows.append({**base, "Action": "BUY_GOLDBEES", "Symbol": "gold_bees", "Qty": g["qty"], "Price": g["price"], "Rank": ""})
+        else:
+            g = ev.get("gold_sold")
+            if g:
+                regime_excel_rows.append({**base, "Action": "SELL_GOLDBEES", "Symbol": "gold_bees", "Qty": g["qty"], "Price": g["price"], "Rank": ""})
+            for s in ev.get("stocks_bought", []):
+                regime_excel_rows.append({**base, "Action": s.get("action", "BUY_REENTER"), "Symbol": s["symbol"], "Qty": s["qty"], "Price": s["price"], "Rank": s.get("rank", "")})
+
+    if regime_excel_rows:
+        import random
+        df_regime = pd.DataFrame(regime_excel_rows)
+        out_path = f"regime_events_{random.randint(1000, 9999)}.xlsx"
+        df_regime.to_excel(out_path, index=False)
+        print(f"📁 Regime Events Excel → {out_path}")
+
+    return {
+        "status": "success",
+        "metrics": metrics,
+        "monthly_roi": monthly_json,
+        "equity_curve_json": equity_curve_json,
+        "daily_drawdown_json": metrics.pop("daily_drawdown_json", []),
+        "monthly_drawdown_json": metrics.pop("monthly_drawdown_json", []),
+        "equity_details": eq_df.to_dict(orient="records"),
+        "trade_history": trades_df.to_dict(orient="records"),
+        "closed_trades_json": closed_trades_json,
+        "monthly_equity_json": monthly_equity_json,
+        "yearly_equity_json": yearly_equity_json,
+        "daily_json": daily_json,
+        "weekly_json": weekly_json,
+        "monthly_final_json": monthly_final_json,
+        "yearly_final_json": yearly_final_json,
+        "quarterly_json": quarterly_json,
+        "monthly_closed_json": monthly_closed_json,
+        "regime_events": regime_events or [],
+    }
+
+
+def _xml_local_name(tag: str) -> str:
+    return str(tag).split("}", 1)[-1]
+
+
+def _sheet_rows_from_xml(file_bytes: bytes) -> dict[str, list[list[str]]]:
+    root = ET.fromstring(file_bytes)
+    sheet_map: dict[str, list[list[str]]] = {}
+
+    for worksheet in root.iter():
+        if _xml_local_name(worksheet.tag) != "Worksheet":
+            continue
+        sheet_name = (
+            worksheet.attrib.get("{urn:schemas-microsoft-com:office:spreadsheet}Name")
+            or worksheet.attrib.get("ss:Name")
+            or worksheet.attrib.get("Name")
+            or ""
+        ).strip()
+        if not sheet_name:
+            continue
+
+        table = next((child for child in worksheet if _xml_local_name(child.tag) == "Table"), None)
+        if table is None:
+            sheet_map[sheet_name] = []
+            continue
+
+        rows: list[list[str]] = []
+        for row in table:
+            if _xml_local_name(row.tag) != "Row":
+                continue
+            values: list[str] = []
+            cursor = 1
+            for cell in row:
+                if _xml_local_name(cell.tag) != "Cell":
+                    continue
+                index_attr = (
+                    cell.attrib.get("{urn:schemas-microsoft-com:office:spreadsheet}Index")
+                    or cell.attrib.get("ss:Index")
+                    or cell.attrib.get("Index")
+                )
+                target_index = int(index_attr) if str(index_attr or "").isdigit() else cursor
+                while cursor < target_index:
+                    values.append("")
+                    cursor += 1
+                data = next((child for child in cell if _xml_local_name(child.tag) == "Data"), None)
+                values.append((data.text if data is not None and data.text is not None else "".join(cell.itertext())).strip())
+                cursor += 1
+            rows.append(values)
+        sheet_map[sheet_name] = rows
+
+    return sheet_map
+
+
+def parse_single_file_inputs(file_bytes: bytes, file_name: str) -> dict[str, Any]:
+    try:
+        sheet_map = _sheet_rows_from_xml(file_bytes)
+    except Exception as exc:
+        raise ValueError(f"{file_name} could not be parsed.") from exc
+
+    inputs_rows = sheet_map.get("Inputs", [])
+    if not inputs_rows:
+        raise ValueError(f"{file_name} is missing the Inputs sheet.")
+
+    input_map: dict[str, str] = {
+        str(row[0]).strip(): str(row[1]).strip() if len(row) > 1 else ""
+        for row in inputs_rows
+        if row and str(row[0]).strip()
+    }
+
+    def _int_input(key: str, default: int) -> int:
+        try:
+            return int(float(input_map.get(key, str(default)) or str(default)))
+        except (ValueError, TypeError):
+            return default
+
+    def _float_input(key: str, default: float) -> float:
+        try:
+            return float(input_map.get(key, str(default)) or str(default))
+        except (ValueError, TypeError):
+            return default
+
+    # Uses exact same keys/defaults as run_backtest_from_file_inputs → run_scanner_backtest
+    return {
+        "status": "success",
+        "inputs": {
+            "strategy_name": input_map.get("Strategy Name", ""),
+            "starting_capital": _float_input("Starting Capital", 300000.0),
+            "indexes": [p.strip() for p in input_map.get("Universe", "nifty_50").split(",") if p.strip()],
+            "entry_rank": _int_input("No Of Stocks in Portfolio", 12),
+            "exit_rank": _int_input("Exit Rank", 25),
+            "stock_price_min": _float_input("Min Price", 0.0),
+            "stock_price_max": _float_input("Max Price", 0.0),
+            "rebalance_frequency": input_map.get("Rebalance Frequency", "monthly"),
+            "rebalance_date": input_map.get("Rebalance Date", ""),
+            "alternative_rebalance_day": input_map.get("Alternate Rebalance Day", "next_day"),
+            "position_sizing": input_map.get("Position Sizing", "equal_weight"),
+            "start_date": input_map.get("Start Date", ""),
+            "end_date": input_map.get("End Date", ""),
+            "regime_filter": input_map.get("Regime Filter", "supertrend_1_2_5"),
+            "regime_filter_action": input_map.get("Regime Filter Action", "go_cash"),
+            "regime_filter_indexes": input_map.get("Regime Filter Index", "nifty_500"),
+            "uncorrelated_asset_type": input_map.get("Asset Type", "gold_bees"),
+            "uncorrelated_asset_allocation": _int_input("Asset Alloc", 100),
+            "formula": input_map.get("Formula", DEFAULT_FORMULA),
+        },
+    }
+
+
+def _rows_to_objects(rows: list[list[str]]) -> list[dict[str, str]]:
+    if not rows:
+        return []
+    headers = [str(header or "").strip() for header in rows[0]]
+    records: list[dict[str, str]] = []
+    for row in rows[1:]:
+        if not any(str(cell or "").strip() for cell in row):
+            continue
+        records.append({
+            header: str(row[index] if index < len(row) else "").strip()
+            for index, header in enumerate(headers)
+            if header
+        })
+    return records
+
+
+def _parse_sheet_number(value: str) -> Any:
+    text = str(value or "").strip().replace(",", "").replace("%", "")
+    if not text:
+        return ""
+    try:
+        number = float(text)
+    except ValueError:
+        return str(value or "").strip()
+    return int(number) if number.is_integer() else round(number, 6)
+
+
+def _metric_label_to_key(label: str) -> str:
+    explicit = {
+        "total trade": "total_trades",
+        "no.of winners": "no_of_winners",
+        "no.of losers": "no_of_losers",
+        "win rate(%)": "win_rate_percent",
+        "avg. winners roi(%)": "avg_winners_roi_percent",
+        "avg. losers roi(%)": "avg_losers_roi_percent",
+        "biggest winner roi(%)": "biggest_winner_roi_percent",
+        "biggest loser roi(%)": "biggest_loser_roi_percent",
+        "risk to reward": "risk_reward",
+        "max. dd(%)": "max_drawdown",
+        "cagr(%)": "gagr",
+        "avg. trade per year": "avg_trades_per_year",
+        "kurtosis(monthlyroi)": "kurtosis_monthly_roi",
+        "kurtosis(traderoi)": "kurtosis_trade_roi",
+        "std": "std",
+        "calmar ratio": "calmar_ratio",
+        "invested capital": "invested_capital",
+        "current capital": "final_capital",
+        "total return(%)": "total_return",
+    }
+    normalized = str(label or "").strip().lower()
+    if normalized in explicit:
+        return explicit[normalized]
+    normalized = re.sub(r"[()%.]", "", normalized)
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+    return normalized
+
+
+def parse_multi_strategy_reports(files: list[dict[str, Any]]) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    reports: list[dict[str, Any]] = []
+
+    for index, item in enumerate(files, start=1):
+        file_bytes = item.get("content") or b""
+        file_name = str(item.get("file_name") or f"strategy_{index}.xls")
+        strategy_name = str(item.get("strategy_name") or f"Strategy {index}").strip() or f"Strategy {index}"
+        if not file_bytes:
+            raise ValueError(f"Upload file missing for {strategy_name}.")
+
+        try:
+            sheet_map = _sheet_rows_from_xml(file_bytes)
+        except Exception as exc:
+            raise ValueError(f"{file_name} could not be parsed.") from exc
+
+        inputs_rows = sheet_map.get("Inputs", [])
+        metrics_rows = sheet_map.get("Performance Metrics", [])
+        monthly_breakup_rows = sheet_map.get("Monthly Breakup", [])
+        local_daily_rows = sheet_map.get("Local Daily Report", [])
+        weekly_rows = sheet_map.get("Weekly Json", [])
+        monthly_final_rows = sheet_map.get("Monthly Final Json", [])
+        yearly_rows = sheet_map.get("Yearly Final Json", [])
+        daily_drawdown_rows = sheet_map.get("Daily Drawdown", [])
+
+        if not inputs_rows or not metrics_rows or not local_daily_rows:
+            raise ValueError(f"{file_name} is missing required report sheets.")
+
+        input_map = {str(row[0]).strip(): str(row[1]).strip() if len(row) > 1 else "" for row in inputs_rows if row and str(row[0]).strip()}
+        metrics: dict[str, Any] = {}
+        for row in metrics_rows[1:]:
+            label = str(row[0] if row else "").strip()
+            if not label or label in {"Start Date", "End date"}:
+                continue
+            metrics[_metric_label_to_key(label)] = _parse_sheet_number(row[1] if len(row) > 1 else "")
+
+        monthly_rows_payload: list[dict[str, Any]] = []
+        for row in monthly_breakup_rows[1:]:
+            if not any(str(cell or "").strip() for cell in row):
+                continue
+            values = []
+            for cell in row[1:13]:
+                text = str(cell or "").strip() or "-"
+                numeric = _safe_float(str(text).replace("%", ""), default=np.nan)
+                values.append({
+                    "value": text,
+                    "positive": None if text == "-" or np.isnan(numeric) else bool(numeric >= 0),
+                })
+            total_text = str(row[13] if len(row) > 13 else "-").strip() or "-"
+            total_numeric = _safe_float(total_text.replace("%", ""), default=np.nan)
+            monthly_rows_payload.append({
+                "year": str(row[0] if row else "--").strip() or "--",
+                "values": values,
+                "total": total_text,
+                "totalPositive": None if total_text == "-" or np.isnan(total_numeric) else bool(total_numeric >= 0),
+            })
+
+        reports.append({
+            "id": f"parsed-{index}",
+            "strategyName": strategy_name,
+            "fileName": file_name,
+            "form": {
+                "strategy_name": input_map.get("Strategy Name", strategy_name),
+                "starting_capital": input_map.get("Starting Capital", "300000"),
+                "indexes": [part.strip() for part in input_map.get("Universe", "").split(",") if part.strip()],
+                "entry_rank": input_map.get("No Of Stocks in Portfolio", "12"),
+                "exit_rank": input_map.get("Exit Rank", "25"),
+                "rebalance_frequency": input_map.get("Rebalance Frequency", "monthly"),
+                "alternative_rebalance_day": input_map.get("Alternate Rebalance Day", "next_day"),
+                "start_date": input_map.get("Start Date", ""),
+                "end_date": input_map.get("End Date", ""),
+                "regime_filter": input_map.get("Regime Filter", "supertrend_1_2_5"),
+                "regime_filter_action": input_map.get("Regime Filter Action", "go_cash"),
+                "regime_filter_indexes": input_map.get("Regime Filter Index", "nifty_500"),
+                "uncorrelated_asset_type": input_map.get("Asset Type", "gold_bees"),
+                "uncorrelated_asset_allocation": input_map.get("Asset Alloc", "100"),
+                "position_sizing": input_map.get("Position Sizing", "equal_weight"),
+                "formula": input_map.get("Formula", DEFAULT_FORMULA),
+            },
+            "metrics": metrics,
+            "monthlyBreakupRows": monthly_rows_payload,
+            "localDailyRows": [
+                {
+                    "date": row.get("Date", "--"),
+                    "portfolio_value": _safe_float(row.get("Portfolio Value"), 0.0),
+                    "daily_pnl": _safe_float(row.get("Daily PnL"), 0.0),
+                    "daily_roi": _safe_float(row.get("Daily ROI"), 0.0),
+                    "index_value": _safe_float(row.get("Index Value"), 0.0),
+                    "index_daily_pnl": _safe_float(row.get("Index Daily PnL"), 0.0),
+                }
+                for row in _rows_to_objects(local_daily_rows)
+            ],
+            "weeklyRows": _rows_to_objects(weekly_rows),
+            "monthlyFinalRows": _rows_to_objects(monthly_final_rows),
+            "yearlyRows": _rows_to_objects(yearly_rows),
+            "dailyDrawdownRows": [
+                {
+                    "date": row.get("date") or row.get("Date") or "",
+                    "drawdown_pct": _safe_float(row.get("drawdown_pct"), 0.0),
+                    "peak_value": _safe_float(row.get("peak_value"), 0.0),
+                    "bottom_value": _safe_float(row.get("bottom_value"), 0.0),
+                    "drawdown_rupee": _safe_float(row.get("drawdown_rupee"), 0.0),
+                }
+                for row in _rows_to_objects(daily_drawdown_rows)
+            ],
+        })
+
+    combined_report = _build_combined_multi_strategy_report(reports) if len(reports) > 1 else None
+    elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    return {
+        "status": "success",
+        "strategy_count": len(reports),
+        "processing_ms": elapsed_ms,
+        "reports": reports,
+        "combined_report": combined_report,
+    }
+
+
+def _build_combined_multi_strategy_report(reports: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if len(reports) < 2:
+        return None
+
+    daily_maps: list[dict[str, dict[str, Any]]] = []
+    for report in reports:
+        rows = report.get("localDailyRows") or []
+        daily_maps.append({str(row.get("date") or ""): row for row in rows if str(row.get("date") or "")})
+
+    all_dates = sorted({date for rows in daily_maps for date in rows.keys()})
+    if not all_dates:
+        return None
+
+    combined_daily: list[dict[str, Any]] = []
+    prev_portfolio = 0.0
+    prev_index = 0.0
+    for index, date in enumerate(all_dates):
+        portfolio_value = sum(_safe_float(rows.get(date, {}).get("portfolio_value"), 0.0) for rows in daily_maps)
+        index_value = sum(_safe_float(rows.get(date, {}).get("index_value"), 0.0) for rows in daily_maps)
+        daily_pnl = portfolio_value - (prev_portfolio if index > 0 else portfolio_value)
+        index_daily_pnl = index_value - (prev_index if index > 0 else index_value)
+        daily_roi = (daily_pnl / prev_portfolio) * 100 if index > 0 and prev_portfolio else 0.0
+        combined_daily.append({
+            "date": date,
+            "portfolio_value": round(portfolio_value, 2),
+            "daily_pnl": round(daily_pnl, 2),
+            "daily_roi": round(daily_roi, 4),
+            "index_value": round(index_value, 2),
+            "index_daily_pnl": round(index_daily_pnl, 2),
+        })
+        prev_portfolio = portfolio_value
+        prev_index = index_value
+
+    combined_drawdown: list[dict[str, Any]] = []
+    running_peak = 0.0
+    max_drawdown = 0.0
+    # track the single worst drawdown event
+    _dd_start_date = ""
+    _dd_start_portfolio = 0.0
+    _dd_bottom_date = ""
+    _dd_bottom_portfolio = 0.0
+    _dd_recovery_date = ""
+    _cur_dd_start_date = ""
+    _cur_dd_start_portfolio = 0.0
+    _in_drawdown = False
+    for row in combined_daily:
+        portfolio_value = _safe_float(row.get("portfolio_value"), 0.0)
+        date_str = str(row.get("date", ""))
+        if portfolio_value > running_peak:
+            if _in_drawdown and not _dd_recovery_date:
+                _dd_recovery_date = date_str
+            running_peak = portfolio_value
+            _in_drawdown = False
+        drawdown_pct = ((portfolio_value - running_peak) / running_peak) * 100 if running_peak else 0.0
+        if drawdown_pct < 0 and not _in_drawdown:
+            _in_drawdown = True
+            _cur_dd_start_date = date_str
+            _cur_dd_start_portfolio = running_peak
+        if drawdown_pct < max_drawdown:
+            max_drawdown = drawdown_pct
+            _dd_start_date = _cur_dd_start_date
+            _dd_start_portfolio = _cur_dd_start_portfolio
+            _dd_bottom_date = date_str
+            _dd_bottom_portfolio = portfolio_value
+            _dd_recovery_date = ""
+        combined_drawdown.append({
+            "date": date_str,
+            "drawdown_pct": round(drawdown_pct, 4),
+            "peak_value": round(running_peak, 2),
+            "bottom_value": round(portfolio_value, 2),
+            "drawdown_rupee": round(portfolio_value - running_peak, 2),
+        })
+
+    def _combine_period_rows(row_key: str, rows_key: str, start_key: str, end_key: str) -> list[dict[str, Any]]:
+        bucket_map: dict[str, dict[str, Any]] = {}
+        for report in reports:
+            for row in report.get(rows_key) or []:
+                bucket = str(row.get(row_key) or "").strip()
+                if not bucket:
+                    continue
+                current = bucket_map.setdefault(bucket, {
+                    row_key: bucket,
+                    "start_date": row.get("start_date") or "",
+                    "end_date": row.get("end_date") or "",
+                    "portfolio_start_value": 0.0,
+                    "portfolio_end_value": 0.0,
+                    "portfolio_return": 0.0,
+                    "pnl_rupee": 0.0,
+                })
+                current["start_date"] = min(
+                    [value for value in [str(current.get("start_date") or ""), str(row.get("start_date") or "")] if value]
+                ) if current.get("start_date") or row.get("start_date") else ""
+                current["end_date"] = max(
+                    [value for value in [str(current.get("end_date") or ""), str(row.get("end_date") or "")] if value]
+                ) if current.get("end_date") or row.get("end_date") else ""
+                current["portfolio_start_value"] += _safe_float(row.get(start_key), 0.0)
+                current["portfolio_end_value"] += _safe_float(row.get(end_key), 0.0)
+                current["portfolio_return"] += _safe_float(row.get("portfolio_return"), _safe_float(row.get("pnl_rupee"), 0.0))
+                current["pnl_rupee"] += _safe_float(row.get("pnl_rupee"), _safe_float(row.get("portfolio_return"), 0.0))
+
+        results: list[dict[str, Any]] = []
+        for bucket in sorted(bucket_map.keys()):
+            row = bucket_map[bucket]
+            start_val = _safe_float(row.get("portfolio_start_value"), 0.0)
+            end_val = _safe_float(row.get("portfolio_end_value"), 0.0)
+            pnl = end_val - start_val if not row.get("pnl_rupee") else _safe_float(row.get("pnl_rupee"), 0.0)
+            roi = (pnl / start_val) * 100 if start_val else 0.0
+            results.append({
+                row_key: bucket,
+                "start_date": row.get("start_date") or "",
+                "end_date": row.get("end_date") or "",
+                "portfolio_start_value": round(start_val, 2),
+                "portfolio_end_value": round(end_val, 2),
+                "portfolio_return": round(pnl, 2),
+                "pnl_rupee": round(pnl, 2),
+                "portfolio_roi": round(roi, 3),
+            })
+        return results
+
+    weekly_rows = _combine_period_rows("week", "weeklyRows", "portfolio_start_value", "portfolio_end_value")
+    monthly_final_rows = _combine_period_rows("month", "monthlyFinalRows", "portfolio_start_value", "portfolio_end_value")
+    yearly_rows = _combine_period_rows("year", "yearlyRows", "portfolio_start_value", "portfolio_end_value")
+
+    # Build monthly breakup as simple average of each strategy's displayed monthly ROI %
+    # Use monthlyBreakupRows (built from monthly_roi / Monthly_ROI_Pct) — same source as UI display
+    monthly_breakup_rows: list[dict[str, Any]] = []
+    strategy_monthly_roi_maps: list[dict[str, dict[int, float]]] = []
+    for report in reports:
+        yr_map: dict[str, dict[int, float]] = {}
+        for row in (report.get("monthlyBreakupRows") or []):
+            yr = str(row.get("year") or "")
+            if not yr:
+                continue
+            for month_idx, cell in enumerate(row.get("values") or [], start=1):
+                val_str = str(cell.get("value") or "").replace("%", "").strip()
+                if not val_str or val_str == "-":
+                    continue
+                try:
+                    yr_map.setdefault(yr, {})[month_idx] = float(val_str)
+                except ValueError:
+                    pass
+        strategy_monthly_roi_maps.append(yr_map)
+
+    all_years_set: set[str] = set()
+    for yr_map in strategy_monthly_roi_maps:
+        all_years_set.update(yr_map.keys())
+
+    strategy_names = [str(r.get("strategyName") or f"Strategy {i + 1}") for i, r in enumerate(reports)]
+
+    for year in sorted(all_years_set):
+        values = []
+        year_total = 0.0
+        for month in range(1, 13):
+            breakdown = [
+                {"name": strategy_names[i], "value": f"{yr_map[year][month]:.2f}%", "positive": yr_map[year][month] >= 0}
+                for i, yr_map in enumerate(strategy_monthly_roi_maps)
+                if year in yr_map and month in yr_map[year]
+            ]
+            if not breakdown:
+                values.append({"value": "-", "positive": None})
+            else:
+                month_rois = [float(b["value"].replace("%", "")) for b in breakdown]
+                avg_roi = sum(month_rois) / len(month_rois)
+                year_total += avg_roi
+                values.append({"value": f"{avg_roi:.2f}%", "positive": avg_roi >= 0, "breakdown": breakdown})
+        monthly_breakup_rows.append({
+            "year": year,
+            "values": values,
+            "total": f"{year_total:.2f}%",
+            "totalPositive": year_total >= 0,
+        })
+
+    invested_capital = sum(_safe_float(report.get("metrics", {}).get("invested_capital"), _safe_float(report.get("form", {}).get("starting_capital"), 0.0)) for report in reports)
+    final_capital = _safe_float(combined_daily[-1]["portfolio_value"], 0.0)
+    total_return = ((final_capital - invested_capital) / invested_capital) * 100 if invested_capital else 0.0
+    no_of_winners = int(sum(_safe_float(report.get("metrics", {}).get("no_of_winners"), 0.0) for report in reports))
+    no_of_losers = int(sum(_safe_float(report.get("metrics", {}).get("no_of_losers"), 0.0) for report in reports))
+    total_trades = int(sum(_safe_float(report.get("metrics", {}).get("total_trades"), 0.0) for report in reports)) or (no_of_winners + no_of_losers)
+    _winner_rois = [_safe_float(r.get("metrics", {}).get("avg_winners_roi_percent"), 0.0) for r in reports]
+    avg_winners_roi_percent = sum(_winner_rois) / len(_winner_rois) if _winner_rois else 0.0
+
+    _loser_rois = [_safe_float(r.get("metrics", {}).get("avg_losers_roi_percent"), 0.0) for r in reports]
+    avg_losers_roi_percent = sum(_loser_rois) / len(_loser_rois) if _loser_rois else 0.0
+    win_rate_percent = (no_of_winners / total_trades) * 100 if total_trades else 0.0
+    _rr_values = [_safe_float(r.get("metrics", {}).get("risk_reward"), 0.0) for r in reports]
+    risk_reward = sum(_rr_values) / len(_rr_values) if _rr_values else 0.0
+
+    def _metric_avg(key: str) -> float | None:
+        vals = [_safe_float(r.get("metrics", {}).get(key), None) for r in reports]
+        vals = [v for v in vals if v is not None]
+        return round(sum(vals) / len(vals), 4) if vals else None
+
+    kurtosis_monthly_roi = _metric_avg("kurtosis_monthly_roi")
+    kurtosis_trade_roi = _metric_avg("kurtosis_trade_roi")
+    std = _metric_avg("std")
+
+    _dd_duration_days = (
+        (pd.to_datetime(_dd_bottom_date) - pd.to_datetime(_dd_start_date)).days
+        if _dd_start_date and _dd_bottom_date else 0
+    )
+
+    start_date = pd.to_datetime(all_dates[0])
+    end_date = pd.to_datetime(all_dates[-1])
+    years_bt = max(1e-9, (end_date - start_date).days / 365)
+    cagr = (((final_capital / invested_capital) ** (1 / years_bt)) - 1) * 100 if invested_capital and final_capital > 0 else 0.0
+    avg_trades_per_year = total_trades / years_bt if years_bt else 0.0
+    calmar_ratio = (cagr / abs(max_drawdown)) if max_drawdown else 0.0
+
+    winner_source = max(reports, key=lambda report: _safe_float(report.get("metrics", {}).get("biggest_winner_roi_percent"), -1e9))
+    loser_source = min(reports, key=lambda report: _safe_float(report.get("metrics", {}).get("biggest_loser_roi_percent"), 1e9))
+
+    metrics = {
+        "invested_capital": round(invested_capital, 2),
+        "final_capital": round(final_capital, 2),
+        "total_return": round(total_return, 2),
+        "total_trades": total_trades,
+        "no_of_winners": no_of_winners,
+        "no_of_losers": no_of_losers,
+        "win_rate_percent": round(win_rate_percent, 3),
+        "avg_winners_roi_percent": round(avg_winners_roi_percent, 3),
+        "avg_losers_roi_percent": round(avg_losers_roi_percent, 3),
+        "biggest_winner_roi_percent": round(_safe_float(winner_source.get("metrics", {}).get("biggest_winner_roi_percent"), 0.0), 3),
+        "biggest_winner_stock": winner_source.get("metrics", {}).get("biggest_winner_stock"),
+        "biggest_winner_holding_days": int(_safe_float(winner_source.get("metrics", {}).get("biggest_winner_holding_days"), 0.0)),
+        "biggest_winner_holding_start_date": winner_source.get("metrics", {}).get("biggest_winner_holding_start_date"),
+        "biggest_winner_holding_end_date": winner_source.get("metrics", {}).get("biggest_winner_holding_end_date"),
+        "biggest_winner_holding_buy_price": winner_source.get("metrics", {}).get("biggest_winner_holding_buy_price"),
+        "biggest_winner_holding_sell_price": winner_source.get("metrics", {}).get("biggest_winner_holding_sell_price"),
+        "biggest_loser_roi_percent": round(_safe_float(loser_source.get("metrics", {}).get("biggest_loser_roi_percent"), 0.0), 3),
+        "biggest_loser_stock": loser_source.get("metrics", {}).get("biggest_loser_stock"),
+        "biggest_loser_holding_days": int(_safe_float(loser_source.get("metrics", {}).get("biggest_loser_holding_days"), 0.0)),
+        "biggest_loser_holding_start_date": loser_source.get("metrics", {}).get("biggest_loser_holding_start_date"),
+        "biggest_loser_holding_end_date": loser_source.get("metrics", {}).get("biggest_loser_holding_end_date"),
+        "biggest_loser_holding_buy_price": loser_source.get("metrics", {}).get("biggest_loser_holding_buy_price"),
+        "biggest_loser_holding_sell_price": loser_source.get("metrics", {}).get("biggest_loser_holding_sell_price"),
+        "risk_reward": round(risk_reward, 3),
+        "max_drawdown": round(abs(max_drawdown), 3),
+        "gagr": round(cagr, 3),
+        "avg_trades_per_year": round(avg_trades_per_year, 2),
+        "calmar_ratio": round(calmar_ratio, 3),
+        "drawdown_start_date": _dd_start_date or None,
+        "drawdown_start_portfolio": round(_dd_start_portfolio, 2) if _dd_start_portfolio else None,
+        "drawdown_bottom_date": _dd_bottom_date or None,
+        "drawdown_bottom_portfolio": round(_dd_bottom_portfolio, 2) if _dd_bottom_portfolio else None,
+        "drawdown_drop_percent": round(abs(max_drawdown), 3) if max_drawdown else None,
+        "drawdown_drop_amount": round(_dd_start_portfolio - _dd_bottom_portfolio, 2) if _dd_start_portfolio and _dd_bottom_portfolio else None,
+        "drawdown_duration_days": _dd_duration_days or None,
+        "drawdown_recovery_date": _dd_recovery_date or None,
+        **({"kurtosis_monthly_roi": kurtosis_monthly_roi} if kurtosis_monthly_roi is not None else {}),
+        **({"kurtosis_trade_roi": kurtosis_trade_roi} if kurtosis_trade_roi is not None else {}),
+        **({"std": std} if std is not None else {}),
+    }
+
+    combined_form = {
+        "strategy_name": "Combined Strategy",
+        "starting_capital": str(round(invested_capital, 2)),
+        "indexes": [report.get("strategyName") or report.get("form", {}).get("strategy_name") for report in reports],
+        "entry_rank": "",
+        "exit_rank": "",
+        "rebalance_frequency": "combined",
+        "alternative_rebalance_day": "",
+        "start_date": str(all_dates[0]),
+        "end_date": str(all_dates[-1]),
+        "regime_filter": "",
+        "regime_filter_action": "",
+        "regime_filter_indexes": "",
+        "uncorrelated_asset_type": "",
+        "uncorrelated_asset_allocation": "",
+        "position_sizing": "",
+        "formula": "",
+    }
+
+    # Build combined equity_curve_json by summing portfolio values across strategies.
+    # Each strategy's equity_curve_json has {date, portfolio, index} — sum portfolio,
+    # use index from first strategy that has a value (index values should be consistent).
+    equity_maps: list[dict[str, dict[str, Any]]] = []
+    for report in reports:
+        curve = report.get("equity_curve_json") or []
+        em: dict[str, dict[str, Any]] = {str(pt.get("date") or ""): pt for pt in curve if str(pt.get("date") or "")}
+        equity_maps.append(em)
+
+    combined_equity_curve: list[dict[str, Any]] = []
+    all_equity_dates = sorted({d for em in equity_maps for d in em.keys()})
+    for d in all_equity_dates:
+        portfolio_sum = 0.0
+        index_val = 0.0
+        for em in equity_maps:
+            pt = em.get(d)
+            if pt:
+                portfolio_sum += float(pt.get("portfolio") or 0)
+                if not index_val:
+                    index_val = float(pt.get("index") or 0)
+        combined_equity_curve.append({
+            "date": d,
+            "portfolio": round(portfolio_sum, 2),
+            "index": round(index_val, 2),
+        })
+
+    # Build combined monthly_roi using the same month set as individual reports.
+    # monthly_roi items have: {month, Monthly_ROI_Pct, MonthPnL, Capital_Base, CumBeforeMonth}
+    # We use Capital_Base (start value) and MonthPnL (pnl) directly — NOT monthlyFinalRows —
+    # because monthlyFinalRows uses calendar-month periods while monthly_roi uses rebalancing periods.
+    roi_maps: list[dict[str, dict[str, Any]]] = []
+    for report in reports:
+        rm: dict[str, dict[str, Any]] = {}
+        for item in (report.get("monthly_roi") or []):
+            month_key = str(item.get("month") or "").strip()
+            if month_key:
+                rm[month_key] = item
+        roi_maps.append(rm)
+
+    all_roi_months = sorted({m for rm in roi_maps for m in rm.keys()})
+    combined_monthly_roi: list[dict[str, Any]] = []
+    for month in all_roi_months:
+        total_start_val = 0.0
+        total_pnl = 0.0
+        present_items: list[dict[str, Any]] = []
+
+        for i in range(len(reports)):
+            roi_item = roi_maps[i].get(month)
+            if roi_item is None:
+                continue
+            present_items.append(roi_item)
+            capital_base = _safe_float(roi_item.get("Capital_Base"), 0.0)
+            month_pnl = _safe_float(roi_item.get("MonthPnL"), 0.0)
+            total_start_val += capital_base
+            total_pnl += month_pnl
+
+        if not present_items:
+            continue
+
+        total_end_val = total_start_val + total_pnl
+        combined_roi = (total_pnl / total_start_val * 100) if total_start_val else 0.0
+        cum_before = sum(_safe_float(item.get("CumBeforeMonth"), 0.0) for item in present_items)
+
+        entry: dict[str, Any] = {
+            "month": month,
+            "Monthly_ROI_Pct": round(combined_roi, 4),
+            "MonthPnL": round(total_pnl, 2),
+            "CumBeforeMonth": round(cum_before, 2),
+            "Capital_Base": round(total_start_val, 2),
+        }
+        if total_start_val:
+            entry["Start_Value"] = round(total_start_val, 2)
+            entry["End_Value"] = round(total_end_val, 2)
+        combined_monthly_roi.append(entry)
+
+    return {
+        "id": "combined-report",
+        "strategyName": "Combined Strategy",
+        "fileName": ", ".join(str(report.get("fileName") or "") for report in reports),
+        "form": combined_form,
+        "metrics": metrics,
+        "monthlyBreakupRows": monthly_breakup_rows,
+        "localDailyRows": combined_daily,
+        "weeklyRows": weekly_rows,
+        "monthlyFinalRows": monthly_final_rows,
+        "yearlyRows": yearly_rows,
+        "dailyDrawdownRows": combined_drawdown,
+        "monthly_roi": [],
+        "equity_curve_json": combined_equity_curve,
+    }
+
+
+def _build_monthly_breakup_from_monthly_roi(monthly_roi: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    year_months: dict[str, dict[int, float]] = {}
+    for item in monthly_roi:
+        month_str = str(item.get("month", ""))
+        if len(month_str) < 7:
+            continue
+        year = month_str[:4]
+        try:
+            month = int(month_str[5:7])
+        except (ValueError, IndexError):
+            continue
+        roi = float(item.get("Monthly_ROI_Pct", 0) or 0)
+        year_months.setdefault(year, {})[month] = roi
+
+    rows: list[dict[str, Any]] = []
+    for year in sorted(year_months.keys()):
+        months = year_months[year]
+        values: list[dict[str, Any]] = []
+        year_total = 0.0
+        has_any = False
+        for m in range(1, 13):
+            if m in months:
+                roi = months[m]
+                year_total += roi
+                has_any = True
+                values.append({"value": f"{roi:.2f}%", "positive": roi >= 0})
+            else:
+                values.append({"value": "-", "positive": None})
+        total_str = f"{year_total:.2f}%" if has_any else "-"
+        rows.append({
+            "year": year,
+            "values": values,
+            "total": total_str,
+            "totalPositive": None if not has_any else year_total >= 0,
+        })
+    return rows
+
+
+def _backtest_result_to_report(
+    result: dict[str, Any],
+    payload: dict[str, Any],
+    strategy_name: str,
+    report_id: str,
+    file_name: str = "",
+) -> dict[str, Any]:
+    """Map run_scanner_backtest() result → ParsedStrategyReport dict (shared by rerun and multi-payload paths)."""
+    import numpy as np
+    import pandas as pd
+
+    backtest_metrics: dict[str, Any] = dict(result.get("metrics") or {})
+    daily_json: list[dict[str, Any]] = list(result.get("daily_json") or [])
+    weekly_json: list[dict[str, Any]] = list(result.get("weekly_json") or [])
+    monthly_final_json: list[dict[str, Any]] = list(result.get("monthly_final_json") or [])
+    yearly_final_json: list[dict[str, Any]] = list(result.get("yearly_final_json") or [])
+    daily_drawdown_json: list[dict[str, Any]] = list(result.get("daily_drawdown_json") or [])
+    monthly_roi: list[dict[str, Any]] = list(result.get("monthly_roi") or [])
+    equity_curve_json: list[dict[str, Any]] = list(result.get("equity_curve_json") or [])
+    trade_history: list[dict[str, Any]] = list(result.get("trade_history") or [])
+    closed_trades_json: list[dict[str, Any]] = list(result.get("closed_trades_json") or [])
+    monthly_closed_json: list[dict[str, Any]] = list(result.get("monthly_closed_json") or [])
+    monthly_equity_json: list[dict[str, Any]] = list(result.get("monthly_equity_json") or [])
+
+    date_to_index: dict[str, float] = {}
+    try:
+        from scanner.backtest_engine import load_index_daily as _load_idx
+        start_dt = datetime.strptime(str(payload["start_date"]), "%Y-%m-%d")
+        end_dt = datetime.strptime(str(payload["end_date"]), "%Y-%m-%d")
+        df_idx = _load_idx(str(payload.get("regime_filter_indexes", "nifty_500")), start_dt, end_dt)
+        if "i_close_price" in df_idx.columns:
+            _col: str | None = "i_close_price"
+        elif "ch_closing_price" in df_idx.columns:
+            _col = "ch_closing_price"
+        else:
+            _numeric_cols = df_idx.select_dtypes(include=[np.number]).columns
+            _col = str(_numeric_cols[0]) if len(_numeric_cols) else None
+        if _col and not df_idx.empty:
+            date_to_index = {
+                str(pd.Timestamp(d).date()): round(float(p), 2)
+                for d, p in zip(df_idx.index, df_idx[_col])
+            }
+    except Exception:
+        pass
+
+    local_daily_rows: list[dict[str, Any]] = []
+    prev_idx_val = 0.0
+    for row in daily_json:
+        date_str = str(row.get("date", ""))
+        portfolio_value = float(row.get("portfolio_end_value", 0) or 0)
+        daily_pnl = float(row.get("pnl_rupee", 0) or 0)
+        daily_roi = float(row.get("portfolio_roi", 0) or 0)
+        idx_val = date_to_index.get(date_str, prev_idx_val)
+        idx_daily_pnl = round(idx_val - prev_idx_val, 2) if prev_idx_val and idx_val else 0.0
+        local_daily_rows.append({
+            "date": date_str,
+            "portfolio_value": portfolio_value,
+            "daily_pnl": round(daily_pnl, 2),
+            "daily_roi": round(daily_roi, 4),
+            "index_value": idx_val,
+            "index_daily_pnl": idx_daily_pnl,
+        })
+        if idx_val:
+            prev_idx_val = idx_val
+
+    form: dict[str, Any] = {
+        "strategy_name": str(payload.get("strategy_name", strategy_name)),
+        "starting_capital": str(int(float(payload.get("starting_capital", 300000)))),
+        "indexes": list(payload.get("indexes", [])),
+        "entry_rank": str(payload.get("entry_rank", "")),
+        "exit_rank": str(payload.get("exit_rank", "")),
+        "rebalance_frequency": str(payload.get("rebalance_frequency", "")),
+        "rebalance_date": str(payload.get("rebalance_date", "")),
+        "alternative_rebalance_day": str(payload.get("alternative_rebalance_day", "")),
+        "start_date": str(payload.get("start_date", "")),
+        "end_date": str(payload.get("end_date", "")),
+        "regime_filter": str(payload.get("regime_filter", "")),
+        "regime_filter_action": str(payload.get("regime_filter_action", "")),
+        "regime_filter_indexes": str(payload.get("regime_filter_indexes", "")),
+        "uncorrelated_asset_type": str(payload.get("uncorrelated_asset_type", "")),
+        "uncorrelated_asset_allocation": str(payload.get("uncorrelated_asset_allocation", "")),
+        "position_sizing": str(payload.get("position_sizing", "")),
+        "formula": str(payload.get("formula", "")),
+        "stock_price_min": str(payload.get("stock_price_min", payload.get("min_price", 0) or 0)),
+        "stock_price_max": str(payload.get("stock_price_max", payload.get("max_price", 0) or 0)),
+    }
+
+    return {
+        "id": report_id,
+        "strategyName": strategy_name,
+        "fileName": file_name,
+        "form": form,
+        "metrics": backtest_metrics,
+        "monthlyBreakupRows": _build_monthly_breakup_from_monthly_roi(monthly_roi),
+        "localDailyRows": local_daily_rows,
+        "weeklyRows": weekly_json,
+        "monthlyFinalRows": monthly_final_json,
+        "yearlyRows": yearly_final_json,
+        "dailyDrawdownRows": [
+            {
+                "date": str(r.get("date", "")),
+                "drawdown_pct": float(r.get("drawdown_pct", 0) or 0),
+                "peak_value": float(r.get("peak_value", 0) or 0),
+                "bottom_value": float(r.get("portfolio_value", r.get("bottom_value", 0)) or 0),
+                "drawdown_rupee": float(r.get("drawdown_rupee", 0) or 0),
+            }
+            for r in daily_drawdown_json
+        ],
+        "equity_curve_json": equity_curve_json,
+        "monthly_roi": monthly_roi,
+        "trade_history": trade_history,
+        "closed_trades_json": closed_trades_json,
+        "monthly_closed_json": monthly_closed_json,
+        "monthly_equity_json": monthly_equity_json,
+        "daily_json": daily_json,
+    }
+
+
+def run_multi_backtest_from_payloads(strategies: list[dict[str, Any]]) -> dict[str, Any]:
+    """Run run_scanner_backtest for each strategy payload — same path as /run_backtest but batched."""
+    started_at = time.perf_counter()
+    reports: list[dict[str, Any]] = []
+
+    for index, item in enumerate(strategies, start=1):
+        payload = dict(item)
+        strategy_name = str(payload.pop("_strategy_name", payload.get("strategy_name", f"Strategy {index}"))).strip() or f"Strategy {index}"
+        # align min/max price field names for run_scanner_backtest (0 = no filter → None)
+        if payload.get("min_price") is None and payload.get("stock_price_min"):
+            payload["min_price"] = payload["stock_price_min"]
+        if payload.get("max_price") is None and payload.get("stock_price_max"):
+            payload["max_price"] = payload["stock_price_max"]
+
+        result = run_scanner_backtest(payload)
+        reports.append(_backtest_result_to_report(
+            result=result,
+            payload=payload,
+            strategy_name=strategy_name,
+            report_id=f"multi-{index}",
+        ))
+
+    combined_report = _build_combined_multi_strategy_report(reports) if len(reports) > 1 else None
+    elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+
+    return {
+        "status": "success",
+        "strategy_count": len(reports),
+        "processing_ms": elapsed_ms,
+        "reports": reports,
+        "combined_report": combined_report,
+    }
+
+
+def run_backtest_from_file_inputs(files: list[dict[str, Any]]) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    reports: list[dict[str, Any]] = []
+
+    for file_index, item in enumerate(files, start=1):
+        file_bytes = item.get("content") or b""
+        file_name = str(item.get("file_name") or f"strategy_{file_index}.xls")
+        strategy_name = str(item.get("strategy_name") or f"Strategy {file_index}").strip() or f"Strategy {file_index}"
+
+        if not file_bytes:
+            raise ValueError(f"Upload file missing for {strategy_name}.")
+
+        try:
+            sheet_map = _sheet_rows_from_xml(file_bytes)
+        except Exception as exc:
+            raise ValueError(f"{file_name} could not be parsed as XML.") from exc
+
+        inputs_rows = sheet_map.get("Inputs", [])
+        if not inputs_rows:
+            raise ValueError(f"{file_name} is missing the Inputs sheet.")
+
+        input_map: dict[str, str] = {
+            str(row[0]).strip(): str(row[1]).strip() if len(row) > 1 else ""
+            for row in inputs_rows
+            if row and str(row[0]).strip()
+        }
+
+        def _int_input(key: str, default: int) -> int:
+            try:
+                return int(float(input_map.get(key, str(default)) or str(default)))
+            except (ValueError, TypeError):
+                return default
+
+        def _float_input(key: str, default: float) -> float:
+            try:
+                return float(input_map.get(key, str(default)) or str(default))
+            except (ValueError, TypeError):
+                return default
+
+        payload: dict[str, Any] = {
+            "strategy_name": input_map.get("Strategy Name", strategy_name),
+            "starting_capital": _float_input("Starting Capital", 300000.0),
+            "indexes": [p.strip() for p in input_map.get("Universe", "nifty_50").split(",") if p.strip()],
+            "entry_rank": _int_input("No Of Stocks in Portfolio", 12),
+            "exit_rank": _int_input("Exit Rank", 25),
+            "min_price": _float_input("Min Price", 0.0) or None,
+            "max_price": _float_input("Max Price", 0.0) or None,
+            "rebalance_frequency": input_map.get("Rebalance Frequency", "monthly"),
+            "rebalance_date": _int_input("Rebalance Date", 10),
+            "alternative_rebalance_day": input_map.get("Alternate Rebalance Day", "next_day"),
+            "start_date": input_map.get("Start Date", "2019-01-01"),
+            "end_date": input_map.get("End Date", "2026-01-01"),
+            "regime_filter": input_map.get("Regime Filter", "supertrend_1_2_5"),
+            "regime_filter_action": input_map.get("Regime Filter Action", "go_cash"),
+            "regime_filter_indexes": input_map.get("Regime Filter Index", "nifty_500"),
+            "uncorrelated_asset_type": input_map.get("Asset Type", "gold_bees"),
+            "uncorrelated_asset_allocation": _int_input("Asset Alloc", 100),
+            "position_sizing": input_map.get("Position Sizing", "equal_weight"),
+            "formula": input_map.get("Formula", DEFAULT_FORMULA),
+            "regime_filter_status": True,
+            "uncorrelated_asset_status": True,
+        }
+
+        result = run_scanner_backtest(payload)
+        reports.append(_backtest_result_to_report(
+            result=result,
+            payload=payload,
+            strategy_name=strategy_name,
+            report_id=f"backtest-{file_index}",
+            file_name=file_name,
+        ))
+
+    combined_report = _build_combined_multi_strategy_report(reports) if len(reports) > 1 else None
+    elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+
+    return {
+        "status": "success",
+        "strategy_count": len(reports),
+        "processing_ms": elapsed_ms,
+        "reports": reports,
+        "combined_report": combined_report,
+    }
+
+
+def get_equity_quotes(tokens: list[str]) -> dict[str, dict]:
+    """
+    Fetch live LTP for NSE equity (spot) tokens.
+    Returns {token: {"token": token, "ltp": float, "source": str}}.
+    Supports both Dhan (NSE_EQ segment) and Kite brokers.
+    """
+    tokens = [str(t).strip() for t in tokens if str(t).strip()]
+    if not tokens:
+        return {}
+
+    db = MongoData()
+    try:
+        raw_db = db._db
+        cfg = raw_db["kite_market_config"].find_one({"enabled": True}) or {}
+        broker = str(cfg.get("broker") or "kite").strip().lower()
+
+        if broker == "dhan":
+            dhan_cfg = raw_db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
+            access_token = str(dhan_cfg.get("access_token") or "").strip()
+            client_id = str(dhan_cfg.get("user_id") or dhan_cfg.get("dhan_client_id") or "").strip()
+            if not access_token:
+                return {}
+
+            import requests as _req
+
+            int_tokens = [int(t) for t in tokens if t.lstrip("-").isdigit()]
+            if not int_tokens:
+                return {}
+
+            headers = {
+                "access-token": access_token,
+                "client-id": client_id,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            try:
+                r = _req.post(
+                    "https://api.dhan.co/v2/marketfeed/ltp",
+                    headers=headers,
+                    json={"NSE_EQ": int_tokens},
+                    timeout=4,
+                )
+                raw = r.json() if r.ok else {}
+            except Exception:
+                raw = {}
+
+            eq_data = (raw.get("data") or {}).get("NSE_EQ") or raw.get("NSE_EQ") or {}
+            result: dict[str, dict] = {}
+            for sid, v in eq_data.items():
+                tok = str(sid).strip()
+                ltp = float(v.get("last_price") or v.get("ltp") or v.get("lastTradedPrice") or 0) if isinstance(v, dict) else float(v or 0)
+                if ltp > 0:
+                    result[tok] = {"token": tok, "ltp": round(ltp, 2), "source": "dhan_eq"}
+            return result
+
+        else:
+            # Kite broker — use REST quote API
+            from features.broker_gateway import get_broker_rest_client_with_token as _get_kite
+            from features.kite_connect_helper import get_common_credentials, is_configured
+            if not is_configured():
+                return {}
+            api_key, access_token = get_common_credentials()
+            if not api_key or not access_token:
+                return {}
+            kite = _get_kite(access_token)
+            int_tokens = [int(t) for t in tokens if t.lstrip("-").isdigit()]
+            if not int_tokens:
+                return {}
+            try:
+                quote_docs = kite.quote(int_tokens) or {}
+            except Exception:
+                return {}
+            result = {}
+            for _, doc in quote_docs.items():
+                tok = str(doc.get("instrument_token") or "").strip()
+                ltp = float((doc.get("last_price") or doc.get("last_trade_price") or 0))
+                if tok and ltp > 0:
+                    result[tok] = {"token": tok, "ltp": round(ltp, 2), "source": "kite_eq"}
+            return result
+    finally:
+        db.close()

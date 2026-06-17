@@ -113,6 +113,9 @@ def _resolve_ft_symbol(symbol: str, exchange: str) -> str:
     if not symbol:
         return symbol
     try:
+        from features.broker_gateway import _active_broker  # type: ignore
+        if _active_broker() != 'flattrade':
+            return symbol
         from features.flattrade_broker import _to_flattrade_symbol  # type: ignore
         return _to_flattrade_symbol(symbol, exchange) or symbol
     except Exception:

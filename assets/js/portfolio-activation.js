@@ -1912,6 +1912,8 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
             trade.executed_strategy_id = prepared.assigned_strategy_id;
             trade.strategy_id = prepared.assigned_strategy_id;
             trade.number_of_executions = prepared.number_of_executions;
+            trade.trade_portfolio_id = prepared.trade_portfolio_id || '';
+            trade.trade_index = prepared.trade_index || trade.ticker || '';
         });
         return trades;
     }
@@ -2010,17 +2012,25 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
                 });
             }).then(function (data) {
                 var records = Array.isArray(data && data.records) ? data.records : payload;
-                var groupId = String(
-                    (data && data.group_id)
-                    || ((((records[0] || {}).portfolio || {}).group_id) || '')
-                ).trim();
-                if (!groupId) {
+                var groupIds = Array.isArray(data && data.group_ids)
+                    ? data.group_ids.map(function (item) { return String(item || '').trim(); }).filter(Boolean)
+                    : [];
+                if (!groupIds.length) {
+                    var fallbackGroupId = String(
+                        (data && data.group_id)
+                        || ((((records[0] || {}).portfolio || {}).group_id) || '')
+                    ).trim();
+                    if (fallbackGroupId) {
+                        groupIds = [fallbackGroupId];
+                    }
+                }
+                if (!groupIds.length) {
                     throw new Error('Activated group_id was not returned');
                 }
                 console.log('Initial live execution payload stored', {
                     activation_mode: activationMode,
                     collection_name: data && data.collection_name,
-                    group_id: groupId,
+                    group_ids: groupIds,
                     records: records
                 });
                 console.table(records.map(function (item) {
@@ -2036,24 +2046,31 @@ function getPortfolioActivationApiUrl(routeName, suffix) {
                         legs_count: Array.isArray(item.legs) ? item.legs.length : 0
                     };
                 }));
-                return fetch(
-                    getPortfolioActivationApiUrl('portfolioStartGroup', encodeURIComponent(groupId))
-                    + '?activation_mode=' + encodeURIComponent(activationMode)
-                )
-                    .then(function (startResponse) {
-                        return startResponse.json().catch(function () {
-                            return {};
-                        }).then(function (startData) {
-                            if (!startResponse.ok) {
-                                throw new Error(startData.detail || 'Failed to start activated group');
-                            }
-                            return {
-                                records: records,
-                                groupId: groupId,
-                                startData: startData
-                            };
+                return Promise.all(groupIds.map(function (groupId) {
+                    return fetch(
+                        getPortfolioActivationApiUrl('portfolioStartGroup', encodeURIComponent(groupId))
+                        + '?activation_mode=' + encodeURIComponent(activationMode)
+                    )
+                        .then(function (startResponse) {
+                            return startResponse.json().catch(function () {
+                                return {};
+                            }).then(function (startData) {
+                                if (!startResponse.ok) {
+                                    throw new Error(startData.detail || 'Failed to start activated group');
+                                }
+                                return {
+                                    groupId: groupId,
+                                    startData: startData
+                                };
+                            });
                         });
-                    });
+                })).then(function (startResults) {
+                    return {
+                        records: records,
+                        groupIds: groupIds,
+                        startResults: startResults
+                    };
+                });
             }).then(function (result) {
                 var records = result.records || [];
                 window._latestLiveExecutionPayload = records;

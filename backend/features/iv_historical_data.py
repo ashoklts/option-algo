@@ -46,8 +46,7 @@ def _parse_candle(candle: str) -> tuple[str, str]:
 
 
 def _init_kite():
-    from features.kite_broker_ws import get_common_credentials, is_configured, load_credentials_from_db
-    from features.kite_broker import get_kite_instance
+    from features.broker_gateway import get_broker_credentials as get_common_credentials, broker_is_configured as is_configured, load_broker_credentials_from_db as load_credentials_from_db, get_broker_rest_client_with_token as get_kite_instance
     from features.mongo_data import MongoData
 
     if not is_configured():

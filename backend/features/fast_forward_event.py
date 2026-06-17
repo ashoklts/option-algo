@@ -135,7 +135,9 @@ def _subscribe_option_token(token: str, symbol: str = '') -> None:
             if symbol:
                 ticker_manager.register_option_token(normalized_token, symbol)
             return
-        subscribe_token = int(normalized_token)
+        # Strip exchange prefix if present: "NSE_54808" → 54808
+        numeric_part = normalized_token.split('_', 1)[-1] if '_' in normalized_token else normalized_token
+        subscribe_token = int(numeric_part)
         ticker_manager._ticker.subscribe([subscribe_token])
         ticker_manager._ticker.set_mode(ticker_manager._ticker.MODE_LTP, [subscribe_token])
         ticker_manager.register_option_token(normalized_token, symbol)
@@ -290,7 +292,13 @@ def get_fast_forward_quote_spot_price(db, trade: dict, underlying: str) -> tuple
     if not instrument or not should_use_fast_forward_quote(trade):
         return 0.0, instrument
     try:
-        from features.kite_broker import get_kite_instance
+        from features.broker_gateway import _active_broker  # type: ignore
+        if _active_broker() == 'dhan':
+            return 0.0, instrument  # Dhan spot comes from WebSocket, not Kite quote
+    except Exception:
+        pass
+    try:
+        from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance  # type: ignore
 
         access_token = _get_quote_access_token(db, trade)
         if not access_token:
@@ -411,6 +419,13 @@ def resolve_fast_forward_pending_entry_snapshot(
 
 
 def _get_fast_forward_quote_price(db, trade: dict, symbol: str) -> float:
+    try:
+        from features.broker_gateway import _active_broker  # type: ignore
+        if _active_broker() == 'dhan':
+            return 0.0  # Dhan quote via socket/REST — handled by _wait_for_socket_entry_ltp
+    except Exception:
+        pass
+
     instrument = _build_kite_quote_instrument(
         symbol,
         str((trade.get('config') or {}).get('Ticker') or trade.get('ticker') or ''),
@@ -418,7 +433,7 @@ def _get_fast_forward_quote_price(db, trade: dict, symbol: str) -> float:
     if not instrument:
         return 0.0
     try:
-        from features.kite_broker import get_kite_instance
+        from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance  # type: ignore
 
         broker_id = str(trade.get('broker') or '').strip()
         access_token = ''
@@ -541,7 +556,9 @@ def resolve_fast_forward_entry_execution_payload(
 
     # Fast path: contract already fully resolved → skip DB scan and resolve
     # entry price from quote first, then historical fast-forward chain fallback.
-    if underlying and leg_token and leg_token.isdigit() and leg_strike not in (None, '') and leg_expiry:
+    # Accept both plain numeric ("54808") and exchange-prefixed ("NSE_54808") tokens.
+    _leg_numeric = leg_token.split('_', 1)[-1] if '_' in leg_token else leg_token
+    if underlying and leg_token and _leg_numeric.isdigit() and leg_strike not in (None, '') and leg_expiry:
         try:
             from features.live_monitor_socket import _get_active_ticker_manager
             _tm_ff = _get_active_ticker_manager()

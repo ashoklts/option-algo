@@ -96,14 +96,15 @@ _SPAN_SCENARIOS: List[Tuple[float, float, float]] = [
 # Calibrated from live Kite margin data (Apr 2026, VIX ~18%):
 #   NIFTY CE SELL 24000, spot~24058, T=5d → Kite SPAN 1,47,329 → PSR ≈ 10.0%
 PSR_PCT: Dict[str, float] = {
-    "NIFTY":      0.100,   # 10.0%  (calibrated from live Kite data)
-    "BANKNIFTY":  0.105,   # 10.5%
-    "FINNIFTY":   0.105,   # 10.5%
-    "MIDCPNIFTY": 0.120,   # 12.0%
-    "SENSEX":     0.100,
-    "BANKEX":     0.105,
+    # NSE Clearing official (6σ×√2 capped): all index derivatives = 9.3%
+    "NIFTY":      0.093,
+    "BANKNIFTY":  0.093,
+    "FINNIFTY":   0.093,
+    "MIDCPNIFTY": 0.093,
+    "SENSEX":     0.093,
+    "BANKEX":     0.093,
 }
-PSR_PCT_DEFAULT = 0.105   # for stock F&O
+PSR_PCT_DEFAULT = 0.142   # stock F&O: NSE cap = 14.2%
 
 # VSR = Volatility Scan Range — absolute vol shift applied to implied vol.
 # NSE typically uses 4% absolute shift (e.g., IV goes from 16% to 20%).
@@ -377,16 +378,16 @@ def _scenario_pnl_for_position(pos: SpanPosition) -> List[float]:
     spot  = pos.effective_spot()
     T     = pos.time_to_expiry_years()
     r     = RISK_FREE_RATE
-    sq    = pos.signed_qty     # +ve = long, -ve = short
-    qty   = pos.total_qty      # actual shares (lots × lot_size)
+    # signed_qty = ±lots; lot_size = shares per lot → product = ±total_shares (correct scale)
+    net_qty = pos.signed_qty * pos.lot_size
 
     if pos.is_futures:
         # Futures P&L is linear in price move — no need for Black-Scholes
         results = []
         for price_frac, _vol_frac, weight in _SPAN_SCENARIOS:
             price_move = price_frac * psr
-            # P&L for long future = price_move per unit × quantity
-            scenario_pnl = price_move * qty * sq * weight
+            # P&L for long future = price_move per unit × net_qty
+            scenario_pnl = price_move * net_qty * weight
             results.append(scenario_pnl)
         return results
 
@@ -413,8 +414,8 @@ def _scenario_pnl_for_position(pos: SpanPosition) -> List[float]:
         # Price of option under this scenario
         scenario_price = bs_price(stressed_spot, K, T, r, stressed_vol, otype)
 
-        # P&L = (scenario_price − current_price) × total_qty × direction × weight
-        pnl = (scenario_price - current_price) * qty * sq * weight
+        # P&L = (scenario_price − current_price) × net_qty × weight
+        pnl = (scenario_price - current_price) * net_qty * weight
         results.append(pnl)
 
     return results
@@ -553,9 +554,14 @@ def calculate_margin(
         futs       = [i for i, p in enumerate(legs) if p.is_futures]
 
         # ── Step 1: Match spreads ─────────────────────────────────────────────
+        from features.span_file import get_params as _span_file_params
+
         def _match_spreads(short_idxs, long_idxs, is_call):
             """
             Match each short option with a hedging long.
+            - Same expiry (vertical spread): span = min(standalone, spread_width × qty)
+            - Different expiry (calendar spread): span = inter_month_charge × lots
+              (same-strike calendar gives spread_width=0 → wrong if not handled)
             Returns (spread_span, matched_short_idxs, matched_long_idxs).
             """
             matched_shorts, matched_longs = set(), set()
@@ -573,11 +579,20 @@ def calculate_margin(
                         continue
                     if lpos.quantity < spos.quantity:
                         continue
-                    # Width of spread
-                    width = abs(lpos.strike - spos.strike)
-                    spread_max_loss = width * spos.total_qty
-                    spread_span = min(leg_spans[si], spread_max_loss)
-                    spread_span_total += spread_span
+
+                    same_expiry = (str(spos.expiry).strip() == str(lpos.expiry).strip())
+                    if same_expiry:
+                        # Vertical spread: capped by max spread loss at expiry
+                        width = abs(lpos.strike - spos.strike)
+                        spread_span_total += min(leg_spans[si], width * spos.total_qty)
+                    else:
+                        # Calendar spread charge = inter_month_pct × far-month underlying value
+                        # NSE official: "1.75% of the far month contract" = 1.75% × spot × lot_size × lots
+                        fp   = _span_file_params(spos.underlying)
+                        pct  = float(fp.get("inter_month_pct") or 0.0175)
+                        spot = lpos.spot if lpos.spot > 0 else spos.spot
+                        spread_span_total += pct * spot * spos.total_qty
+
                     matched_shorts.add(si)
                     matched_longs.add(li)
                     break

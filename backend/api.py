@@ -38,8 +38,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from bson import ObjectId
-from fastapi import FastAPI, HTTPException, APIRouter, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, APIRouter, Query, Request, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -47,14 +47,14 @@ from features.backtest_engine import run_backtest
 from features.portfolio_worker import strategy_worker
 from features.mongo_data     import MongoData
 from features.expiry_config  import seed_expiry_config
-from features.kite_broker import (
-    get_login_url,
-    generate_session,
-    get_kite_instance,
-    save_kite_session,
-    get_stored_access_token,
+from features.broker_gateway import (
+    broker_get_login_url            as get_login_url,
+    broker_generate_session         as generate_session,
+    get_broker_rest_client_with_token as get_kite_instance,
+    save_broker_session             as save_kite_session,
+    get_stored_broker_access_token  as get_stored_access_token,
+    broker_ticker_manager           as ticker_manager,
 )
-from features.kite_ticker import ticker_manager
 from features.mock_ticker import mock_ticker_manager
 from simulator.models import MiniStrangleRequest
 from simulator.monitor_service import get_simulator_monitor_service
@@ -70,15 +70,17 @@ from simulator.streaming_controller import StreamingController
 from simulator.zerodha_broker import ZerodhaBroker as SimulatorZerodhaBroker
 from simulator.api_server import router as simulator_router
 from scanner.router import router as scanner_router
-from features.spot_atm_utils import (
-    _load_kite_instruments,
-    KITE_INDEX_TOKENS,
-    fetch_kite_quotes_for_expiry,
-    get_cached_spot_doc,
-    get_kite_expiries,
-    get_kite_chain_doc,
-    list_kite_option_contracts,
+from features.broker_gateway import (
+    load_broker_instruments         as _load_kite_instruments,
+    BROKER_INDEX_TOKENS             as KITE_INDEX_TOKENS,
+    get_broker_expiries             as get_kite_expiries,
+    list_broker_option_contracts    as list_kite_option_contracts,
+    get_broker_credentials          as get_common_credentials,
+    get_broker_ltp_map              as get_ltp_map,
+    broker_is_configured            as is_configured,
+    load_broker_credentials_from_db as load_credentials_from_db,
 )
+from features.spot_atm_utils import get_cached_spot_doc
 from features.execution_socket import (
     broadcast_backtest_simulation_step,
     emit_broker_settings_for_user,
@@ -92,12 +94,6 @@ from features.live_fast_monitor import live_fast_monitor_supervisor
 from features.live_monitor_socket import live_monitor_loop
 from features import live_entry_monitor
 from features.mock_kite_socket import mock_kite_socket_router
-from features.kite_broker_ws import (
-    get_common_credentials,
-    get_ltp_map,
-    is_configured,
-    load_credentials_from_db,
-)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -605,7 +601,10 @@ def _load_activation_portfolio_doc(db: MongoData, portfolio_id: str):
     if source_doc:
         return "source", portfolio_oid, source_doc
 
-    daily_doc = db._db[ALGO_TRADE_PORTFOLIO_COLLECTION].find_one({"_id": portfolio_oid}, {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1})
+    daily_doc = db._db[ALGO_TRADE_PORTFOLIO_COLLECTION].find_one(
+        {"_id": portfolio_oid},
+        {"_id": 1, "trade_portfolio": 1, "trade_group_portfolio": 1, "trade_index": 1, "trade_date": 1, "activation_mode": 1},
+    )
     if daily_doc:
         return "daily", portfolio_oid, daily_doc
 
@@ -620,17 +619,57 @@ def _get_source_portfolio_id_from_doc(portfolio_kind: str, portfolio_oid, portfo
     return str(portfolio_oid)
 
 
+def _load_source_portfolio_root(db: MongoData, portfolio_kind: str, portfolio_oid, portfolio_doc: dict):
+    if portfolio_kind == "source":
+        return portfolio_oid, portfolio_doc or {}
+
+    source_portfolio_id = str((portfolio_doc or {}).get("source_portfolio_id") or "").strip()
+    if source_portfolio_id:
+        try:
+            source_oid = ObjectId(source_portfolio_id)
+            source_doc = db._db["saved_portfolios"].find_one({"_id": source_oid}, {"_id": 1, "name": 1}) or {}
+            return source_oid, source_doc
+        except Exception:
+            pass
+    return portfolio_oid, {"_id": portfolio_oid, "name": str((portfolio_doc or {}).get("source_portfolio_name") or (portfolio_doc or {}).get("name") or "").strip()}
+
+
+def _normalize_trade_index(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _extract_trade_index(*candidates: Any) -> str:
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            nested_value = _extract_trade_index(
+                candidate.get("trade_index"),
+                candidate.get("ticker"),
+                candidate.get("underlying"),
+                ((candidate.get("config") or {}) if isinstance(candidate.get("config"), dict) else {}).get("Ticker"),
+                ((candidate.get("strategy_detail") or {}) if isinstance(candidate.get("strategy_detail"), dict) else {}).get("underlying"),
+                ((candidate.get("strategy") or {}) if isinstance(candidate.get("strategy"), dict) else {}).get("Ticker"),
+            )
+            if nested_value:
+                return nested_value
+            continue
+        normalized = _normalize_trade_index(candidate)
+        if normalized:
+            return normalized
+    return "NIFTY"
+
+
 def _resolve_daily_portfolio(
     db: MongoData,
     source_portfolio_oid,
     source_portfolio_doc: dict,
     activation_mode: str = "",
     trade_date_hint: str = "",
+    trade_index: str = "",
 ):
     """Find or create a daily runtime portfolio in algo_trade_portfolio.
 
     Runtime portfolio identity is scoped by:
-      source_portfolio_id + trade_date + activation_mode
+      trade_date + activation_mode + trade_index
 
     Returns (portfolio_id_str, portfolio_doc_dict).
     """
@@ -638,45 +677,58 @@ def _resolve_daily_portfolio(
     trade_date = _default_runtime_trade_date(normalized_mode, str(trade_date_hint or "").strip()[:10])
     if not trade_date:
         trade_date = datetime.now(IST).strftime("%Y-%m-%d")
+    normalized_trade_index = _extract_trade_index(trade_index)
 
-    source_portfolio_id = str(source_portfolio_oid)
-    source_portfolio_name = str((source_portfolio_doc or {}).get("name") or "").strip()
     collection = db._db[ALGO_TRADE_PORTFOLIO_COLLECTION]
     query = {
-        "source_portfolio_id": source_portfolio_id,
         "trade_date": trade_date,
         "activation_mode": normalized_mode,
+        "trade_index": normalized_trade_index,
     }
     existing = collection.find_one(
         query,
-        {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1},
+        {"_id": 1, "trade_portfolio": 1, "trade_group_portfolio": 1, "trade_index": 1, "trade_date": 1, "activation_mode": 1, "created_at": 1, "updated_at": 1},
     )
     if existing:
         return str(existing["_id"]), existing
 
-    source_full = db._db["saved_portfolios"].find_one({"_id": source_portfolio_oid}) or {}
+    new_oid = ObjectId()
     now_iso = datetime.utcnow().isoformat()
+    sibling_doc = collection.find_one(
+        {
+            "trade_date": trade_date,
+            "activation_mode": normalized_mode,
+            "trade_group_portfolio": {"$exists": True, "$ne": ""},
+        },
+        {"trade_group_portfolio": 1},
+    )
+    trade_group_portfolio = str((sibling_doc or {}).get("trade_group_portfolio") or "").strip() or str(ObjectId())
     new_doc = {
-        "name": source_portfolio_name or f"{trade_date}-{normalized_mode}",
-        "source_portfolio_id": source_portfolio_id,
-        "source_portfolio_name": source_portfolio_name,
+        "_id": new_oid,
+        "trade_portfolio": str(new_oid),
+        "trade_group_portfolio": trade_group_portfolio,
+        "trade_index": normalized_trade_index,
         "trade_date": trade_date,
         "activation_mode": normalized_mode,
-        "daily_key": f"{source_portfolio_id}:{trade_date}:{normalized_mode}",
-        "strategy_ids": source_full.get("strategy_ids") or [],
-        "strategies": source_full.get("strategies") or [],
-        "qty_multiplier": int(source_full.get("qty_multiplier") or 1),
-        "is_weekdays": bool(source_full.get("is_weekdays", True)),
         "created_at": now_iso,
         "updated_at": now_iso,
     }
     try:
         result = collection.insert_one(new_doc)
-        return str(result.inserted_id), {"_id": result.inserted_id, "name": new_doc["name"], "source_portfolio_id": source_portfolio_id, "trade_date": trade_date, "activation_mode": normalized_mode}
+        return str(result.inserted_id), {
+            "_id": result.inserted_id,
+            "trade_portfolio": str(new_doc["trade_portfolio"]),
+            "trade_group_portfolio": trade_group_portfolio,
+            "trade_index": normalized_trade_index,
+            "trade_date": trade_date,
+            "activation_mode": normalized_mode,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
     except Exception:
         fallback = collection.find_one(
             query,
-            {"_id": 1, "name": 1, "source_portfolio_id": 1, "trade_date": 1, "activation_mode": 1},
+            {"_id": 1, "trade_portfolio": 1, "trade_group_portfolio": 1, "trade_index": 1, "trade_date": 1, "activation_mode": 1, "created_at": 1, "updated_at": 1},
         )
         if fallback:
             return str(fallback["_id"]), fallback
@@ -1278,6 +1330,7 @@ def _run_portfolio_job(job_id: str, request: dict):
 
 app    = FastAPI(title="Local Backtest API", version="2.0.0")
 router = APIRouter(prefix="/algo")
+sim_router = APIRouter()   # simulator routes live at /simulator/... (no extra prefix)
 
 
 class PTPortfolioIn(BaseModel):
@@ -1353,6 +1406,8 @@ def _resolve_pt_position_token(position: dict, instrument: str = "") -> str:
 def _enrich_pt_strategy_positions(strategy_doc: dict) -> dict:
     enriched = dict(strategy_doc or {})
     instrument = str(enriched.get("instrument") or "").strip().upper()
+
+    # Step 1: resolve tokens
     positions = []
     for raw_position in (enriched.get("positions") or []):
         if not isinstance(raw_position, dict):
@@ -1363,6 +1418,81 @@ def _enrich_pt_strategy_positions(strategy_doc: dict) -> dict:
         if resolved_token:
             position["token"] = resolved_token
         positions.append(position)
+
+    # Step 2: fetch current LTP for all position tokens
+    try:
+        from features.broker_gateway import get_broker_ltp_map, get_broker_rest_quotes, _active_broker  # type: ignore
+        ws_ltp = get_broker_ltp_map() or {}
+        active_broker = _active_broker()
+
+        # Build broker-native token map: stored token → active broker's token
+        # Needed when positions have Kite tokens but Dhan is active (or vice-versa)
+        broker_token_for: dict[str, str] = {}  # stored_token → broker_token
+        ws_seg_for: dict[str, str] = {}         # broker_token → ws_segment
+
+        stored_tokens = [str(p.get("token") or "") for p in positions if isinstance(p, dict) and p.get("token")]
+        if stored_tokens:
+            db_docs = list(_shared_mongo._db["active_option_tokens"].find(
+                {"token": {"$in": stored_tokens}, "broker": active_broker},
+                {"_id": 0, "token": 1, "ws_segment": 1},
+            ))
+            found_broker_tokens = {str(d["token"]) for d in db_docs}
+            for d in db_docs:
+                t = str(d["token"])
+                broker_token_for[t] = t   # already a broker token
+                ws_seg_for[t] = str(d.get("ws_segment") or "NSE_FNO")
+
+            # Positions with non-broker tokens → resolve by strike/expiry/option_type
+            cross_tokens = [t for t in stored_tokens if t not in found_broker_tokens]
+            if cross_tokens:
+                # Batch-fetch the position details we need for cross-resolution
+                pos_by_token = {str(p.get("token") or ""): p for p in positions if isinstance(p, dict) and p.get("token")}
+                for stored_tok in cross_tokens:
+                    pos = pos_by_token.get(stored_tok) or {}
+                    instr = str(pos.get("instrument") or instrument or "").upper()
+                    expiry = str(pos.get("expiry") or "")[:10]
+                    strike = pos.get("strike")
+                    ot = _normalize_pt_option_type(str(pos.get("option_type") or ""))
+                    if not (instr and expiry and strike and ot):
+                        continue
+                    try:
+                        dhan_doc = _shared_mongo._db["active_option_tokens"].find_one(
+                            {"instrument": instr, "expiry": {"$regex": f"^{expiry}"},
+                             "strike": float(strike), "option_type": ot, "broker": active_broker},
+                            {"token": 1, "ws_segment": 1, "_id": 0},
+                        )
+                        if dhan_doc:
+                            bt = str(dhan_doc["token"])
+                            broker_token_for[stored_tok] = bt
+                            ws_seg_for[bt] = str(dhan_doc.get("ws_segment") or "NSE_FNO")
+                    except Exception:
+                        pass
+
+        # Collect all broker tokens for REST fallback
+        all_broker_tokens = list({bt for bt in broker_token_for.values() if bt})
+        missing_ltp = [t for t in all_broker_tokens if not ws_ltp.get(t)]
+        rest_quotes: dict = {}
+        if missing_ltp:
+            try:
+                rest_quotes = get_broker_rest_quotes(missing_ltp, _shared_mongo._db, ws_seg_for)
+            except Exception:
+                pass
+
+        for position in positions:
+            if not isinstance(position, dict):
+                continue
+            stored_tok = str(position.get("token") or "")
+            if not stored_tok:
+                continue
+            bt = broker_token_for.get(stored_tok, stored_tok)
+            ltp = float(ws_ltp.get(bt) or 0)
+            if ltp == 0:
+                ltp = float((rest_quotes.get(bt) or {}).get("ltp") or 0)
+            if ltp > 0:
+                position["current_ltp"] = round(ltp, 2)
+    except Exception:
+        pass
+
     enriched["positions"] = positions
     return enriched
 
@@ -1428,6 +1558,36 @@ async def _setup_logging():
         _refresh_active_option_chain_cache()
     except Exception:
         log.exception("Failed to preload active option chain cache at startup")
+
+
+@app.on_event("startup")
+async def _auto_start_ticker():
+    """Auto-start the broker WebSocket ticker on server startup (for live spot price / VIX)."""
+    import asyncio, threading
+    async def _bg():
+        await asyncio.sleep(5)  # wait for server to fully initialise
+        try:
+            if ticker_manager.status not in ("running", "connecting"):
+                threading.Thread(target=_start_ticker_bg, daemon=True).start()
+                log.info("[STARTUP] Broker ticker auto-started.")
+        except Exception:
+            log.exception("[STARTUP] Broker ticker auto-start failed.")
+    asyncio.create_task(_bg())
+
+
+@app.on_event("startup")
+async def _span_params_startup():
+    """Seed SPAN defaults to DB (if empty) and load into memory cache."""
+    import asyncio
+    async def _bg():
+        await asyncio.sleep(3)
+        try:
+            from features.span_file import save_defaults_to_db, fetch_span_file
+            await asyncio.to_thread(save_defaults_to_db)   # seed DB if empty
+            await asyncio.to_thread(fetch_span_file)       # load DB + any local files
+        except Exception:
+            log.exception("SPAN params startup failed — hardcoded defaults will be used")
+    asyncio.create_task(_bg())
 
 
 @app.on_event("startup")
@@ -2444,22 +2604,14 @@ async def portfolio_prepare_activation(payload: dict):
     db = MongoData()
     portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, portfolio_id)
     source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc)
-    if portfolio_kind == "daily":
-        trade_portfolio_id = str(portfolio_oid)
-    else:
-        trade_portfolio_id, portfolio_doc = _resolve_daily_portfolio(
-            db,
-            portfolio_oid,
-            portfolio_doc,
-            activation_mode,
-            requested_current_datetime,
-        )
+    source_root_oid, source_root_doc = _load_source_portfolio_root(db, portfolio_kind, portfolio_oid, portfolio_doc)
 
     executed_col = db._db["executed_strategies"]
     now_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
     split_executions = {}
     docs_to_insert = []
     prepared_rows = []
+    first_trade_portfolio_id = ""
 
     for index, item in enumerate(strategies):
         if not isinstance(item, dict):
@@ -2493,8 +2645,19 @@ async def portfolio_prepare_activation(payload: dict):
             or ""
         ).strip() or None
         user_id = _resolve_app_user_id(item.get("user_id") or strategy_detail.get("user_id"))
+        trade_index = _extract_trade_index(item, strategy_detail)
+        item_trade_portfolio_id, item_portfolio_doc = _resolve_daily_portfolio(
+            db,
+            source_root_oid,
+            source_root_doc,
+            activation_mode,
+            requested_current_datetime,
+            trade_index=trade_index,
+        )
+        if not first_trade_portfolio_id:
+            first_trade_portfolio_id = item_trade_portfolio_id
         execution_number = executed_col.count_documents({
-            "portfolio_id": trade_portfolio_id,
+            "portfolio_id": item_trade_portfolio_id,
             "source_strategy_id": source_strategy_id,
         }) + 1
         assigned_strategy_id = str(ObjectId())
@@ -2509,8 +2672,10 @@ async def portfolio_prepare_activation(payload: dict):
             "source_strategy_id": source_strategy_id,
             "strategy_id": source_strategy_id,
             "strategy_name": item.get("name") or strategy_detail.get("name") or "",
-            "portfolio_id": trade_portfolio_id,
-            "portfolio_name": portfolio_doc.get("name") or "",
+            "portfolio_id": item_trade_portfolio_id,
+            "portfolio_name": item_portfolio_doc.get("name") or "",
+            "trade_portfolio_id": item_trade_portfolio_id,
+            "trade_index": trade_index,
             "activation_mode": activation_mode,
             "broker": broker,
             "user_id": user_id,
@@ -2534,6 +2699,8 @@ async def portfolio_prepare_activation(payload: dict):
             "broker": broker,
             "user_id": user_id,
             "ticker": ticker,
+            "trade_portfolio_id": item_trade_portfolio_id,
+            "trade_index": trade_index,
         })
 
     if docs_to_insert:
@@ -2542,7 +2709,7 @@ async def portfolio_prepare_activation(payload: dict):
     return {
         "success": True,
         "portfolio_id": source_portfolio_id,
-        "trade_portfolio_id": trade_portfolio_id,
+        "trade_portfolio_id": first_trade_portfolio_id,
         "activation_mode": activation_mode,
         "split_executions": split_executions,
         "executed_strategies": prepared_rows,
@@ -2573,23 +2740,9 @@ async def portfolio_activate(payload: dict):
         raise HTTPException(status_code=400, detail="At least one trade record is required")
 
     db = MongoData()
-    if trade_portfolio_id:
-        portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, trade_portfolio_id)
-        resolved_trade_portfolio_id = str(portfolio_oid)
-        source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc) or portfolio_id
-    else:
-        portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, portfolio_id)
-        source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc)
-        if portfolio_kind == "daily":
-            resolved_trade_portfolio_id = str(portfolio_oid)
-        else:
-            resolved_trade_portfolio_id, portfolio_doc = _resolve_daily_portfolio(
-                db,
-                portfolio_oid,
-                portfolio_doc,
-                activation_mode,
-                requested_current_datetime,
-            )
+    portfolio_kind, portfolio_oid, portfolio_doc = _load_activation_portfolio_doc(db, portfolio_id)
+    source_portfolio_id = _get_source_portfolio_id_from_doc(portfolio_kind, portfolio_oid, portfolio_doc)
+    source_root_oid, source_root_doc = _load_source_portfolio_root(db, portfolio_kind, portfolio_oid, portfolio_doc)
 
     executed_col = db._db["executed_strategies"]
     collection_name = "algo_trades"
@@ -2607,30 +2760,12 @@ async def portfolio_activate(payload: dict):
         if parsed_now is not None:
             resolved_now = parsed_now
     now_ts = resolved_now.strftime("%Y-%m-%d %H:%M:%S.%f")
-    raw_group_name = str((((trades[0] or {}).get("portfolio") or {}).get("group_name") or "")).strip() if trades else ""
-    base_portfolio_group_name = str(portfolio_doc.get("source_portfolio_name") or portfolio_doc.get("name") or raw_group_name or "Portfolio Activation").strip() or "Portfolio Activation"
-    base_portfolio_group_name = re.sub(r" \(\d+\)$", "", base_portfolio_group_name).strip() or "Portfolio Activation"
-    matching_group_names = []
-    group_name_regex = "^" + re.escape(base_portfolio_group_name) + r"(?: \(\d+\))?$"
-    for existing in algo_trades_col.find({"portfolio.trade_portfolio": resolved_trade_portfolio_id, "portfolio.group_name": {"$regex": group_name_regex}}, {"portfolio.group_name": 1}):
-        existing_name = str(((existing.get("portfolio") or {}).get("group_name") or "")).strip()
-        if existing_name:
-            matching_group_names.append(existing_name)
-
-    if base_portfolio_group_name not in matching_group_names:
-        resolved_portfolio_group_name = base_portfolio_group_name
-    else:
-        highest_group_index = 0
-        for existing_name in matching_group_names:
-            if existing_name == base_portfolio_group_name:
-                continue
-            suffix_match = re.search(r" \((\d+)\)$", existing_name)
-            if suffix_match:
-                highest_group_index = max(highest_group_index, int(suffix_match.group(1)))
-        resolved_portfolio_group_name = f"{base_portfolio_group_name} ({highest_group_index + 1})"
-
     strategy_time_difference_minutes = _load_strategy_time_difference_minutes(db, activation_mode)
     docs_to_insert = []
+    portfolio_group_meta_cache: dict[str, dict[str, str]] = {}
+    response_trade_portfolio_ids: list[str] = []
+    response_group_ids: list[str] = []
+    activation_batch_group_id = str(ObjectId())
 
     for index, item in enumerate(trades):
         if not isinstance(item, dict):
@@ -2644,6 +2779,57 @@ async def portfolio_activate(payload: dict):
             raise HTTPException(status_code=400, detail=f"Trade at index {index} is missing strategy_id")
 
         doc = dict(item)
+        item_trade_index = _extract_trade_index(doc)
+        item_trade_portfolio_id = str(doc.get("trade_portfolio_id") or trade_portfolio_id or "").strip()
+        item_portfolio_doc: dict = {}
+        if item_trade_portfolio_id:
+            item_portfolio_kind, item_portfolio_oid, item_portfolio_doc = _load_activation_portfolio_doc(db, item_trade_portfolio_id)
+            item_trade_portfolio_id = str(item_portfolio_oid)
+            item_trade_index = _extract_trade_index(item_portfolio_doc.get("trade_index"), item_trade_index)
+        else:
+            item_trade_portfolio_id, item_portfolio_doc = _resolve_daily_portfolio(
+                db,
+                source_root_oid,
+                source_root_doc,
+                activation_mode,
+                requested_current_datetime,
+                trade_index=item_trade_index,
+            )
+
+        cache_key = item_trade_portfolio_id
+        group_meta = portfolio_group_meta_cache.get(cache_key)
+        if group_meta is None:
+            raw_group_name = str((((doc or {}).get("portfolio") or {}).get("group_name") or "")).strip()
+            base_portfolio_group_name = str(item_portfolio_doc.get("source_portfolio_name") or item_portfolio_doc.get("name") or raw_group_name or "Portfolio Activation").strip() or "Portfolio Activation"
+            base_portfolio_group_name = re.sub(r" \(\d+\)$", "", base_portfolio_group_name).strip() or "Portfolio Activation"
+            matching_group_names = []
+            group_name_regex = "^" + re.escape(base_portfolio_group_name) + r"(?: \(\d+\))?$"
+            for existing in algo_trades_col.find({"portfolio.trade_portfolio": item_trade_portfolio_id, "portfolio.group_name": {"$regex": group_name_regex}}, {"portfolio.group_name": 1}):
+                existing_name = str(((existing.get("portfolio") or {}).get("group_name") or "")).strip()
+                if existing_name:
+                    matching_group_names.append(existing_name)
+
+            if base_portfolio_group_name not in matching_group_names:
+                resolved_portfolio_group_name = base_portfolio_group_name
+            else:
+                highest_group_index = 0
+                for existing_name in matching_group_names:
+                    if existing_name == base_portfolio_group_name:
+                        continue
+                    suffix_match = re.search(r" \((\d+)\)$", existing_name)
+                    if suffix_match:
+                        highest_group_index = max(highest_group_index, int(suffix_match.group(1)))
+                resolved_portfolio_group_name = f"{base_portfolio_group_name} ({highest_group_index + 1})"
+            group_meta = {
+                "group_name": resolved_portfolio_group_name,
+                "group_id": activation_batch_group_id,
+                "strategy_group_id": str(ObjectId()),
+            }
+            portfolio_group_meta_cache[cache_key] = group_meta
+            response_trade_portfolio_ids.append(item_trade_portfolio_id)
+            if group_meta["group_id"] not in response_group_ids:
+                response_group_ids.append(group_meta["group_id"])
+
         prepared_execution = executed_col.find_one(
             {"assigned_strategy_id": strategy_id},
             {"strategy_detail_snapshot": 1, "multiplier": 1, "source_strategy_id": 1, "broker": 1, "user_id": 1},
@@ -2757,8 +2943,16 @@ async def portfolio_activate(payload: dict):
         doc["portfolio"] = doc.get("portfolio") if isinstance(doc.get("portfolio"), dict) else {}
         incoming_source_portfolio_id = str(doc["portfolio"].get("portfolio") or "").strip()
         doc["portfolio"]["portfolio"] = incoming_source_portfolio_id or source_portfolio_id or portfolio_id
-        doc["portfolio"]["trade_portfolio"] = resolved_trade_portfolio_id
-        doc["portfolio"]["group_name"] = resolved_portfolio_group_name
+        doc["portfolio"]["trade_portfolio"] = item_trade_portfolio_id
+        doc["portfolio"]["trade_group_portfolio"] = str(item_portfolio_doc.get("trade_group_portfolio") or "").strip()
+        doc["portfolio"]["group_name"] = group_meta["group_name"]
+        doc["portfolio"]["group_id"] = group_meta["group_id"]
+        doc["portfolio"]["strategy_group_id"] = group_meta["strategy_group_id"]
+        doc["trade_portfolio"] = item_trade_portfolio_id
+        doc["trade_group_portfolio"] = str(item_portfolio_doc.get("trade_group_portfolio") or "").strip()
+        doc["strategy_group_id"] = group_meta["strategy_group_id"]
+        doc["trade_portfolio_id"] = item_trade_portfolio_id
+        doc["trade_index"] = item_trade_index
         if activation_mode == "algo-backtest" and requested_current_datetime:
             doc["creation_ts"] = now_ts
             doc["last_activation_ts"] = now_ts
@@ -2787,8 +2981,10 @@ async def portfolio_activate(payload: dict):
     return {
         "success": True,
         "portfolio_id": source_portfolio_id,
-        "trade_portfolio_id": resolved_trade_portfolio_id,
+        "trade_portfolio_id": response_trade_portfolio_ids[0] if response_trade_portfolio_ids else "",
+        "trade_portfolio_ids": response_trade_portfolio_ids,
         "group_id": resolved_group_id,
+        "group_ids": response_group_ids,
         "activation_mode": activation_mode,
         "collection_name": collection_name,
         "inserted_count": len(docs_to_insert),
@@ -3036,6 +3232,164 @@ async def calculate_margin_api(request: Request):
     if not body.get("legs"):
         return {"span_margin": 0, "exposure_margin": 0, "total_margin": 0, "premium_received": 0, "net_margin": 0, "legs": []}
     return await asyncio.to_thread(_calculate_margin_sync, body)
+
+
+@router.get("/span/refresh")
+async def refresh_span_file():
+    """
+    Manually trigger NSE + BSE SPAN file download and cache update.
+    Call once every ~5 trading days to keep margin params fresh.
+    Covers: all NSE index + stock options, all BSE index + stock options.
+    """
+    import asyncio
+    from features.span_file import (
+        fetch_span_file, get_cache_date, get_params, is_loaded,
+        DEFAULTS, _nse_cache, _bse_cache,
+    )
+
+    ok = await asyncio.to_thread(fetch_span_file)
+
+    # Index params summary
+    index_summary = {
+        u: {
+            "psr_pct":     get_params(u).get("psr_pct"),
+            "somc":        get_params(u).get("somc"),
+            "inter_month": get_params(u).get("inter_month"),
+            "from_file":   get_params(u).get("from_file", False),
+        }
+        for u in DEFAULTS
+    }
+
+    return {
+        "success":        ok,
+        "source":         "span_file" if (ok and is_loaded()) else "defaults",
+        "file_date":      get_cache_date() or None,
+        "nse_underlyings_loaded": len(_nse_cache),
+        "bse_underlyings_loaded": len(_bse_cache),
+        "index_params":   index_summary,
+    }
+
+
+@router.post("/span/upload")
+async def upload_span_file(file: UploadFile = File(...)):
+    """
+    Upload NSE or BSE SPAN zip file directly.
+    Filename must start with NSEFO_SPAN_ or BSEFO_SPAN_.
+
+    Steps:
+      1. Download NSEFO_SPAN_DDMMMYYYY.zip from NSE website (Derivatives → SPAN)
+      2. Download BSEFO_SPAN_DDMMMYYYY.zip from BSE website (Derivatives → SPAN)
+      3. POST each file to this endpoint
+      4. System auto-parses and caches — margin calc uses live params immediately
+    """
+    import asyncio
+    from features.span_file import fetch_span_file, get_cache_date, is_loaded, _SPAN_DIR, DEFAULTS, _nse_cache, _bse_cache, get_params
+
+    fname = file.filename or ""
+    fname_upper = fname.upper()
+
+    if not (fname_upper.startswith("NSEFO_SPAN_") or fname_upper.startswith("BSEFO_SPAN_")):
+        raise HTTPException(
+            status_code=400,
+            detail="Filename must start with NSEFO_SPAN_ or BSEFO_SPAN_ (e.g. NSEFO_SPAN_22MAY2026.zip)",
+        )
+
+    if not (fname_upper.endswith(".ZIP") or fname_upper.endswith(".SPN")):
+        raise HTTPException(status_code=400, detail="Only .zip or .spn files accepted")
+
+    # Save to span directory
+    import os
+    span_dir = os.path.abspath(_SPAN_DIR)
+    os.makedirs(span_dir, exist_ok=True)
+    save_path = os.path.join(span_dir, fname)
+
+    content = await file.read()
+    with open(save_path, "wb") as f:
+        f.write(content)
+
+    # Reload cache from disk
+    ok = await asyncio.to_thread(fetch_span_file)
+
+    index_summary = {
+        u: {
+            "psr_pct":     get_params(u).get("psr_pct"),
+            "somc":        get_params(u).get("somc"),
+            "inter_month": get_params(u).get("inter_month"),
+            "from_file":   get_params(u).get("from_file", False),
+        }
+        for u in DEFAULTS
+    }
+
+    return {
+        "success":               ok,
+        "saved_as":              save_path,
+        "source":                "span_file" if (ok and is_loaded()) else "defaults",
+        "file_date":             get_cache_date() or None,
+        "nse_underlyings_loaded": len(_nse_cache),
+        "bse_underlyings_loaded": len(_bse_cache),
+        "index_params":          index_summary,
+    }
+
+
+@router.get("/span/params")
+async def get_span_params():
+    """
+    View current SPAN params for all underlyings in DB.
+    Use this to verify what values are loaded.
+    """
+    from features.span_file import DEFAULTS, _db_cache, get_params
+    db = MongoData()
+    docs = list(db._db["span_params"].find({}, {"_id": 0}).sort("underlying", 1))
+    db.close()
+    return {
+        "count": len(docs),
+        "params": docs,
+        "in_memory_count": len(_db_cache),
+    }
+
+
+@router.put("/span/params")
+async def update_span_params(request: Request):
+    """
+    Update SPAN params in DB. Call this quarterly when NSE/BSE revises parameters.
+
+    Body: list of param objects OR single object.
+    Example (single index):
+      { "underlying": "NIFTY", "psr_pct": 0.093, "somc": 21000, "inter_month_pct": 0.0175, "vsr": 0.04 }
+
+    Example (bulk):
+      [
+        { "underlying": "NIFTY",     "psr_pct": 0.093, ... },
+        { "underlying": "BANKNIFTY", "psr_pct": 0.093, ... }
+      ]
+    """
+    import asyncio
+    from datetime import datetime
+    from features.span_file import load_from_db
+
+    body = await request.json()
+    items = body if isinstance(body, list) else [body]
+
+    db = MongoData()
+    updated = []
+    for item in items:
+        underlying = str(item.get("underlying") or "").strip().upper()
+        if not underlying:
+            continue
+        update_doc = {k: v for k, v in item.items() if k != "underlying"}
+        update_doc["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d")
+        update_doc["source"] = "manual"
+        db._db["span_params"].update_one(
+            {"underlying": underlying},
+            {"$set": {"underlying": underlying, **update_doc}},
+            upsert=True,
+        )
+        updated.append(underlying)
+    db.close()
+
+    # Reload memory cache
+    count = await asyncio.to_thread(load_from_db)
+    return {"updated": updated, "db_count": count}
 
 
 @router.get("/trades/list")
@@ -3465,17 +3819,30 @@ async def get_group_trade_history(group_id: str, status: str = "algo-backtest"):
             raise HTTPException(status_code=400, detail="group_id is required")
 
         group_query: dict[str, Any] = {
-            "portfolio.group_id": normalized_group_id,
+            "strategy_group_id": normalized_group_id,
             "activation_mode": normalized_status,
         }
         if normalized_date:
             group_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
         raw_trades = list(db._db["algo_trades"].find(group_query))
         if not raw_trades:
-            fallback_query: dict[str, Any] = {"portfolio.group_id": normalized_group_id}
+            fallback_query: dict[str, Any] = {"strategy_group_id": normalized_group_id}
             if normalized_date:
                 fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
             raw_trades = list(db._db["algo_trades"].find(fallback_query))
+        if not raw_trades:
+            legacy_query: dict[str, Any] = {
+                "portfolio.group_id": normalized_group_id,
+                "activation_mode": normalized_status,
+            }
+            if normalized_date:
+                legacy_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(legacy_query))
+        if not raw_trades:
+            legacy_fallback_query: dict[str, Any] = {"portfolio.group_id": normalized_group_id}
+            if normalized_date:
+                legacy_fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(legacy_fallback_query))
         if not raw_trades:
             raise HTTPException(status_code=404, detail="Strategy trade history not found for this group_id")
 
@@ -3505,17 +3872,43 @@ async def get_portfolio_trade_history(portfolio_id: str, status: str = "algo-bac
             raise HTTPException(status_code=400, detail="portfolio_id is required")
 
         portfolio_query: dict[str, Any] = {
-            "portfolio.portfolio": normalized_portfolio_id,
+            "trade_portfolio": normalized_portfolio_id,
             "activation_mode": normalized_status,
         }
         if normalized_date:
             portfolio_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
         raw_trades = list(db._db["algo_trades"].find(portfolio_query))
         if not raw_trades:
-            fallback_query: dict[str, Any] = {"portfolio.portfolio": normalized_portfolio_id}
+            fallback_query: dict[str, Any] = {"trade_portfolio": normalized_portfolio_id}
             if normalized_date:
                 fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
             raw_trades = list(db._db["algo_trades"].find(fallback_query))
+        if not raw_trades:
+            legacy_query: dict[str, Any] = {
+                "portfolio.portfolio": normalized_portfolio_id,
+                "activation_mode": normalized_status,
+            }
+            if normalized_date:
+                legacy_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(legacy_query))
+        if not raw_trades:
+            legacy_fallback_query: dict[str, Any] = {"portfolio.portfolio": normalized_portfolio_id}
+            if normalized_date:
+                legacy_fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(legacy_fallback_query))
+        if not raw_trades:
+            tgp_query: dict[str, Any] = {
+                "portfolio.trade_group_portfolio": normalized_portfolio_id,
+                "activation_mode": normalized_status,
+            }
+            if normalized_date:
+                tgp_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(tgp_query))
+        if not raw_trades:
+            tgp_fallback_query: dict[str, Any] = {"portfolio.trade_group_portfolio": normalized_portfolio_id}
+            if normalized_date:
+                tgp_fallback_query["creation_ts"] = {"$regex": f"^{re.escape(normalized_date)}"}
+            raw_trades = list(db._db["algo_trades"].find(tgp_fallback_query))
         if not raw_trades:
             raise HTTPException(status_code=404, detail="Strategy trade history not found for this portfolio")
 
@@ -4346,7 +4739,7 @@ def _sync_simulator_broker_with_market_session() -> bool:
         return False
 
 
-@router.post("/simulator/mini-strangle/start")
+@sim_router.post("/simulator/mini-strangle/start")
 async def simulator_start_mini_strangle(request: MiniStrangleRequest) -> StreamingResponse:
     session_id = str(uuid.uuid4())
     stream = StreamingController(position_start_time=request.position_start_time)
@@ -4365,7 +4758,7 @@ async def simulator_start_mini_strangle(request: MiniStrangleRequest) -> Streami
     )
 
 
-@router.post("/simulator/mini-strangle/stop/{session_id}")
+@sim_router.post("/simulator/mini-strangle/stop/{session_id}")
 async def simulator_stop_mini_strangle(session_id: str) -> dict:
     engine = _simulator_sessions.get(session_id)
     if not engine:
@@ -4375,12 +4768,12 @@ async def simulator_stop_mini_strangle(session_id: str) -> dict:
     return {"status": "stopped", "session_id": session_id}
 
 
-@router.get("/simulator/mini-strangle/sessions")
+@sim_router.get("/simulator/mini-strangle/sessions")
 async def simulator_list_sessions() -> dict:
     return {"active_sessions": list(_simulator_sessions.keys()), "count": len(_simulator_sessions)}
 
 
-@router.get("/simulator/monitor/start")
+@sim_router.get("/simulator/monitor/start")
 async def simulator_monitor_start(
     strategy_id: str = Query(default=""),
     portfolio_name: str = Query(default=""),
@@ -4430,7 +4823,7 @@ async def simulator_monitor_start(
         ), status_code=500)
 
 
-@router.post("/simulator/monitor/start")
+@sim_router.post("/simulator/monitor/start")
 async def simulator_monitor_start_post(
     strategy_id: str = Query(default=""),
     portfolio_name: str = Query(default=""),
@@ -4455,7 +4848,7 @@ async def simulator_monitor_start_post(
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/monitor/stop")
+@sim_router.get("/simulator/monitor/stop")
 async def simulator_monitor_stop() -> HTMLResponse:
     try:
         _sync_simulator_broker_with_market_session()
@@ -4485,7 +4878,7 @@ async def simulator_monitor_stop() -> HTMLResponse:
         ), status_code=500)
 
 
-@router.post("/simulator/monitor/stop")
+@sim_router.post("/simulator/monitor/stop")
 async def simulator_monitor_stop_post() -> dict:
     try:
         _sync_simulator_broker_with_market_session()
@@ -4498,7 +4891,7 @@ async def simulator_monitor_stop_post() -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/monitor/status")
+@sim_router.get("/simulator/monitor/status")
 async def simulator_monitor_status() -> dict:
     _sync_simulator_broker_with_market_session()
     return await simulator_bridge_status(
@@ -4508,7 +4901,7 @@ async def simulator_monitor_status() -> dict:
     )
 
 
-@router.get("/simulator/monitor/reentry-status")
+@sim_router.get("/simulator/monitor/reentry-status")
 async def simulator_monitor_reentry_status() -> dict:
     _sync_simulator_broker_with_market_session()
     return await simulator_bridge_reentry_status(
@@ -4518,12 +4911,12 @@ async def simulator_monitor_reentry_status() -> dict:
     )
 
 
-@router.get("/simulator/health")
+@sim_router.get("/simulator/health")
 async def simulator_health() -> dict:
     return {"status": "ok"}
 
 
-@router.get("/simulator/zerodha/status")
+@sim_router.get("/simulator/zerodha/status")
 async def simulator_zerodha_status() -> dict:
     cfg = _shared_mongo._db["kite_market_config"].find_one(
         {"enabled": True},
@@ -4541,7 +4934,7 @@ async def simulator_zerodha_status() -> dict:
     }
 
 
-@router.post("/simulator/zerodha/config")
+@sim_router.post("/simulator/zerodha/config")
 async def simulator_zerodha_save_config(req: ZerodhaConfigRequest) -> dict:
     try:
         _simulator_broker.save_config(req.api_key, req.api_secret)
@@ -4550,13 +4943,13 @@ async def simulator_zerodha_save_config(req: ZerodhaConfigRequest) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/zerodha/has-config")
+@sim_router.get("/simulator/zerodha/has-config")
 async def simulator_zerodha_has_config() -> dict:
     market_ready = _sync_simulator_broker_with_market_session()
     return {"has_config": bool(_simulator_broker.has_config() or market_ready)}
 
 
-@router.get("/simulator/zerodha/config")
+@sim_router.get("/simulator/zerodha/config")
 async def simulator_zerodha_get_config() -> dict:
     return {
         "status": "ok",
@@ -4565,7 +4958,7 @@ async def simulator_zerodha_get_config() -> dict:
     }
 
 
-@router.get("/simulator/zerodha/login-url")
+@sim_router.get("/simulator/zerodha/login-url")
 async def simulator_zerodha_login_url() -> dict:
     try:
         _sync_simulator_broker_with_market_session()
@@ -4575,7 +4968,7 @@ async def simulator_zerodha_login_url() -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/zerodha/callback", response_class=HTMLResponse)
+@sim_router.get("/simulator/zerodha/callback", response_class=HTMLResponse)
 async def simulator_zerodha_callback(request_token: str = "", action: str = "", status: str = ""):
     if status == "success" and request_token:
         try:
@@ -4621,7 +5014,7 @@ async def simulator_zerodha_callback(request_token: str = "", action: str = "", 
 </body></html>""")
 
 
-@router.get("/simulator/zerodha/login-url-redirect")
+@sim_router.get("/simulator/zerodha/login-url-redirect")
 async def simulator_zerodha_login_url_redirect():
     try:
         url = _simulator_broker.get_login_url()
@@ -4630,7 +5023,7 @@ async def simulator_zerodha_login_url_redirect():
         return HTMLResponse(f"<p>Error: {exc}</p>")
 
 
-@router.get("/simulator/zerodha/market-stats")
+@sim_router.get("/simulator/zerodha/market-stats")
 async def simulator_zerodha_market_stats(symbol: str = "nifty") -> dict:
     try:
         _sync_simulator_broker_with_market_session()
@@ -4640,7 +5033,7 @@ async def simulator_zerodha_market_stats(symbol: str = "nifty") -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/zerodha/live-option-chain")
+@sim_router.get("/simulator/zerodha/live-option-chain")
 async def simulator_zerodha_live_option_chain(symbol: str = "nifty", near: bool = False, expiries: str = "") -> dict:
     try:
         _sync_simulator_broker_with_market_session()
@@ -4653,7 +5046,7 @@ async def simulator_zerodha_live_option_chain(symbol: str = "nifty", near: bool 
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/get-market-holidays")
+@sim_router.get("/simulator/get-market-holidays")
 async def simulator_get_market_holidays() -> dict:
     try:
         dates = [
@@ -4666,7 +5059,7 @@ async def simulator_get_market_holidays() -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/get-option-chain")
+@sim_router.get("/simulator/get-option-chain")
 async def simulator_get_option_chain(timestamp: str = Query(...)) -> dict:
     try:
         data = list(_shared_mongo._db["option_chain"].find({"timestamp": timestamp}, {"_id": 0}))
@@ -4675,7 +5068,7 @@ async def simulator_get_option_chain(timestamp: str = Query(...)) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/lot-size")
+@sim_router.get("/simulator/lot-size")
 async def simulator_get_lot_size(instrument: str = "nifty") -> dict:
     try:
         today = datetime.now(IST).strftime("%Y-%m-%d")
@@ -4700,7 +5093,7 @@ async def simulator_get_lot_size(instrument: str = "nifty") -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/paper-trade/portfolios")
+@sim_router.get("/simulator/paper-trade/portfolios")
 async def simulator_pt_list_portfolios() -> dict:
     try:
         _ensure_default_paper_trade_portfolios()
@@ -4712,7 +5105,7 @@ async def simulator_pt_list_portfolios() -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.post("/simulator/paper-trade/portfolios")
+@sim_router.post("/simulator/paper-trade/portfolios")
 async def simulator_pt_create_portfolio(body: PTPortfolioIn) -> dict:
     try:
         col = _shared_mongo._db["paper_trade_portfolio"]
@@ -4725,7 +5118,7 @@ async def simulator_pt_create_portfolio(body: PTPortfolioIn) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/paper-trade/strategies")
+@sim_router.get("/simulator/paper-trade/strategies")
 async def simulator_pt_list_strategies(portfolio_name: Optional[str] = None) -> dict:
     try:
         filt = {"portfolio_name": portfolio_name} if portfolio_name else {}
@@ -4765,7 +5158,7 @@ async def simulator_pt_list_strategies(portfolio_name: Optional[str] = None) -> 
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/paper-trade/strategies/{strategy_id}")
+@sim_router.get("/simulator/paper-trade/strategies/{strategy_id}")
 async def simulator_pt_get_strategy(strategy_id: str) -> dict:
     try:
         doc = _shared_mongo._db["paper_trade_strategy"].find_one({"_id": ObjectId(strategy_id)})
@@ -4776,7 +5169,7 @@ async def simulator_pt_get_strategy(strategy_id: str) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/paper-trade/spot-tokens")
+@sim_router.get("/simulator/paper-trade/spot-tokens")
 async def simulator_pt_spot_tokens(broker_id: str = Query(default="")) -> dict:
     try:
         resolved_broker_id = str(broker_id or _DEFAULT_PAPER_TRADE_SPOT_BROKER_ID).strip()
@@ -4790,12 +5183,16 @@ async def simulator_pt_spot_tokens(broker_id: str = Query(default="")) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/simulator/paper-trade/quotes")
+@sim_router.get("/simulator/paper-trade/quotes")
 async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="")) -> dict:
+    # Exclude algo index spot tokens — simulator only needs FNO option contract quotes.
+    _algo_index_token_ids: set[str] = {
+        str(v) for v in KITE_INDEX_TOKENS.values() if v
+    }
     requested_tokens = [
         str(token).strip()
         for token in str(tokens or "").split(",")
-        if str(token).strip()
+        if str(token).strip() and str(token).strip() not in _algo_index_token_ids
     ]
     default_tokens = _get_paper_trade_default_quote_tokens(str(broker_id or "").strip())
     unique_tokens = list(
@@ -4809,224 +5206,91 @@ async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="
     quotes: dict[str, dict[str, float | str]] = {}
     pending_tokens: list[str] = []
 
+    from features.broker_gateway import _active_broker as _get_active_broker_name
+    active_broker = _get_active_broker_name()
+
     for token in unique_tokens:
-        live_ltp = float(ticker_manager.get_ltp(token) or 0.0)
+        if active_broker == "dhan":
+            from features.dhan_ticker import dhan_ticker_manager
+            live_ltp = float(dhan_ticker_manager.ltp_map.get(token) or 0.0)
+        else:
+            live_ltp = float(ticker_manager.get_ltp(token) or 0.0)
         if live_ltp > 0:
             quotes[token] = {"token": token, "ltp": round(live_ltp, 2), "source": "ws"}
         else:
             pending_tokens.append(token)
 
     if pending_tokens:
-        try:
-            if is_configured():
-                api_key, access_token = get_common_credentials()
-                if api_key and access_token:
-                    kite = get_kite_instance(access_token)
-                    quote_docs = kite.quote([int(token) for token in pending_tokens]) or {}
-                    for quote_key, quote_doc in quote_docs.items():
-                        resolved_token = str(
-                            quote_doc.get("instrument_token")
-                            or quote_key.split(":")[-1]
-                            or ""
-                        ).strip()
-                        if not resolved_token:
-                            continue
-                        quote_ltp = float(
-                            quote_doc.get("last_price")
-                            or (quote_doc.get("ohlc") or {}).get("close")
-                            or 0.0
-                        )
-                        quotes[resolved_token] = {
-                            "token": resolved_token,
-                            "ltp": round(quote_ltp, 2),
-                            "source": "quote",
-                        }
-        except Exception as exc:
-            log.warning("paper trade quote batch error tokens=%s: %s", ",".join(pending_tokens), exc)
-
-    unresolved_tokens = [
-        token for token in pending_tokens
-        if float((quotes.get(token) or {}).get("ltp") or 0.0) <= 0
-    ]
-    if unresolved_tokens:
-        reverse_index_tokens = {
-            str(token): underlying
-            for underlying, token in (KITE_INDEX_TOKENS or {}).items()
-            if str(token or "").strip()
-        }
-        option_contract_map: dict[str, dict[str, str]] = {}
-        equity_contract_map: dict[str, dict[str, str]] = {}
-        try:
-            db = MongoData()
+        if active_broker == "dhan":
             try:
-                for contract in db._db["active_option_tokens"].find(
-                    {"token": {"$in": unresolved_tokens}},
-                    {"_id": 0, "token": 1, "instrument": 1, "expiry": 1, "option_type": 1, "strike": 1},
-                ):
-                    token = str(contract.get("token") or "").strip()
-                    if not token:
-                        continue
-                    option_contract_map[token] = {
-                        "instrument": str(contract.get("instrument") or "").strip().upper(),
-                        "expiry": str(contract.get("expiry") or "").strip()[:10],
-                        "option_type": str(contract.get("option_type") or "").strip().upper(),
-                        "strike": str(contract.get("strike") or "").strip(),
-                    }
-
-                equity_queries = [
-                    (
-                        "angel_stock_list",
-                        {
-                            "$or": [
-                                {"kite_token": {"$in": unresolved_tokens}},
-                                {"token": {"$in": unresolved_tokens}},
-                                {"tokens": {"$in": unresolved_tokens}},
-                                {"instrument_token": {"$in": unresolved_tokens}},
-                                {"exchange_token": {"$in": unresolved_tokens}},
-                            ]
-                        },
-                        {"_id": 0, "symbol": 1, "exchange": 1, "kite_token": 1, "token": 1, "tokens": 1, "instrument_token": 1, "exchange_token": 1},
-                    ),
-                    (
-                        "stocks_list",
-                        {
-                            "$or": [
-                                {"kite_token": {"$in": unresolved_tokens}},
-                                {"token": {"$in": unresolved_tokens}},
-                                {"tokens": {"$in": unresolved_tokens}},
-                                {"instrument_token": {"$in": unresolved_tokens}},
-                                {"exchange_token": {"$in": unresolved_tokens}},
-                                {"code": {"$in": unresolved_tokens}},
-                            ]
-                        },
-                        {"_id": 0, "symbol": 1, "exchange": 1, "kite_token": 1, "token": 1, "tokens": 1, "instrument_token": 1, "exchange_token": 1, "code": 1},
-                    ),
-                ]
-
-                for collection_name, query, projection in equity_queries:
-                    for contract in db._db[collection_name].find(query, projection):
-                        symbol = str(contract.get("symbol") or "").strip().upper()
-                        exchange = str(contract.get("exchange") or "NSE").strip().upper() or "NSE"
-                        resolved_token = str(
-                            contract.get("kite_token")
-                            or contract.get("token")
-                            or contract.get("tokens")
-                            or contract.get("instrument_token")
-                            or contract.get("exchange_token")
-                            or contract.get("code")
-                            or ""
-                        ).strip()
-                        if not symbol or not resolved_token:
-                            continue
-                        equity_contract_map.setdefault(
-                            resolved_token,
-                            {
-                                "symbol": symbol,
-                                "exchange": exchange,
-                            },
-                        )
-            finally:
+                import requests as _req
+                db = MongoData()
+                cfg = db._db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
+                dhan_access_token = str(cfg.get("access_token") or "").strip()
+                dhan_client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
                 db.close()
-        except Exception as exc:
-            log.warning("paper trade quote fallback token lookup error: %s", exc)
-
-        chain_requests: list[tuple[str, str]] = []
-        for token in unresolved_tokens:
-            if token in reverse_index_tokens:
-                chain_requests.append((reverse_index_tokens[token], ""))
-                continue
-            contract = option_contract_map.get(token) or {}
-            instrument = str(contract.get("instrument") or "").strip().upper()
-            expiry = str(contract.get("expiry") or "").strip()
-            if instrument:
-                chain_requests.append((instrument, expiry))
-
-        deduped_chain_requests = list(dict.fromkeys(chain_requests))
-        if deduped_chain_requests:
-            chain_results = await asyncio.gather(
-                *[
-                    get_live_greeks_chain(instrument, expiry)
-                    for instrument, expiry in deduped_chain_requests
-                ],
-                return_exceptions=True,
-            )
-            chain_map = {
-                key: value
-                for key, value in zip(deduped_chain_requests, chain_results)
-                if not isinstance(value, Exception) and isinstance(value, dict)
-            }
-
-            for token in unresolved_tokens:
-                if token in reverse_index_tokens:
-                    payload = chain_map.get((reverse_index_tokens[token], "")) or {}
-                    spot_ltp = float(payload.get("spot_price") or 0.0)
-                    if spot_ltp > 0:
-                        quotes[token] = {"token": token, "ltp": round(spot_ltp, 2), "source": "chain_spot"}
-                    continue
-
-                contract = option_contract_map.get(token) or {}
-                instrument = str(contract.get("instrument") or "").strip().upper()
-                expiry = str(contract.get("expiry") or "").strip()
-                option_type = str(contract.get("option_type") or "").strip().upper()
-                try:
-                    strike_value = float(contract.get("strike") or 0)
-                except (TypeError, ValueError):
-                    strike_value = 0.0
-                payload = chain_map.get((instrument, expiry)) or {}
-                chain_bucket = ((payload.get("chain") or {}).get(option_type) or []) if payload else []
-                for row in chain_bucket:
-                    row_token = str(row.get("token") or "").strip()
-                    row_strike = float(row.get("strike") or 0.0)
-                    row_ltp = float(row.get("ltp") or 0.0)
-                    if row_token == token or (strike_value > 0 and row_strike == strike_value):
-                        if row_ltp > 0:
-                            quotes[token] = {"token": token, "ltp": round(row_ltp, 2), "source": "chain"}
-                        break
-
-        still_unresolved_equity_tokens = [
-            token for token in unresolved_tokens
-            if float((quotes.get(token) or {}).get("ltp") or 0.0) <= 0 and token in equity_contract_map
-        ]
-        if still_unresolved_equity_tokens:
+                if dhan_access_token:
+                    int_tokens = [int(t) for t in pending_tokens if str(t).strip().lstrip("-").isdigit()]
+                    _headers = {
+                        "access-token": dhan_access_token,
+                        "client-id": dhan_client_id,
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    }
+                    # Simulator tokens are always FNO option contracts → NSE_FNO segment.
+                    # Run in thread pool so the blocking HTTP call doesn't stall the event loop.
+                    def _dhan_ltp_call() -> dict:
+                        try:
+                            r = _req.post(
+                                "https://api.dhan.co/v2/marketfeed/ltp",
+                                headers=_headers,
+                                json={"NSE_FNO": int_tokens},
+                                timeout=3,
+                            )
+                            return r.json() if r.ok else {}
+                        except Exception:
+                            return {}
+                    raw = await asyncio.to_thread(_dhan_ltp_call)
+                    fno_data = (raw.get("data") or {}).get("NSE_FNO") or raw.get("NSE_FNO") or {}
+                    for sid, v in fno_data.items():
+                        tok = str(sid).strip()
+                        ltp = float(v.get("last_price") or v.get("ltp") or v.get("lastTradedPrice") or 0) if isinstance(v, dict) else float(v or 0)
+                        if ltp > 0:
+                            quotes[tok] = {"token": tok, "ltp": round(ltp, 2), "source": "dhan_rest"}
+            except Exception as exc:
+                log.warning("paper trade dhan quote error tokens=%s: %s", ",".join(pending_tokens), exc)
+        else:
             try:
                 if is_configured():
                     api_key, access_token = get_common_credentials()
                     if api_key and access_token:
-                        kite = get_kite_instance(access_token)
-                        equity_instruments = [
-                            f"{(equity_contract_map.get(token) or {}).get('exchange', 'NSE')}:{(equity_contract_map.get(token) or {}).get('symbol', '')}"
-                            for token in still_unresolved_equity_tokens
-                            if (equity_contract_map.get(token) or {}).get("symbol")
-                        ]
-                        equity_quote_docs = kite.quote(equity_instruments) or {}
-                        symbol_token_map = {
-                            (
-                                f"{(equity_contract_map.get(token) or {}).get('exchange', 'NSE')}:{(equity_contract_map.get(token) or {}).get('symbol', '')}"
-                            ): token
-                            for token in still_unresolved_equity_tokens
-                            if (equity_contract_map.get(token) or {}).get("symbol")
-                        }
-                        for instrument_key, quote_doc in equity_quote_docs.items():
-                            original_token = symbol_token_map.get(str(instrument_key))
-                            if not original_token:
+                        def _kite_quote_call() -> dict:
+                            try:
+                                kite = get_kite_instance(access_token)
+                                return kite.quote([int(token) for token in pending_tokens]) or {}
+                            except Exception:
+                                return {}
+                        quote_docs = await asyncio.to_thread(_kite_quote_call)
+                        for quote_key, quote_doc in quote_docs.items():
+                            resolved_token = str(
+                                quote_doc.get("instrument_token")
+                                or quote_key.split(":")[-1]
+                                or ""
+                            ).strip()
+                            if not resolved_token:
                                 continue
                             quote_ltp = float(
                                 quote_doc.get("last_price")
                                 or (quote_doc.get("ohlc") or {}).get("close")
                                 or 0.0
                             )
-                            if quote_ltp > 0:
-                                quotes[original_token] = {
-                                    "token": original_token,
-                                    "ltp": round(quote_ltp, 2),
-                                    "source": "equity_symbol_quote",
-                                }
+                            quotes[resolved_token] = {
+                                "token": resolved_token,
+                                "ltp": round(quote_ltp, 2),
+                                "source": "quote",
+                            }
             except Exception as exc:
-                log.warning(
-                    "paper trade equity quote fallback error tokens=%s: %s",
-                    ",".join(still_unresolved_equity_tokens),
-                    exc,
-                )
+                log.warning("paper trade quote batch error tokens=%s: %s", ",".join(pending_tokens), exc)
 
     for token in unique_tokens:
         quotes.setdefault(token, {"token": token, "ltp": 0.0, "source": "unavailable"})
@@ -5292,7 +5556,7 @@ async def backfill_investment_portfolio_symbol_token_all(limit: int = Query(defa
         return {"status": "error", "message": str(exc)}
 
 
-@router.put("/simulator/paper-trade/strategies/{strategy_id}")
+@sim_router.put("/simulator/paper-trade/strategies/{strategy_id}")
 async def simulator_pt_update_strategy(strategy_id: str, body: PTStrategyIn) -> dict:
     try:
         portfolio_col = _shared_mongo._db["paper_trade_portfolio"]
@@ -5329,7 +5593,7 @@ async def simulator_pt_update_strategy(strategy_id: str, body: PTStrategyIn) -> 
         return {"status": "error", "message": str(exc)}
 
 
-@router.post("/simulator/paper-trade/strategies")
+@sim_router.post("/simulator/paper-trade/strategies")
 async def simulator_pt_save_strategy(body: PTStrategyIn) -> dict:
     try:
         portfolio_col = _shared_mongo._db["paper_trade_portfolio"]
@@ -5381,6 +5645,7 @@ async def _run_simulator_session(session_id: str, engine: StrategyEngine) -> Non
 
 
 app.include_router(router)
+app.include_router(sim_router)
 app.include_router(socket_router)
 app.include_router(mock_kite_socket_router)
 app.include_router(simulator_router, prefix="/algo")
@@ -5398,6 +5663,778 @@ _kite_pending: dict = {}
 async def kite_login_url():
     url = get_login_url()
     return {"login_url": url}
+
+
+@app.post("/broker/dhan/config")
+async def dhan_save_config(request: Request):
+    """Save Dhan client_id + access_token to kite_market_config (broker=dhan, enabled=true)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"status": "error", "message": "Invalid JSON body"}, status_code=400)
+    client_id    = str(body.get("client_id")    or "").strip()
+    access_token = str(body.get("access_token") or "").strip()
+    if not client_id or not access_token:
+        return JSONResponse({"status": "error", "message": "client_id and access_token are required"}, status_code=400)
+    db = MongoData()
+    try:
+        db._db["kite_market_config"].update_one(
+            {"broker": "dhan"},
+            {"$set": {
+                "broker":       "dhan",
+                "enabled":      True,
+                "user_id":      client_id,
+                "access_token": access_token,
+            }},
+            upsert=True,
+        )
+        # Disable any other enabled configs
+        db._db["kite_market_config"].update_many(
+            {"broker": {"$ne": "dhan"}, "enabled": True},
+            {"$set": {"enabled": False}},
+        )
+        # Load into in-memory cache immediately
+        try:
+            from features.dhan_broker_ws import set_common_credentials  # type: ignore
+            set_common_credentials(client_id, access_token)
+            from features.broker_gateway import reset_broker_cache  # type: ignore
+            reset_broker_cache()
+        except Exception:
+            pass
+        return {"status": "ok", "message": "Dhan credentials saved"}
+    except Exception as exc:
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
+    finally:
+        db.close()
+
+
+# ── Dhan OAuth endpoints ──────────────────────────────────────────────────────
+_dhan_pending: dict[str, str] = {}
+
+
+def _dhan_popup_result_html(success: bool, message: str) -> str:
+    import json as _json
+    payload_js = _json.dumps({"type": "DHAN_LOGIN", "success": success, "message": message})
+    icon  = "✓" if success else "✗"
+    color = "#22c55e" if success else "#ef4444"
+    title = "Login Successful" if success else "Login Failed"
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Dhan Login</title>
+<style>
+  body{{font-family:-apple-system,sans-serif;display:flex;align-items:center;
+       justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#f1f5f9;}}
+  .card{{text-align:center;padding:2rem;background:#1e293b;border-radius:12px;border:1px solid #334155;}}
+  .icon{{font-size:3rem;color:{color};}}
+  p{{color:#94a3b8;}}
+</style></head>
+<body>
+  <div class="card">
+    <div class="icon">{icon}</div>
+    <h2>{title}</h2>
+    <p>{message}</p>
+    <p style="font-size:0.8rem">This window will close automatically...</p>
+  </div>
+  <script>
+    const payload = {payload_js};
+    if (window.opener) window.opener.postMessage(payload, "*");
+    setTimeout(() => window.close(), 1500);
+  </script>
+</body></html>"""
+
+
+@app.get("/broker/dhan/login", response_class=HTMLResponse)
+async def dhan_login():
+    """
+    Dhan login popup.
+    If DB already has api_key + api_secret + user_id → shows one-click Login button.
+    Otherwise shows full credentials form.
+    """
+    _ddb = MongoData()
+    cfg  = _ddb._db["kite_market_config"].find_one({"broker": "dhan"}) or {}
+    _ddb.close()
+
+    has_creds = bool(cfg.get("api_key") and cfg.get("api_secret") and
+                     (cfg.get("user_id") or cfg.get("dhan_client_id")))
+
+    user_id    = str(cfg.get("user_id")    or cfg.get("dhan_client_id") or "").strip()
+    api_key    = str(cfg.get("api_key")    or "").strip()
+    api_secret = str(cfg.get("api_secret") or "").strip()
+
+    if has_creds:
+        return HTMLResponse(content=f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Dhan HQ Login</title>
+  <style>
+    body{{font-family:-apple-system,sans-serif;display:flex;align-items:center;
+         justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#f1f5f9;}}
+    .card{{padding:2.5rem;background:#1e293b;border-radius:14px;border:1px solid #334155;
+           width:340px;text-align:center;}}
+    h2{{margin:0 0 0.5rem;color:#f97316;}}
+    .info{{color:#64748b;font-size:0.82rem;margin-bottom:1.8rem;}}
+    .row{{display:flex;justify-content:space-between;font-size:0.82rem;
+          color:#94a3b8;margin-bottom:0.4rem;}}
+    .val{{color:#f1f5f9;font-weight:500;}}
+    .btn{{width:100%;padding:0.8rem;background:linear-gradient(135deg,#f97316,#ea580c);
+          border:none;border-radius:10px;color:#fff;font-size:1.05rem;font-weight:700;
+          cursor:pointer;margin-top:1.5rem;}}
+    .btn:hover{{background:linear-gradient(135deg,#fb923c,#f97316);}}
+    .link{{display:block;margin-top:1rem;font-size:0.78rem;color:#475569;cursor:pointer;}}
+    #msg{{margin-top:1rem;font-size:0.85rem;color:#f97316;min-height:1.2rem;}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Dhan HQ Login</h2>
+    <p class="info">Credentials already saved. Click to connect.</p>
+    <div class="row"><span>Client ID</span><span class="val">{user_id}</span></div>
+    <div class="row"><span>API Key</span><span class="val">{api_key}</span></div>
+    <div class="row"><span>API Secret</span><span class="val">{'•' * min(len(api_secret), 8)}...</span></div>
+    <button class="btn" onclick="doLogin()">Login with Dhan →</button>
+    <span class="link" onclick="document.getElementById('fullform').style.display='block';this.style.display='none'">
+      Change credentials
+    </span>
+    <div id="msg"></div>
+
+    <div id="fullform" style="display:none;margin-top:1.5rem;text-align:left">
+      <label style="font-size:0.82rem;color:#94a3b8">Client ID (user_id)</label>
+      <input id="cid" style="width:100%;padding:0.5rem;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;margin-bottom:0.7rem;box-sizing:border-box" value="{user_id}">
+      <label style="font-size:0.82rem;color:#94a3b8">API Key</label>
+      <input id="akey" style="width:100%;padding:0.5rem;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;margin-bottom:0.7rem;box-sizing:border-box" value="{api_key}">
+      <label style="font-size:0.82rem;color:#94a3b8">API Secret</label>
+      <input id="asecret" type="password" style="width:100%;padding:0.5rem;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;margin-bottom:0.7rem;box-sizing:border-box" placeholder="Enter API Secret">
+      <button class="btn" onclick="doLoginForm()">Save & Login →</button>
+    </div>
+  </div>
+  <script>
+    async function doLogin() {{
+      document.getElementById("msg").textContent = "Generating consent...";
+      const res = await fetch("/broker/dhan/generate-consent", {{
+        method:"POST", headers:{{"Content-Type":"application/json"}},
+        body: JSON.stringify({{use_saved: true}}),
+      }});
+      const d = await res.json();
+      if (d.ok && d.login_url) {{ window.location.href = d.login_url; }}
+      else {{
+        document.getElementById("msg").textContent = d.message || "Error";
+        document.getElementById("msg").style.color = "#ef4444";
+      }}
+    }}
+    async function doLoginForm() {{
+      document.getElementById("msg").textContent = "Saving & generating consent...";
+      const res = await fetch("/broker/dhan/generate-consent", {{
+        method:"POST", headers:{{"Content-Type":"application/json"}},
+        body: JSON.stringify({{
+          user_id:    document.getElementById("cid").value.trim(),
+          api_key:    document.getElementById("akey").value.trim(),
+          api_secret: document.getElementById("asecret").value.trim(),
+        }}),
+      }});
+      const d = await res.json();
+      if (d.ok && d.login_url) {{ window.location.href = d.login_url; }}
+      else {{
+        document.getElementById("msg").textContent = d.message || "Error";
+        document.getElementById("msg").style.color = "#ef4444";
+      }}
+    }}
+    // Auto-trigger login if opened as popup
+    if (window.opener) setTimeout(doLogin, 300);
+  </script>
+</body>
+</html>""")
+
+    # Full credentials form (first time setup)
+    return HTMLResponse(content=f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Dhan HQ Setup</title>
+  <style>
+    body{{font-family:-apple-system,sans-serif;display:flex;align-items:center;
+         justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#f1f5f9;}}
+    .card{{padding:2rem 2.5rem;background:#1e293b;border-radius:14px;
+           border:1px solid #334155;width:360px;}}
+    h2{{margin:0 0 0.2rem;color:#f97316;}}
+    .sub{{color:#64748b;font-size:0.8rem;margin-bottom:1.2rem;}}
+    label{{display:block;font-size:0.82rem;color:#94a3b8;margin-bottom:0.25rem;margin-top:0.7rem;}}
+    input{{width:100%;padding:0.5rem 0.7rem;background:#0f172a;border:1px solid #334155;
+           border-radius:6px;color:#f1f5f9;font-size:0.9rem;box-sizing:border-box;}}
+    .btn{{width:100%;padding:0.7rem;background:linear-gradient(135deg,#f97316,#ea580c);
+          border:none;border-radius:8px;color:#fff;font-size:1rem;font-weight:700;
+          cursor:pointer;margin-top:1.2rem;}}
+    #msg{{margin-top:0.8rem;font-size:0.85rem;color:#f97316;min-height:1.2rem;}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Dhan HQ Setup</h2>
+    <p class="sub">web.dhan.co → My Profile → Access DhanHQ APIs → API Key tab</p>
+    <label>Client ID (user_id)</label>
+    <input id="cid" placeholder="e.g. 1103877976">
+    <label>API Key</label>
+    <input id="akey" placeholder="e.g. a8065854">
+    <label>API Secret</label>
+    <input id="asecret" type="password" placeholder="Paste API Secret">
+    <button class="btn" onclick="doSetup()">Save & Login →</button>
+    <div id="msg"></div>
+  </div>
+  <script>
+    async function doSetup() {{
+      document.getElementById("msg").textContent = "Saving credentials...";
+      const res = await fetch("/broker/dhan/generate-consent", {{
+        method:"POST", headers:{{"Content-Type":"application/json"}},
+        body: JSON.stringify({{
+          user_id:    document.getElementById("cid").value.trim(),
+          api_key:    document.getElementById("akey").value.trim(),
+          api_secret: document.getElementById("asecret").value.trim(),
+        }}),
+      }});
+      const d = await res.json();
+      if (d.ok && d.login_url) {{ window.location.href = d.login_url; }}
+      else {{
+        document.getElementById("msg").textContent = d.message || "Error";
+        document.getElementById("msg").style.color = "#ef4444";
+      }}
+    }}
+  </script>
+</body>
+</html>""")
+
+
+@app.post("/broker/dhan/generate-consent")
+async def dhan_generate_consent(request: Request):
+    """
+    Step 1 of Dhan OAuth.
+    If use_saved=true → reads credentials from DB.
+    Otherwise saves new credentials first, then generates consent.
+    """
+    import secrets as _sec, requests as _req
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False, "message": "Invalid JSON"}
+
+    use_saved = body.get("use_saved", False)
+
+    _ddb = MongoData()
+    cfg  = _ddb._db["kite_market_config"].find_one({"broker": "dhan"}) or {}
+    _ddb.close()
+
+    if use_saved:
+        user_id    = str(cfg.get("user_id")    or cfg.get("dhan_client_id") or "").strip()
+        api_key    = str(cfg.get("api_key")    or "").strip()
+        api_secret = str(cfg.get("api_secret") or "").strip()
+        if not user_id or not api_key or not api_secret:
+            return {"ok": False, "message": "Saved credentials incomplete — please enter them again"}
+    else:
+        user_id    = str(body.get("user_id")    or body.get("dhan_client_id") or "").strip()
+        api_key    = str(body.get("api_key")    or "").strip()
+        api_secret = str(body.get("api_secret") or "").strip()
+        if not user_id or not api_key or not api_secret:
+            return {"ok": False, "message": "user_id, api_key and api_secret are required"}
+        _ddb2 = MongoData()
+        _ddb2._db["kite_market_config"].update_one(
+            {"broker": "dhan"},
+            {"$set": {
+                "broker":       "dhan",
+                "user_id":      user_id,
+                "api_key":      api_key,
+                "api_secret":   api_secret,
+                "access_token": "",
+                "enabled":      True,
+            }},
+            upsert=True,
+        )
+        _ddb2.close()
+
+    session_id = _sec.token_hex(16)
+    _dhan_pending[session_id] = user_id
+
+    try:
+        resp = _req.post(
+            f"https://auth.dhan.co/app/generate-consent?client_id={user_id}",
+            headers={"app_id": api_key, "app_secret": api_secret},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        consent_app_id = data.get("consentAppId") or ""
+        if not consent_app_id:
+            return {"ok": False, "message": f"No consentAppId in response: {data}"}
+    except Exception as exc:
+        return {"ok": False, "message": f"Dhan generate-consent error: {exc}"}
+
+    login_url = (
+        f"https://auth.dhan.co/login/consentApp-login"
+        f"?consentAppId={consent_app_id}&state={session_id}"
+    )
+    log.info("Dhan consent generated user_id=%s consent=%s", user_id, consent_app_id)
+    return {"ok": True, "login_url": login_url, "consent_app_id": consent_app_id}
+
+
+@app.get("/broker/dhan/callback", response_class=HTMLResponse)
+async def dhan_callback(request: Request):
+    """
+    Step 3 of Dhan OAuth — Dhan redirects here with ?tokenId=xxx after user login.
+    Register this as Redirect URL in Dhan app settings.
+    """
+    import requests as _req
+
+    token_id = request.query_params.get("tokenId", "").strip()
+    state    = request.query_params.get("state",   "").strip()
+
+    if not token_id:
+        return HTMLResponse(content=_dhan_popup_result_html(
+            False, f"tokenId missing in callback — params: {dict(request.query_params)}"
+        ))
+
+    _ddb = MongoData()
+    cfg = _ddb._db["kite_market_config"].find_one({"broker": "dhan"}) or {}
+    _ddb.close()
+
+    api_key    = str(cfg.get("api_key")    or "").strip()
+    api_secret = str(cfg.get("api_secret") or "").strip()
+    dhan_client_id = str(
+        cfg.get("user_id") or cfg.get("dhan_client_id") or _dhan_pending.pop(state, "") or ""
+    ).strip()
+
+    if not api_key or not api_secret:
+        return HTMLResponse(content=_dhan_popup_result_html(
+            False, "API Key/Secret not found — complete Step 1 first at /broker/dhan/login"
+        ))
+
+    try:
+        resp = _req.get(
+            f"https://auth.dhan.co/app/consumeApp-consent?tokenId={token_id}",
+            headers={"app_id": api_key, "app_secret": api_secret},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data         = resp.json()
+        access_token = str(data.get("accessToken") or "").strip()
+        expiry_time  = str(data.get("expiryTime")  or "").strip()
+        if not access_token:
+            return HTMLResponse(content=_dhan_popup_result_html(
+                False, f"No accessToken in response: {data}"
+            ))
+    except Exception as exc:
+        return HTMLResponse(content=_dhan_popup_result_html(False, f"consumeApp-consent error: {exc}"))
+
+    _ddb2 = MongoData()
+    _ddb2._db["kite_market_config"].update_one(
+        {"broker": "dhan"},
+        {"$set": {
+            "access_token": access_token,
+            "login_time":   datetime.now().isoformat(),
+            "expiry_time":  expiry_time,
+        }},
+    )
+    _ddb2.close()
+    # Reload into in-memory cache
+    try:
+        from features.dhan_broker_ws import set_common_credentials  # type: ignore
+        set_common_credentials(dhan_client_id or str(cfg.get("user_id") or ""), access_token)
+        from features.broker_gateway import reset_broker_cache  # type: ignore
+        reset_broker_cache()
+    except Exception:
+        pass
+    log.info("Dhan access token saved client_id=%s expiry=%s", dhan_client_id, expiry_time)
+    return HTMLResponse(content=_dhan_popup_result_html(
+        True, f"Login successful! Token valid until {expiry_time or 'check Dhan portal'}."
+    ))
+
+
+@app.get("/broker/dhan/renew-token")
+async def dhan_renew_token():
+    """Renew Dhan access token for another 24 hours via POST /v2/RenewToken."""
+    import requests as _req
+    _ddb = MongoData()
+    cfg = _ddb._db["kite_market_config"].find_one({"broker": "dhan"}) or {}
+    _ddb.close()
+
+    access_token   = str(cfg.get("access_token") or "").strip()
+    dhan_client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
+
+    if not access_token or not dhan_client_id:
+        return {"ok": False, "message": "No valid access_token or dhan_client_id found"}
+
+    try:
+        resp = _req.get(
+            "https://api.dhan.co/v2/RenewToken",
+            headers={"access-token": access_token, "dhanClientId": dhan_client_id},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data        = resp.json()
+        new_token   = str(data.get("accessToken") or "").strip()
+        expiry_time = str(data.get("expiryTime")  or "").strip()
+        if not new_token:
+            return {"ok": False, "message": f"No new token in response: {data}"}
+    except Exception as exc:
+        return {"ok": False, "message": f"RenewToken error: {exc}"}
+
+    _ddb2 = MongoData()
+    _ddb2._db["kite_market_config"].update_one(
+        {"broker": "dhan"},
+        {"$set": {"access_token": new_token, "login_time": datetime.now().isoformat(), "expiry_time": expiry_time}},
+    )
+    _ddb2.close()
+    try:
+        from features.dhan_broker_ws import set_common_credentials  # type: ignore
+        set_common_credentials(dhan_client_id, new_token)
+    except Exception:
+        pass
+    log.info("Dhan token renewed expiry=%s", expiry_time)
+    return {"ok": True, "message": "Token renewed", "expiry_time": expiry_time}
+
+
+@app.get("/broker/dhan/status")
+async def dhan_feed_status():
+    """Return current Dhan market config status."""
+    try:
+        _ddb = MongoData()
+        cfg = _ddb._db["kite_market_config"].find_one(
+            {"broker": "dhan"},
+            {"user_id": 1, "api_key": 1, "login_time": 1, "enabled": 1, "access_token": 1, "expiry_time": 1},
+        ) or {}
+        _ddb.close()
+        has_token = bool(cfg.get("access_token"))
+        return {
+            "ok":         True,
+            "enabled":    bool(cfg.get("enabled")),
+            "user_id":    str(cfg.get("user_id") or ""),
+            "api_key":    str(cfg.get("api_key") or ""),
+            "has_token":  has_token,
+            "login_time": str(cfg.get("login_time") or ""),
+            "expiry_time": str(cfg.get("expiry_time") or ""),
+        }
+    except Exception as exc:
+        return {"ok": False, "message": str(exc)}
+
+
+_FNO_STOCKS_CACHE: dict = {}        # {"data": [...], "fetched_at": float}
+_FNO_MASTER_CACHE: dict = {}        # {"rows": {symbol: [contracts]}, "fetched_at": float}
+_FNO_CACHE_TTL = 3600               # refresh once per hour
+
+
+def _get_dhan_fno_master() -> dict[str, list[dict]]:
+    """
+    Returns {symbol: [{sec_id, strike, opt_type, expiry, exchange}]} from
+    Dhan security master CSV.  Cached for 1 hour.
+    Also populates _FNO_MASTER_CACHE["equity_ids"] = {symbol: sec_id} for spot lookup.
+    """
+    import time as _t, io as _io, csv as _csv, requests as _req
+    if _FNO_MASTER_CACHE.get("rows") and (_t.time() - _FNO_MASTER_CACHE.get("fetched_at", 0)) < _FNO_CACHE_TTL:
+        return _FNO_MASTER_CACHE["rows"]
+
+    resp = _req.get("https://images.dhan.co/api-data/api-scrip-master.csv", timeout=20)
+    resp.raise_for_status()
+    reader = _csv.DictReader(_io.StringIO(resp.text))
+    master: dict[str, list[dict]] = {}
+    equity_ids: dict[str, str] = {}
+    for row in reader:
+        inst = row.get("SEM_INSTRUMENT_NAME", "").strip()
+        exch = row.get("SEM_EXM_EXCH_ID", "").strip()
+        sec_id = row.get("SEM_SMST_SECURITY_ID", "").strip()
+        ts = row.get("SEM_TRADING_SYMBOL", "").strip()
+
+        # Capture NSE equity security IDs for spot price lookup
+        # Dhan CSV may use EQUITY, ES, EQ or similar for cash equity
+        _deriv_types = {"OPTSTK", "OPTIDX", "FUTSTK", "FUTIDX", "FUTCUR", "OPTCUR", "FUTCOM", "OPTFUT"}
+        if exch == "NSE" and inst not in _deriv_types and ts and sec_id:
+            sym = ts.split("-")[0].strip()
+            if sym and sym not in equity_ids:
+                equity_ids[sym] = sec_id
+
+        if inst != "OPTSTK":
+            continue
+        symbol = ts.split("-")[0].strip() if "-" in ts else ""
+        if not symbol:
+            continue
+        expiry_raw = row.get("SEM_EXPIRY_DATE", "").strip()
+        expiry = expiry_raw[:10] if expiry_raw else ""
+        if not expiry:
+            continue
+        entry = {
+            "sec_id":   sec_id,
+            "strike":   float(row.get("SEM_STRIKE_PRICE") or 0),
+            "opt_type": row.get("SEM_OPTION_TYPE", "").strip().upper(),
+            "expiry":   expiry,
+            "exchange": exch,
+            "lot_size": int(float(row.get("SEM_LOT_UNITS") or 0)),
+        }
+        master.setdefault(symbol, []).append(entry)
+
+    _FNO_MASTER_CACHE["rows"] = master
+    _FNO_MASTER_CACHE["equity_ids"] = equity_ids
+    _FNO_MASTER_CACHE["fetched_at"] = _t.time()
+    return master
+
+
+def _get_dhan_equity_sec_id(symbol: str) -> str:
+    """Return the NSE equity security ID for a stock symbol from Dhan CSV cache."""
+    _get_dhan_fno_master()  # ensure cache is populated
+    return str(_FNO_MASTER_CACHE.get("equity_ids", {}).get(symbol.strip().upper()) or "")
+
+
+@app.get("/algo/dhan/fno-stocks")
+async def get_dhan_fno_stocks():
+    """
+    Returns NSE FNO stock list from active_option_tokens (broker=dhan).
+    Cached for 1 hour. Each item: {symbol, lot_size}
+    """
+    import time as _time
+
+    cached = _FNO_STOCKS_CACHE
+    if cached.get("data") and (_time.time() - cached.get("fetched_at", 0)) < _FNO_CACHE_TTL:
+        return {"ok": True, "count": len(cached["data"]), "stocks": cached["data"]}
+
+    try:
+        db = MongoData()
+        try:
+            col = db._db["active_option_tokens"]
+            try:
+                col.create_index(
+                    [("broker", 1), ("instrument", 1), ("lot_size", 1)],
+                    name="idx_fno_stocks_list",
+                    background=True,
+                )
+            except Exception:
+                pass
+            pipeline = [
+                {"$match": {"broker": "dhan", "lot_size": {"$exists": True, "$ne": None}}},
+                {"$group": {"_id": "$instrument", "lot_size": {"$first": "$lot_size"}}},
+                {"$project": {"symbol": "$_id", "lot_size": 1, "_id": 0}},
+                {"$sort": {"symbol": 1}},
+            ]
+            stocks = list(col.aggregate(pipeline))
+        finally:
+            db.close()
+
+        _FNO_STOCKS_CACHE["data"] = stocks
+        _FNO_STOCKS_CACHE["fetched_at"] = _time.time()
+        return {"ok": True, "count": len(stocks), "stocks": stocks}
+
+    except Exception as exc:
+        log.error("[FNO STOCKS] fetch error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/algo/debug/dhan-ltp")
+async def debug_dhan_ltp(
+    segment: str = Query(default="NSE_FNO"),
+    sec_ids: str = Query(default=""),
+):
+    """
+    Debug endpoint: calls Dhan /marketfeed/ltp directly and returns raw response.
+    Usage: /algo/debug/dhan-ltp?segment=NSE_FNO&sec_ids=1123435,456789
+    Also: /algo/debug/dhan-ltp?segment=IDX_I&sec_ids=13   (NIFTY spot)
+    Also: /algo/debug/dhan-ltp?segment=NSE_EQ&sec_ids=4102  (equity spot)
+    """
+    db = MongoData()
+    try:
+        raw_db = db._db
+        cfg = raw_db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
+        access_token = str(cfg.get("access_token") or "").strip()
+        client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
+        if not access_token or not client_id:
+            return {"error": "No Dhan credentials found in kite_market_config", "cfg_keys": list(cfg.keys())}
+
+        ids_list = [int(x.strip()) for x in sec_ids.split(",") if x.strip().lstrip("-").isdigit()]
+        if not ids_list:
+            return {"error": "No valid sec_ids provided", "example": "?segment=NSE_FNO&sec_ids=1123435"}
+
+        import requests as _req
+        r = _req.post(
+            "https://api.dhan.co/v2/marketfeed/ltp",
+            headers={"access-token": access_token, "client-id": client_id, "Content-Type": "application/json"},
+            json={segment: ids_list},
+            timeout=5,
+        )
+        return {
+            "status_code": r.status_code,
+            "request_body": {segment: ids_list},
+            "response": r.json() if r.status_code == 200 else r.text,
+            "credentials_found": True,
+            "client_id": client_id[:4] + "****",
+        }
+    finally:
+        db.close()
+
+
+@app.get("/algo/debug/dhan-equity-sec-id/{symbol}")
+async def debug_dhan_equity_sec_id(symbol: str):
+    """Check what equity sec_id is found for a stock symbol in Dhan CSV cache."""
+    _get_dhan_fno_master()  # ensure populated
+    equity_ids = _FNO_MASTER_CACHE.get("equity_ids", {})
+    sym = symbol.strip().upper()
+    return {
+        "symbol": sym,
+        "equity_sec_id": equity_ids.get(sym, "NOT FOUND"),
+        "total_equity_ids_cached": len(equity_ids),
+        "sample_keys": list(equity_ids.keys())[:10],
+    }
+
+
+@app.get("/algo/debug/dhan-quote")
+async def debug_dhan_quote(
+    segment: str = Query(default="NSE_FNO"),
+    sec_ids: str = Query(default=""),
+):
+    """
+    Debug endpoint: calls Dhan /marketfeed/quote and shows raw response (for OI field name check).
+    Usage: /algo/debug/dhan-quote?segment=NSE_FNO&sec_ids=65174
+    """
+    db = MongoData()
+    try:
+        raw_db = db._db
+        cfg = raw_db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
+        access_token = str(cfg.get("access_token") or "").strip()
+        client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
+        if not access_token or not client_id:
+            return {"error": "No Dhan credentials found", "cfg_keys": list(cfg.keys())}
+
+        ids_list = [int(x.strip()) for x in sec_ids.split(",") if x.strip().lstrip("-").isdigit()]
+        if not ids_list:
+            return {"error": "No valid sec_ids", "example": "?segment=NSE_FNO&sec_ids=65174"}
+
+        import requests as _req
+        r = _req.post(
+            "https://api.dhan.co/v2/marketfeed/quote",
+            headers={"access-token": access_token, "client-id": client_id, "Content-Type": "application/json"},
+            json={segment: ids_list},
+            timeout=5,
+        )
+        rj = r.json() if r.status_code == 200 else {}
+        # Show parsed OI/LTP for quick verification
+        parsed: dict = {}
+        if rj:
+            seg_data = (rj.get("data") or {}).get(segment) or {}
+            for sid, info in (seg_data.items() if isinstance(seg_data, dict) else []):
+                if isinstance(info, dict):
+                    parsed[str(sid)] = {"ltp": info.get("last_price"), "oi": info.get("oi")}
+        return {
+            "status_code": r.status_code,
+            "dhan_status": rj.get("status"),
+            "request_body": {segment: ids_list},
+            "parsed_ltp_oi": parsed,
+            "raw_response": rj if r.status_code == 200 else r.text,
+        }
+    finally:
+        db.close()
+
+
+@app.get("/algo/debug/chain-sources/{instrument}")
+async def debug_chain_sources(instrument: str, expiry: str = Query(default="")):
+    """
+    Debug: shows what each LTP source returns for an instrument.
+    Usage: /algo/debug/chain-sources/NIFTY?expiry=2026-06-23
+           /algo/debug/chain-sources/360ONE?expiry=2026-06-30
+    """
+    from features.broker_gateway import get_broker_ltp_map, BROKER_INDEX_TOKENS, _active_broker as _ab
+    normalized = instrument.strip().upper()
+    active_broker = _ab()
+
+    db = MongoData()
+    out: dict = {"instrument": normalized, "active_broker": active_broker}
+    try:
+        # 1. WS ltp_map
+        ltp_map = get_broker_ltp_map() or {}
+        out["ws_ltp_map_size"] = len(ltp_map)
+
+        # 2. Active option tokens from DB
+        tok_col = db._db["active_option_tokens"]
+        req_expiry = str(expiry or "").strip()[:10]
+        if not req_expiry:
+            from datetime import date as _date
+            req_expiry = _date.today().isoformat()
+        sample_contracts = list(tok_col.find(
+            {"instrument": normalized, "expiry": {"$regex": f"^{req_expiry}"}, "broker": active_broker},
+            {"_id": 0, "token": 1, "strike": 1, "option_type": 1},
+        ).limit(5))
+        all_tokens = [str(c.get("token") or "") for c in list(tok_col.find(
+            {"instrument": normalized, "expiry": {"$regex": f"^{req_expiry}"}, "broker": active_broker},
+            {"_id": 0, "token": 1},
+        ))]
+        all_tokens = [t for t in all_tokens if t]
+        out["total_tokens_in_db"] = len(all_tokens)
+        out["sample_contracts"] = sample_contracts
+        out["tokens_in_ws_ltp_map"] = sum(1 for t in all_tokens if float(ltp_map.get(t) or 0) > 0)
+
+        # 3. Dhan /ltp for first 5 tokens
+        if active_broker == "dhan" and all_tokens:
+            sample_ids = [int(t) for t in all_tokens[:5] if t.lstrip("-").isdigit()]
+            fetched = _fetch_dhan_market_data("NSE_FNO", sample_ids, db)
+            out["dhan_ltp_sample"] = fetched
+            out["dhan_ltp_all_count"] = 0
+            all_int_ids = [int(t) for t in all_tokens if t.lstrip("-").isdigit()]
+            if all_int_ids:
+                all_fetched = _fetch_dhan_market_data("NSE_FNO", all_int_ids, db)
+                out["dhan_ltp_all_count"] = sum(1 for v in all_fetched.values() if v.get("ltp") or 0 > 0)
+                out["dhan_ltp_all_sample"] = dict(list(all_fetched.items())[:5])
+
+        # 3b. WS OI map
+        try:
+            from features.dhan_ticker import dhan_ticker_manager as _dtm_dbg
+            _dbg_oi_map = _dtm_dbg.oi_map or {}
+            out["ws_oi_map_size"] = len(_dbg_oi_map)
+            out["tokens_in_ws_oi_map"] = sum(1 for t in all_tokens if int(_dbg_oi_map.get(t) or 0) > 0)
+        except Exception:
+            out["ws_oi_map_size"] = "n/a"
+
+        # 4. NSE chain — with raw expiry dates for diagnosis
+        import requests as _req_dbg
+        from datetime import datetime as _dt_dbg
+        nse_data = {}
+        nse_raw_expiries: list = []
+        nse_status_code = 0
+        try:
+            _is_idx = normalized in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+            _nse_url = (f"https://www.nseindia.com/api/option-chain-indices?symbol={normalized}"
+                        if _is_idx else
+                        f"https://www.nseindia.com/api/option-chain-equities?symbol={normalized}")
+            _sess_dbg = _req_dbg.Session()
+            _sess_dbg.get("https://www.nseindia.com", timeout=5, headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"})
+            _r_dbg = _sess_dbg.get(_nse_url, timeout=10, headers={
+                "User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com",
+                "Accept": "application/json", "Accept-Language": "en-US,en;q=0.9"})
+            nse_status_code = _r_dbg.status_code
+            if _r_dbg.status_code == 200:
+                _rj = _r_dbg.json()
+                _recs = _rj.get("records") or {}
+                _rows = _recs.get("data") or []
+                seen_exp: set = set()
+                for _rw in _rows:
+                    _exp = str(_rw.get("expiryDate") or "").strip()
+                    if _exp and _exp not in seen_exp:
+                        nse_raw_expiries.append(_exp)
+                        seen_exp.add(_exp)
+                    if len(nse_raw_expiries) >= 6:
+                        break
+        except Exception as _e_dbg:
+            out["nse_raw_error"] = str(_e_dbg)
+        out["nse_status_code"] = nse_status_code
+        out["nse_raw_expiry_dates"] = nse_raw_expiries
+        try:
+            _dt_parsed = _dt_dbg.strptime(req_expiry, "%Y-%m-%d")
+            _day = _dt_parsed.strftime("%d").lstrip("0")
+            out["expiry_formats_we_match"] = [
+                f"{_day}-{_dt_parsed.strftime('%b')}-{_dt_parsed.strftime('%Y')}",
+                f"{_day} {_dt_parsed.strftime('%b')} {_dt_parsed.strftime('%Y')}",
+            ]
+        except Exception:
+            out["expiry_formats_we_match"] = []
+        try:
+            nse_data = _fetch_nse_chain_data(normalized, req_expiry)
+        except Exception as e:
+            nse_data = {"error": str(e)}
+        out["nse_chain_spot"] = nse_data.get("spot")
+        out["nse_chain_strikes_count"] = len(nse_data.get("chain") or {})
+        out["nse_chain_sample"] = dict(list((nse_data.get("chain") or {}).items())[:4])
+
+    finally:
+        db.close()
+    return out
 
 
 @app.get("/live/kite-callback", response_class=HTMLResponse)
@@ -5581,7 +6618,11 @@ def _kite_popup_html(
 
 @app.get("/broker/kite/access-token/{broker_doc_id}")
 async def kite_get_access_token(broker_doc_id: str):
-    token = get_stored_access_token(db._db, broker_doc_id)
+    _db = MongoData()
+    try:
+        token = get_stored_access_token(_db._db, broker_doc_id)
+    finally:
+        _db.close()
     if not token:
         raise HTTPException(status_code=404, detail="No access token found")
     return {"access_token": token}
@@ -6824,11 +7865,40 @@ def _get_kite_market_session_status() -> tuple[bool, str]:
     try:
         cfg = local_db._db["kite_market_config"].find_one(
             {"enabled": True},
-            {"access_token": 1, "api_key": 1, "login_time": 1},
+            {"access_token": 1, "api_key": 1, "user_id": 1, "broker": 1, "login_time": 1},
         ) or {}
-        api_key = str(cfg.get("api_key") or "").strip()
+        broker = str(cfg.get("broker") or "kite").strip().lower()
         access_token = str(cfg.get("access_token") or "").strip()
         login_time = str(cfg.get("login_time") or "").strip()
+
+        if broker == "dhan":
+            user_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
+            if not user_id:
+                return False, "Dhan config missing user_id in kite_market_config"
+            if not access_token:
+                return False, "Dhan access_token not found in kite_market_config"
+            # Load into dhan_broker_ws cache so the WS can start
+            try:
+                from features.dhan_broker_ws import set_common_credentials  # type: ignore
+                set_common_credentials(user_id, access_token)
+            except Exception:
+                pass
+            # Validate via Dhan profile API
+            try:
+                import requests as _req  # type: ignore
+                resp = _req.get(
+                    "https://api.dhan.co/v2/profile",
+                    headers={"access-token": access_token, "Content-Type": "application/json"},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    return True, "Dhan access token valid"
+                return False, f"Dhan token invalid (HTTP {resp.status_code})"
+            except Exception as exc:
+                return False, f"Dhan token validation error: {exc}"
+
+        # ── Kite path ──
+        api_key = str(cfg.get("api_key") or "").strip()
         if not api_key:
             return False, (
                 "Kite market config missing api_key"
@@ -6856,12 +7926,188 @@ def _has_ready_kite_market_session() -> bool:
     return is_ready
 
 
+def _build_monitor_dhan_token_page(trade_date: str = '', reason: str = '', retry_url: str = '') -> str:
+    reason_text = str(reason or "Dhan access token not configured").strip()
+    if not retry_url:
+        retry_url = '/monitor/start' + (f'?trade_date={trade_date}' if trade_date else '')
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dhan Login Required</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0; min-height: 100vh; display: flex; align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at top, rgba(249,115,22,0.12), transparent 34%),
+                  linear-gradient(155deg, #07111f 0%, #0f172a 58%, #111827 100%);
+      color: #e2e8f0; font-family: "Segoe UI", Tahoma, sans-serif;
+    }}
+    .card {{
+      width: min(480px, calc(100vw - 32px));
+      background: rgba(9, 17, 31, 0.95);
+      border: 1px solid rgba(249,115,22,0.22);
+      border-radius: 28px; padding: 36px 28px;
+      box-shadow: 0 28px 80px rgba(0,0,0,0.38); text-align: center;
+    }}
+    .badge {{
+      display: inline-block; padding: 7px 16px; border-radius: 999px;
+      background: rgba(249,115,22,0.12); border: 1px solid rgba(249,115,22,0.28);
+      color: #fb923c; letter-spacing: 0.12em; font-size: 11px; text-transform: uppercase;
+    }}
+    h1 {{ margin: 18px 0 10px; font-size: 26px; line-height: 1.15; color: #f8fafc; }}
+    p {{ margin: 0 auto 0; max-width: 400px; color: #94a3b8; line-height: 1.7; font-size: 15px; }}
+    .reason {{ margin-top: 10px; color: #f87171; font-size: 13px; }}
+    .actions {{ margin-top: 26px; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }}
+    .btn {{
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 180px; padding: 14px 22px; border-radius: 14px;
+      text-decoration: none; border: none; cursor: pointer;
+      font-size: 15px; font-weight: 700; transition: opacity .15s;
+    }}
+    .btn:active {{ opacity: .8; }}
+    .btn-dhan {{ background: linear-gradient(135deg, #f97316, #ea580c); color: #fff;
+                 box-shadow: 0 8px 24px rgba(249,115,22,0.3); }}
+    .btn-retry {{ background: #1e293b; color: #cbd5e1; border: 1px solid rgba(148,163,184,0.18); }}
+    .hint {{ margin-top: 18px; color: #64748b; font-size: 13px; min-height: 1.4rem; }}
+    .divider {{ margin: 24px 0 16px; border: none; border-top: 1px solid rgba(148,163,184,0.1); }}
+    .manual-label {{
+      font-size: 12px; color: #475569; cursor: pointer; text-decoration: underline;
+      display: block; margin-bottom: 12px;
+    }}
+    .form-row {{ display: flex; flex-direction: column; gap: 10px; text-align: left; }}
+    label {{ font-size: 13px; color: #94a3b8; margin-bottom: 2px; }}
+    input {{
+      width: 100%; padding: 11px 14px; border-radius: 10px;
+      border: 1px solid rgba(148,163,184,0.22); background: rgba(30,41,59,0.8);
+      color: #f1f5f9; font-size: 14px;
+    }}
+    input:focus {{ outline: none; border-color: #f97316; }}
+    .btn-save {{
+      width: 100%; margin-top: 12px; padding: 12px; border-radius: 10px;
+      background: linear-gradient(135deg,#f97316,#ea580c); border: none;
+      color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
+    }}
+    .err {{ color: #f87171; font-size: 13px; margin-top: 8px; display: none; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Dhan Login Required</div>
+    <h1>Connect Dhan Account</h1>
+    <p>Login with Dhan to start the live monitor. Your credentials are already saved — just click the button below.</p>
+    <p class="reason">Reason: {reason_text}</p>
+
+    <div class="actions">
+      <button class="btn btn-dhan" onclick="openDhanLogin()">Login with Dhan →</button>
+      <a class="btn btn-retry" href="{retry_url}">Retry</a>
+    </div>
+    <div class="hint" id="hintText">A Dhan login window will open. Complete login there and return here.</div>
+
+    <hr class="divider">
+    <span class="manual-label" onclick="document.getElementById('manualForm').style.display='block';this.style.display='none'">
+      Or enter access token manually
+    </span>
+    <div id="manualForm" style="display:none">
+      <div class="form-row">
+        <div>
+          <label>Dhan Client ID</label>
+          <input id="clientId" type="text" placeholder="e.g. HA9835" autocomplete="off" />
+        </div>
+        <div>
+          <label>Access Token</label>
+          <input id="accessToken" type="password" placeholder="Paste Dhan access token" autocomplete="off" />
+        </div>
+      </div>
+      <div class="err" id="errMsg"></div>
+      <button class="btn-save" onclick="saveToken()">Save &amp; Start Monitor</button>
+    </div>
+  </div>
+  <script>
+    let _popup = null;
+
+    function openDhanLogin() {{
+      const hint = document.getElementById('hintText');
+      hint.textContent = 'Opening Dhan login window...';
+      _popup = window.open('/broker/dhan/login', 'DhanLogin',
+        'width=420,height=560,resizable=yes,scrollbars=yes');
+      if (!_popup) {{
+        hint.textContent = 'Popup blocked — allow popups and try again, or use the link below.';
+        return;
+      }}
+      hint.textContent = 'Complete login in the Dhan window. This page will refresh automatically.';
+    }}
+
+    window.addEventListener('message', function(e) {{
+      if (!e.data || e.data.type !== 'DHAN_LOGIN') return;
+      const hint = document.getElementById('hintText');
+      if (e.data.success) {{
+        hint.textContent = 'Login successful! Redirecting to monitor...';
+        hint.style.color = '#22c55e';
+        setTimeout(() => {{ window.location.href = {json.dumps(retry_url)}; }}, 1000);
+      }} else {{
+        hint.textContent = 'Login failed: ' + (e.data.message || 'Unknown error');
+        hint.style.color = '#f87171';
+      }}
+    }});
+
+    async function saveToken() {{
+      const clientId    = document.getElementById('clientId').value.trim();
+      const accessToken = document.getElementById('accessToken').value.trim();
+      const err  = document.getElementById('errMsg');
+      err.style.display = 'none';
+      if (!clientId || !accessToken) {{
+        err.textContent = 'Both Client ID and Access Token are required.';
+        err.style.display = 'block';
+        return;
+      }}
+      const hint = document.getElementById('hintText');
+      hint.textContent = 'Saving credentials...';
+      try {{
+        const res = await fetch('/broker/dhan/config', {{
+          method: 'POST',
+          headers: {{'Content-Type': 'application/json'}},
+          body: JSON.stringify({{ client_id: clientId, access_token: accessToken }}),
+        }});
+        const data = await res.json();
+        if (!res.ok || data.status === 'error') {{
+          err.textContent = data.message || 'Failed to save credentials.';
+          err.style.display = 'block';
+          hint.textContent = 'Save failed.';
+          return;
+        }}
+        hint.textContent = 'Saved! Starting monitor...';
+        window.location.href = {json.dumps(retry_url)};
+      }} catch (e) {{
+        err.textContent = 'Network error: ' + e.message;
+        err.style.display = 'block';
+      }}
+    }}
+  </script>
+</body>
+</html>"""
+
+
 def _build_monitor_kite_login_page(trade_date: str = '', reason: str = '') -> str:
     normalized_trade_date = str(trade_date or '').strip()
     retry_url = "/monitor/start"
     if normalized_trade_date:
         retry_url += f"?trade_date={normalized_trade_date}"
-    reason_text = str(reason or "No Kite session found").strip()
+    reason_text = str(reason or "No broker session found").strip()
+
+    # Detect active broker and show appropriate page
+    try:
+        _local_db = MongoData()
+        _cfg = _local_db._db["kite_market_config"].find_one({"enabled": True}, {"broker": 1}) or {}
+        _local_db.close()
+        if str(_cfg.get("broker") or "kite").strip().lower() == "dhan":
+            return _build_monitor_dhan_token_page(
+                trade_date=trade_date, reason=reason_text, retry_url=retry_url,
+            )
+    except Exception:
+        pass
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7476,6 +8722,53 @@ def _start_mock_bg(time_str: str) -> None:
             pass
 
 
+def _upsert_contracts_into_col(
+    active_tokens_col,
+    contracts: list[dict],
+    stock_name: str,
+    now_ts: str,
+    broker: str = "",
+) -> tuple[int, int]:
+    created = 0
+    updated = 0
+    for contract in contracts:
+        expiry_val = str(contract.get("expiry") or "").strip()[:10]
+        opt_type_val = str(contract.get("option_type") or contract.get("opt_type") or "").strip().upper()
+        query: dict = {
+            "instrument": stock_name,
+            "expiry": expiry_val,
+            "strike": contract.get("strike"),
+            "option_type": opt_type_val,
+        }
+        if broker:
+            query["broker"] = broker
+        _idx_set = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+        update_payload: dict = {
+            "instrument": stock_name,
+            "instrument_type": "index" if stock_name.upper() in _idx_set else "stock",
+            "expiry": expiry_val,
+            "strike": query["strike"],
+            "option_type": opt_type_val,
+            "token": str(contract.get("token") or "").strip(),
+            "tokens": str(contract.get("tokens") or contract.get("token") or "").strip(),
+            "symbol": str(contract.get("symbol") or "").strip(),
+            "exchange": str(contract.get("exchange") or "").strip(),
+            "updated_at": now_ts,
+        }
+        if broker:
+            update_payload["broker"] = broker
+        res = active_tokens_col.update_one(
+            query,
+            {"$set": update_payload, "$setOnInsert": {"created_at": now_ts}},
+            upsert=True,
+        )
+        if res.upserted_id is not None:
+            created += 1
+        elif res.matched_count:
+            updated += 1
+    return created, updated
+
+
 def _sync_active_option_tokens(instrument: str) -> dict:
     normalized_instrument = str(instrument or "").strip().upper()
     if not normalized_instrument:
@@ -7486,10 +8779,126 @@ def _sync_active_option_tokens(instrument: str) -> dict:
     try:
         credentials_loaded = load_credentials_from_db(db)
         active_tokens_col = db._db["active_option_tokens"]
-        active_tokens_col.create_index(
-            [("instrument", 1), ("expiry", 1), ("strike", 1), ("option_type", 1)],
-            name="idx_active_option_contract",
-        )
+        try:
+            active_tokens_col.create_index(
+                [("broker", 1), ("instrument", 1), ("expiry", 1), ("strike", 1), ("option_type", 1)],
+                name="idx_active_option_contract_v2",
+            )
+        except Exception:
+            pass
+
+        from features.broker_gateway import _active_broker as _sync_get_broker  # type: ignore
+        active_broker = _sync_get_broker()
+
+        _INDEX_SET = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+
+        # Special case: iterate ALL non-index FNO stock underlyings
+        if normalized_instrument == "FNO-STOCKS":
+            now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+            created_count = 0
+            updated_count = 0
+            contracts_processed = 0
+            all_expiries: set[str] = set()
+
+            if active_broker == "dhan":
+                # Clear existing FNO stock contracts (expired + stale) before re-inserting
+                deleted = active_tokens_col.delete_many({
+                    "broker": "dhan",
+                    "instrument_type": "stock",
+                })
+                if deleted.deleted_count == 0:
+                    # First run — no instrument_type field yet, clear by excluding known indices
+                    active_tokens_col.delete_many({
+                        "broker": "dhan",
+                        "instrument": {"$nin": list(_INDEX_SET)},
+                    })
+
+                # Dhan: use CSV master directly (avoids circular DB read)
+                master = _get_dhan_fno_master()
+                for symbol, all_contracts in master.items():
+                    for c in all_contracts:
+                        exp = str(c.get("expiry") or "").strip()[:10]
+                        if not exp or exp < today_str:
+                            continue
+                        all_expiries.add(exp)
+                        contracts_processed += 1
+                        opt_type = str(c.get("opt_type") or "").strip().upper()
+                        query = {
+                            "broker": "dhan",
+                            "instrument": symbol,
+                            "expiry": exp,
+                            "strike": c.get("strike"),
+                            "option_type": opt_type,
+                        }
+                        payload = {
+                            "broker": "dhan",
+                            "instrument": symbol,
+                            "instrument_type": "stock",
+                            "expiry": exp,
+                            "strike": c.get("strike"),
+                            "option_type": opt_type,
+                            "token": str(c.get("sec_id") or "").strip(),
+                            "tokens": str(c.get("sec_id") or "").strip(),
+                            "symbol": f"{symbol}{int(c['strike']) if float(c['strike']).is_integer() else c['strike']}{opt_type}",
+                            "exchange": str(c.get("exchange") or "NSE").strip(),
+                            "lot_size": c.get("lot_size"),
+                            "updated_at": now_ts,
+                        }
+                        res = active_tokens_col.update_one(
+                            query,
+                            {"$set": payload, "$setOnInsert": {"created_at": now_ts}},
+                            upsert=True,
+                        )
+                        if res.upserted_id is not None:
+                            created_count += 1
+                        elif res.matched_count:
+                            updated_count += 1
+            else:
+                # Kite: load from Kite REST instruments API
+                from features.spot_atm_utils import (  # type: ignore
+                    _load_kite_instruments as _kite_inst_load,
+                    list_kite_option_contracts as _kite_list_contracts,
+                )
+                known_indices = set(KITE_INDEX_TOKENS.keys())
+                cache = _kite_inst_load(force=True)
+                if not cache:
+                    return {
+                        "instrument": "FNO-STOCKS",
+                        "expiries": [],
+                        "contracts_processed": 0,
+                        "created": 0,
+                        "updated": 0,
+                        "message": "No active option contracts found",
+                        "credentials_loaded": credentials_loaded,
+                        "hint": "Check kite_market_config access_token/login if this instrument should have live contracts",
+                    }
+
+                underlyings: dict[str, set[str]] = {}
+                for (name, exp, _strike, _type) in cache:
+                    if name not in known_indices and exp >= today_str:
+                        underlyings.setdefault(name, set()).add(exp)
+
+                for stock_name, expiry_set in underlyings.items():
+                    for expiry in sorted(expiry_set):
+                        contracts = _kite_list_contracts(stock_name, expiry)
+                        all_expiries.update(expiry_set)
+                        contracts_processed += len(contracts)
+                        c, u = _upsert_contracts_into_col(
+                            active_tokens_col, contracts, stock_name, now_ts, broker="kite"
+                        )
+                        created_count += c
+                        updated_count += u
+
+            return {
+                "instrument": "FNO-STOCKS",
+                "underlyings_count": contracts_processed,
+                "expiries": sorted(all_expiries),
+                "contracts_processed": contracts_processed,
+                "created": created_count,
+                "updated": updated_count,
+                "credentials_loaded": credentials_loaded,
+                "message": "active_option_tokens sync completed" if contracts_processed else "No active option contracts found",
+            }
 
         expiries = get_kite_expiries(normalized_instrument, today_str, force_refresh=True)
         if not expiries:
@@ -7517,37 +8926,12 @@ def _sync_active_option_tokens(instrument: str) -> dict:
                 expiry,
                 force_refresh=(expiry_index == 0),
             )
-            for contract in contracts:
-                contracts_processed += 1
-                query = {
-                    "instrument": normalized_instrument,
-                    "expiry": str(contract.get("expiry") or "").strip()[:10],
-                    "strike": contract.get("strike"),
-                    "option_type": str(contract.get("option_type") or "").strip().upper(),
-                }
-                update_payload = {
-                    "instrument": normalized_instrument,
-                    "expiry": query["expiry"],
-                    "strike": query["strike"],
-                    "option_type": query["option_type"],
-                    "token": str(contract.get("token") or "").strip(),
-                    "tokens": str(contract.get("tokens") or contract.get("token") or "").strip(),
-                    "symbol": str(contract.get("symbol") or "").strip(),
-                    "exchange": str(contract.get("exchange") or "").strip(),
-                    "updated_at": now_ts,
-                }
-                result = active_tokens_col.update_one(
-                    query,
-                    {
-                        "$set": update_payload,
-                        "$setOnInsert": {"created_at": now_ts},
-                    },
-                    upsert=True,
-                )
-                if result.upserted_id is not None:
-                    created_count += 1
-                elif result.matched_count:
-                    updated_count += 1
+            contracts_processed += len(contracts)
+            c, u = _upsert_contracts_into_col(
+                active_tokens_col, contracts, normalized_instrument, now_ts, broker=active_broker
+            )
+            created_count += c
+            updated_count += u
 
         return {
             "instrument": normalized_instrument,
@@ -7567,9 +8951,9 @@ def _get_live_index_spot_price(normalized_instrument: str) -> float:
     if not index_token:
         return 0.0
     try:
-        from features.kite_broker_ws import get_ltp_map  # type: ignore
+        from features.broker_gateway import get_broker_ltp_map  # type: ignore
 
-        ltp_value = (get_ltp_map() or {}).get(str(index_token), 0.0)
+        ltp_value = (get_broker_ltp_map() or {}).get(str(index_token), 0.0)
         return float(ltp_value or 0.0)
     except Exception:
         return 0.0
@@ -7881,27 +9265,18 @@ _INDEX_KITE_SYMBOLS: dict[str, str] = {
 
 
 def _get_kite_rest_client():
-    """Return a configured KiteConnect instance using DB credentials, or None."""
+    """Return a configured broker REST client using DB credentials, or None."""
     try:
-        from features.kite_broker_ws import get_common_credentials, is_configured  # type: ignore
-        if is_configured():
-            ak, at = get_common_credentials()
-        else:
-            _db = MongoData()
-            try:
-                doc = _db._db["kite_market_config"].find_one({"enabled": True}) or {}
-            finally:
-                _db.close()
-            ak = str(doc.get("api_key") or "").strip()
-            at = str(doc.get("access_token") or "").strip()
-        if not ak or not at:
-            return None
-        from kiteconnect import KiteConnect  # type: ignore
-        k = KiteConnect(api_key=ak)
-        k.set_access_token(at)
-        return k
+        from features.broker_gateway import get_broker_rest_client  # type: ignore
+        return get_broker_rest_client()
     except Exception:
         return None
+
+
+# NSE option chain in-process cache — keyed by "SYMBOL:YYYY-MM-DD"
+_nse_chain_cache: dict[str, tuple[float, dict]] = {}
+_nse_chain_cache_lock = threading.Lock()
+_NSE_CHAIN_CACHE_TTL = 60.0  # seconds
 
 
 def _resolve_chain_reference_spot(
@@ -7914,13 +9289,9 @@ def _resolve_chain_reference_spot(
     """
     Convert the ATM synthetic future into a spot-equivalent reference price.
 
-    This lines up Greeks more closely with broker option chains, which usually
-    anchor IV/Delta to the current forward/synthetic underlying rather than the
-    raw cash index tick alone.
+    When spot_price is 0 (equity spot fetch failed), estimates spot from
+    put-call parity by finding the strike where |CE_ltp - PE_ltp| is minimum.
     """
-    if spot_price <= 0:
-        return 0.0
-
     ce_by_strike = rows_by_side.get("CE") or {}
     pe_by_strike = rows_by_side.get("PE") or {}
     common_strikes = [
@@ -7932,7 +9303,18 @@ def _resolve_chain_reference_spot(
     if not common_strikes:
         return spot_price
 
-    atm_strike = min(common_strikes, key=lambda strike: abs(strike - spot_price))
+    if spot_price > 0:
+        atm_strike = min(common_strikes, key=lambda strike: abs(strike - spot_price))
+    else:
+        # Estimate ATM via put-call parity: strike where |CE - PE| is minimized
+        atm_strike = min(
+            common_strikes,
+            key=lambda strike: abs(
+                float((ce_by_strike.get(strike) or {}).get("ltp") or 0)
+                - float((pe_by_strike.get(strike) or {}).get("ltp") or 0)
+            ),
+        )
+
     ce_ltp = float((ce_by_strike.get(atm_strike) or {}).get("ltp") or 0)
     pe_ltp = float((pe_by_strike.get(atm_strike) or {}).get("ltp") or 0)
     synthetic_future = atm_strike + ce_ltp - pe_ltp
@@ -7941,6 +9323,154 @@ def _resolve_chain_reference_spot(
 
     # Convert forward/synthetic reference back to a BSM-compatible spot input.
     return synthetic_future * math.exp(-(r - q) * max(T, 0.0))
+
+
+def _fetch_nse_chain_data(symbol: str, expiry_iso: str) -> dict:
+    """
+    Fetch LTP + OI + spot from NSE option chain for a symbol + expiry.
+    Returns {"spot": float, "chain": {"24500_CE": {"ltp": 22.3, "oi": 131000}, ...}}
+    Results are cached for 60 seconds to avoid repeated slow HTTP calls.
+    """
+    import requests as _req
+    from datetime import datetime as _dt
+
+    cache_key = f"{symbol.upper()}:{expiry_iso[:10]}"
+    _now = time.monotonic()
+    with _nse_chain_cache_lock:
+        _hit = _nse_chain_cache.get(cache_key)
+        if _hit and (_now - _hit[0]) < _NSE_CHAIN_CACHE_TTL:
+            return _hit[1]
+
+    try:
+        expiry_dt = _dt.strptime(expiry_iso[:10], "%Y-%m-%d")
+        _day = expiry_dt.strftime("%d").lstrip("0")
+        _mon = expiry_dt.strftime("%b")
+        _yr  = expiry_dt.strftime("%Y")
+        expiry_nse_dash  = f"{_day}-{_mon}-{_yr}"   # "23-Jun-2026"
+        expiry_nse_space = f"{_day} {_mon} {_yr}"   # "23 Jun 2026"
+    except Exception:
+        expiry_nse_dash = expiry_nse_space = ""
+
+    _INDICES = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+    is_index = symbol.upper() in _INDICES
+    url = (
+        f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol.upper()}"
+        if is_index
+        else f"https://www.nseindia.com/api/option-chain-equities?symbol={symbol.upper()}"
+    )
+
+    empty: dict = {"spot": 0.0, "chain": {}}
+    try:
+        sess = _req.Session()
+        sess.get("https://www.nseindia.com", timeout=5,
+                 headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"})
+        r = sess.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.nseindia.com",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        if r.status_code != 200:
+            log.warning("[NSE CHAIN] %s HTTP %s", symbol, r.status_code)
+            return empty
+        records = r.json().get("records") or {}
+        data_rows = records.get("data") or []
+        spot = float(records.get("underlyingValue") or 0)
+        chain: dict[str, dict] = {}
+        for row in data_rows:
+            _row_expiry = str(row.get("expiryDate") or "").strip()
+            if expiry_nse_dash and _row_expiry not in (expiry_nse_dash, expiry_nse_space):
+                continue
+            strike = row.get("strikePrice")
+            if strike is None:
+                continue
+            strike_int = int(float(strike))
+            if not spot:
+                spot = float(row.get("CE", {}).get("underlyingValue") or row.get("PE", {}).get("underlyingValue") or 0)
+            for opt_type in ("CE", "PE"):
+                opt_data = row.get(opt_type) or {}
+                chain[f"{strike_int}_{opt_type}"] = {
+                    "ltp": float(opt_data.get("lastPrice") or 0),
+                    "oi":  int(opt_data.get("openInterest") or 0),
+                }
+        result = {"spot": spot, "chain": chain}
+        if chain:
+            with _nse_chain_cache_lock:
+                _nse_chain_cache[cache_key] = (time.monotonic(), result)
+        return result
+    except Exception as _e:
+        log.warning("[NSE CHAIN] %s error: %s", symbol, _e)
+        return empty
+
+
+def _fetch_nse_oi_map(symbol: str, expiry_iso: str) -> dict[str, int]:
+    """Backward-compat wrapper — returns only OI map."""
+    return {k: v["oi"] for k, v in _fetch_nse_chain_data(symbol, expiry_iso).get("chain", {}).items()}
+
+
+def _fetch_dhan_market_data(segment: str, sec_ids: list[int], db) -> dict[str, dict]:
+    """
+    Fetch LTP + OI from Dhan /marketfeed/quote for a list of security IDs.
+    Returns {str(sec_id): {"ltp": float, "oi": int}}.
+    Dhan /quote supports up to 1000 per segment — send as few requests as possible.
+    """
+    if not sec_ids:
+        return {}
+    raw_db = db._db if hasattr(db, "_db") else db
+    cfg = raw_db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
+    access_token = str(cfg.get("access_token") or "").strip()
+    client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
+    if not access_token or not client_id:
+        return {}
+
+    import requests as _req
+
+    headers = {
+        "access-token": access_token,
+        "client-id": client_id,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    _BATCH = 500  # Dhan /quote supports up to 1000 per segment
+
+    result: dict[str, dict] = {}
+    batches = [sec_ids[i: i + _BATCH] for i in range(0, len(sec_ids), _BATCH)]
+
+    for batch in batches:
+        for _attempt in range(3):
+            try:
+                r = _req.post(
+                    "https://api.dhan.co/v2/marketfeed/quote",
+                    headers=headers, json={segment: batch}, timeout=15,
+                )
+                if r.status_code == 200:
+                    raw = r.json()
+                    data = (raw.get("data") or raw).get(segment) or {}
+                    for sid, info in data.items():
+                        if isinstance(info, dict):
+                            result[str(sid)] = {
+                                "ltp": float(info.get("last_price") or 0),
+                                "oi":  int(info.get("oi") or 0),
+                            }
+                    break
+                elif r.status_code == 429:
+                    time.sleep(1.0 * (_attempt + 1))
+                else:
+                    log.warning("[DHAN QUOTE] segment=%s status=%d body=%s",
+                                segment, r.status_code, r.text[:200])
+                    break
+            except Exception as _e:
+                log.warning("[DHAN QUOTE] attempt=%d error=%s", _attempt, _e)
+                if _attempt < 2:
+                    time.sleep(0.5)
+
+    return result
+
+
+def _fetch_dhan_ltp(segment: str, sec_ids: list[int], db) -> dict[str, float]:
+    """Convenience wrapper — returns {str(sec_id): ltp}."""
+    return {k: v["ltp"] for k, v in _fetch_dhan_market_data(segment, sec_ids, db).items()}
 
 
 @app.get("/algo/live-greeks-chain/{instrument}")
@@ -7957,142 +9487,371 @@ async def get_live_greeks_chain(
     Each row: {strike, ltp, iv, delta, gamma, theta, vega, oi, token, symbol}
     """
     normalized = str(instrument or "").strip().upper()
-    allowed = {"NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"}
-    if normalized not in allowed:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported instrument '{normalized}'. Use one of: {', '.join(sorted(allowed))}",
-        )
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Instrument is required.")
 
-    from features.kite_delta_chain import (  # type: ignore
-        _calc_iv, _calc_greeks, _time_to_expiry, _RISK_FREE_RATE,
-        _DIVIDEND_YIELDS, _DEFAULT_DIVIDEND_YIELD,
-    )
-    from features.kite_broker_ws import get_ltp_map  # type: ignore
-    from features.spot_atm_utils import KITE_INDEX_TOKENS  # type: ignore
+    INDEX_INSTRUMENTS = {"NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"}
+    is_index = normalized in INDEX_INSTRUMENTS
+
+    from features.broker_gateway import get_bs_helpers, get_broker_ltp_map, get_broker_rest_quotes, BROKER_INDEX_TOKENS, BROKER_VIX_TOKEN, broker_ticker_manager as _btm  # type: ignore
+    _calc_iv, _calc_greeks, _time_to_expiry, _RISK_FREE_RATE, _DIVIDEND_YIELDS, _DEFAULT_DIVIDEND_YIELD = get_bs_helpers()
+
+    # Ensure Dhan credentials are loaded into memory before any REST call
+    _cred_db = MongoData()
+    try:
+        load_credentials_from_db(_cred_db)
+    except Exception:
+        pass
+    finally:
+        _cred_db.close()
 
     # ── Source 1: WebSocket ltp_map (zero-cost, already subscribed) ──────────
-    ltp_map: dict = get_ltp_map() or {}
-    index_token = str(KITE_INDEX_TOKENS.get(normalized, 0))
-    spot_price = float(ltp_map.get(index_token, 0) or 0)
-    use_ws = bool(ltp_map)  # non-empty = WS is live
+    from features.broker_gateway import get_broker_credentials as _get_creds, _active_broker as _chain_broker  # type: ignore
+    import requests as _chain_req
 
-    # ── Load tokens from DB ───────────────────────────────────────────────────
-    db = MongoData()
+    ltp_map: dict = get_broker_ltp_map() or {}
+    spot_price = 0.0
+    _active_chain_broker = _chain_broker()
+
+    _spot_db = MongoData()
     try:
-        tok_col = db._db["active_option_tokens"]
+        if is_index:
+            index_token_id = BROKER_INDEX_TOKENS.get(normalized, 0)
+            index_token = str(index_token_id)
+            spot_price = float(ltp_map.get(index_token, 0) or 0)
+            if not spot_price:
+                try:
+                    spot_price = float(_btm.get_spot(normalized) or 0)
+                except Exception:
+                    pass
+            # Dhan REST fallback for index spot (IDX_I segment)
+            if not spot_price and _active_chain_broker == "dhan" and index_token_id:
+                _d = _fetch_dhan_ltp("IDX_I", [int(index_token_id)], _spot_db)
+                spot_price = float(_d.get(str(index_token_id)) or 0)
+        else:
+            # Stock spot price: Dhan REST (NSE_EQ) or Kite REST
+            if _active_chain_broker == "dhan":
+                _sec_id = _get_dhan_equity_sec_id(normalized)
+                if not _sec_id:
+                    _stock_doc = _spot_db._db["scanner_stocks_list"].find_one(
+                        {"symbol": normalized}, {"dhan_security_id": 1, "_id": 0}
+                    ) or {}
+                    _sec_id = str(_stock_doc.get("dhan_security_id") or "").strip()
+                if _sec_id:
+                    _d = _fetch_dhan_ltp("NSE_EQ", [int(_sec_id)], _spot_db)
+                    spot_price = float(_d.get(str(_sec_id)) or 0)
+    finally:
+        _spot_db.close()
 
-        raw_expiries = tok_col.distinct("expiry", {"instrument": normalized})
-        expiries_sorted: list[str] = sorted(
-            set(str(e)[:10] for e in raw_expiries if e)
-        )
-        if not expiries_sorted:
+    # ── Load contracts (index: DB tokens | stock: Dhan CSV master) ───────────
+    if is_index:
+        db = MongoData()
+        try:
+            tok_col = db._db["active_option_tokens"]
+
+            from features.broker_gateway import _active_broker as _get_broker  # type: ignore
+            _broker = _get_broker()
+            _broker_filter = {"broker": _broker}
+
+            raw_expiries = tok_col.distinct("expiry", {"instrument": normalized, **_broker_filter})
+            expiries_sorted: list[str] = sorted(
+                set(str(e)[:10] for e in raw_expiries if e)
+            )
+            if not expiries_sorted:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No active option tokens for '{normalized}'.",
+                )
+
+            req_expiry = str(expiry or "").strip()[:10]
+            if req_expiry and req_expiry not in expiries_sorted:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Expiry '{req_expiry}' not found. Available: {expiries_sorted}",
+                )
+
+            if not req_expiry:
+                from datetime import date as _date
+                today_str = _date.today().isoformat()
+                future = [e for e in expiries_sorted if e >= today_str]
+                live_expiry = future[0] if future else expiries_sorted[-1]
+            else:
+                live_expiry = req_expiry
+
+            contracts = list(tok_col.find(
+                {"instrument": normalized, "expiry": {"$regex": f"^{live_expiry}"}, **_broker_filter},
+                {"_id": 0, "strike": 1, "option_type": 1, "token": 1, "tokens": 1, "symbol": 1, "ws_segment": 1},
+            ))
+
+            lot_size_defaults = {"NIFTY": 75, "BANKNIFTY": 15, "FINNIFTY": 40, "MIDCPNIFTY": 120, "SENSEX": 10}
+            expiry_date_str = str(live_expiry)[:10]
+            lot_doc = db._db["lot_sizes"].find_one({
+                "underlying": normalized,
+                "from_date": {"$lte": expiry_date_str},
+                "to_date": {"$gte": expiry_date_str},
+            })
+            lot_size = int(lot_doc["lot_size"]) if lot_doc else lot_size_defaults.get(normalized, 75)
+        finally:
+            db.close()
+
+        if not contracts:
+            return {
+                "instrument": normalized,
+                "expiry": live_expiry,
+                "expiries": expiries_sorted,
+                "spot_price": spot_price,
+                "chain": {"CE": [], "PE": []},
+            }
+
+        # ── Build unified LTP/OI map for index options ───────────────────────
+        _all_tokens = [str(c.get("token") or c.get("tokens") or "") for c in contracts]
+        _all_tokens = [t for t in _all_tokens if t]
+
+        _ws_segments_all = {
+            str(c.get("token") or c.get("tokens") or ""): str(c.get("ws_segment") or "NSE_FNO")
+            for c in contracts if c.get("token") or c.get("tokens")
+        }
+
+        # {token: {"ltp": float, "oi": int}}
+        _idx_market: dict[str, dict] = {}
+
+        if _active_chain_broker == "dhan":
+            _idx_ltp_db = MongoData()
+            try:
+                _nse_ids = [int(t) for t in _all_tokens
+                            if t.lstrip("-").isdigit() and _ws_segments_all.get(t, "NSE_FNO").upper() != "BSE_FNO"]
+                _bse_ids = [int(t) for t in _all_tokens
+                            if t.lstrip("-").isdigit() and _ws_segments_all.get(t, "NSE_FNO").upper() == "BSE_FNO"]
+                if _nse_ids:
+                    for _tok, _md in _fetch_dhan_market_data("NSE_FNO", _nse_ids, _idx_ltp_db).items():
+                        _idx_market[_tok] = _md
+                if _bse_ids:
+                    for _tok, _md in _fetch_dhan_market_data("BSE_FNO", _bse_ids, _idx_ltp_db).items():
+                        _idx_market[_tok] = _md
+            finally:
+                _idx_ltp_db.close()
+        else:
+            # Kite: use REST quote (LTP + OI)
+            kite = _get_kite_rest_client()
+            if kite:
+                try:
+                    index_sym = _INDEX_KITE_SYMBOLS.get(normalized, "")
+                    if index_sym:
+                        idx_q = kite.quote([index_sym]) or {}
+                        rest_spot_price = float((idx_q.get(index_sym) or {}).get("last_price", 0) or 0)
+                        if rest_spot_price > 0:
+                            spot_price = rest_spot_price
+                except Exception as _e:
+                    log.warning("[LIVE CHAIN API] spot fetch error: %s", _e)
+                _kite_all = [int(str(t or 0)) for t in _all_tokens if t]
+                for _i in range(0, len(_kite_all), 500):
+                    try:
+                        batch_q = kite.quote(_kite_all[_i: _i + 500]) or {}
+                        for _sym, _q in batch_q.items():
+                            _tok = str(_q.get("instrument_token") or "").strip()
+                            if _tok:
+                                _idx_market[_tok] = {"ltp": float(_q.get("last_price") or 0), "oi": int(_q.get("oi") or 0)}
+                    except Exception as _e:
+                        log.warning("[LIVE CHAIN API] quote batch error: %s", _e)
+
+        T = _time_to_expiry(live_expiry)
+        r = _RISK_FREE_RATE
+        q = _DIVIDEND_YIELDS.get(normalized, _DEFAULT_DIVIDEND_YIELD)
+
+        _idx_nse_chain: dict = {}
+        log.info("[LIVE CHAIN IDX] %s tokens=%d market_data=%d",
+                 normalized, len(_all_tokens), len(_idx_market))
+
+        raw_rows: list[dict[str, Any]] = []
+        rows_by_side: dict[str, dict[float, dict]] = {"CE": {}, "PE": {}}
+        for c in contracts:
+            opt_type = str(c.get("option_type") or "").strip().upper()
+            if opt_type not in ("CE", "PE"):
+                continue
+            token = str(c.get("token") or c.get("tokens") or "").strip()
+            symbol = str(c.get("symbol") or "").strip()
+            try:
+                strike = float(c.get("strike") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not strike:
+                continue
+
+            _im = _idx_market.get(token) or {}
+            ltp = float(_im.get("ltp") or 0)
+            oi = int(_im.get("oi") or 0)
+            # NSE chain fallback when WS + Dhan REST both give 0
+            _nse_row = _idx_nse_chain.get(f"{int(strike)}_{opt_type}") or {}
+            if ltp == 0:
+                ltp = float(_nse_row.get("ltp") or 0)
+            if oi == 0:
+                oi = int(_nse_row.get("oi") or 0)
+
+            row = {
+                "opt_type": opt_type,
+                "strike": strike,
+                "ltp": round(ltp, 2),
+                "oi": oi,
+                "token": token,
+                "symbol": symbol,
+            }
+            raw_rows.append(row)
+            rows_by_side[opt_type][strike] = row
+
+    else:
+        from features.broker_gateway import _active_broker as _get_active_broker  # type: ignore
+        from datetime import date as _date
+        today_str = _date.today().isoformat()
+
+        _stk_broker = _get_active_broker()
+        _stk_broker_filter = {"broker": _stk_broker}
+
+        # ── All brokers: load contracts from active_option_tokens ────────────
+        _db_stk = MongoData()
+        try:
+            tok_col = _db_stk._db["active_option_tokens"]
+            _stk_exchange_filter = {**_stk_broker_filter, "exchange": "NSE"}
+            raw_expiries = tok_col.distinct("expiry", {"instrument": normalized, **_stk_exchange_filter})
+            _all_expiries = sorted(set(str(e)[:10] for e in raw_expiries if e))
+            # Stocks: monthly expiry only — one expiry per month.
+            # NSE moved stock F&O monthly expiry to last Tuesday (from Sep 2025).
+            # When both a Tuesday and Thursday exist in the same month, prefer Tuesday.
+            from datetime import date as _edate
+            _monthly: dict[str, str] = {}
+            for _e in _all_expiries:
+                _ym = _e[:7]  # "2026-07"
+                if _ym not in _monthly:
+                    _monthly[_ym] = _e
+                else:
+                    _cur_day = _edate.fromisoformat(_monthly[_ym]).weekday()  # 1 = Tuesday
+                    _new_day = _edate.fromisoformat(_e).weekday()
+                    if _new_day == 1 and _cur_day != 1:
+                        _monthly[_ym] = _e  # prefer Tuesday over any other day
+                    elif _new_day != 1 and _cur_day != 1:
+                        _monthly[_ym] = _e  # both non-Tuesday: keep later date
+            expiries_sorted = sorted(_monthly.values())
+            if not expiries_sorted:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No active option tokens for '{normalized}'. Run /algo/sync-tokens/start/fno-stocks first.",
+                )
+
+            req_expiry = str(expiry or "").strip()[:10]
+            if req_expiry and req_expiry not in expiries_sorted:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Expiry '{req_expiry}' not found. Available: {expiries_sorted}",
+                )
+            if not req_expiry:
+                future = [e for e in expiries_sorted if e >= today_str]
+                live_expiry = future[0] if future else expiries_sorted[-1]
+            else:
+                live_expiry = req_expiry
+
+            contracts = list(tok_col.find(
+                {"instrument": normalized, "expiry": {"$regex": f"^{live_expiry}"}, **_stk_exchange_filter},
+                {"_id": 0, "strike": 1, "option_type": 1, "token": 1, "tokens": 1, "symbol": 1, "ws_segment": 1, "lot_size": 1},
+            ))
+            # lot_size: from contract doc (stored during Dhan sync) → lot_sizes collection → default 1
+            lot_size = int(contracts[0].get("lot_size") or 0) if contracts else 0
+            if not lot_size:
+                lot_doc = _db_stk._db["lot_sizes"].find_one({
+                    "underlying": normalized,
+                    "from_date": {"$lte": live_expiry},
+                    "to_date": {"$gte": live_expiry},
+                })
+                lot_size = int(lot_doc["lot_size"]) if lot_doc else 1
+        finally:
+            _db_stk.close()
+
+        if not contracts:
             raise HTTPException(
                 status_code=404,
-                detail=f"No active option tokens for '{normalized}'.",
+                detail=f"No contracts found for '{normalized}' expiry {live_expiry}.",
             )
 
-        req_expiry = str(expiry or "").strip()[:10]
-        if req_expiry and req_expiry not in expiries_sorted:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Expiry '{req_expiry}' not found. Available: {expiries_sorted}",
-            )
+        # ── Option LTP + OI via Dhan /quote (same as index path) ────────────────
+        _stk_all_tokens = [str(c.get("token") or c.get("tokens") or "") for c in contracts]
+        _stk_all_tokens = [t for t in _stk_all_tokens if t]
 
-        if not req_expiry:
-            from datetime import date as _date
-            today_str = _date.today().isoformat()
-            future = [e for e in expiries_sorted if e >= today_str]
-            live_expiry = future[0] if future else expiries_sorted[-1]
-        else:
-            live_expiry = req_expiry
-
-        contracts = list(tok_col.find(
-            {"instrument": normalized, "expiry": {"$regex": f"^{live_expiry}"}},
-            {"_id": 0, "strike": 1, "option_type": 1, "token": 1, "tokens": 1, "symbol": 1},
-        ))
-    finally:
-        db.close()
-
-    if not contracts:
-        return {
-            "instrument": normalized,
-            "expiry": live_expiry,
-            "expiries": expiries_sorted,
-            "spot_price": spot_price,
-            "chain": {"CE": [], "PE": []},
+        _stk_ws_segments = {
+            str(c.get("token") or c.get("tokens") or ""): str(c.get("ws_segment") or "NSE_FNO")
+            for c in contracts if c.get("token") or c.get("tokens")
         }
 
-    # ── Source 2: Kite REST snapshot for full-chain consistency ──────────────
-    kite_quote_map: dict[str, dict] = {}
-    kite = _get_kite_rest_client()
-    if kite:
-        try:
-            index_sym = _INDEX_KITE_SYMBOLS.get(normalized, "")
-            if index_sym:
-                idx_q = kite.quote([index_sym]) or {}
-                rest_spot_price = float(
-                    (idx_q.get(index_sym) or {}).get("last_price", 0) or 0
-                )
-                if rest_spot_price > 0:
-                    spot_price = rest_spot_price
-        except Exception as _e:
-            log.warning("[LIVE CHAIN API] spot fetch error: %s", _e)
+        # {token: {"ltp": float, "oi": int}}
+        _stk_market: dict[str, dict] = {}
 
-        all_tokens = [
-            int(str(c.get("token") or c.get("tokens") or 0))
-            for c in contracts
-            if c.get("token") or c.get("tokens")
-        ]
-        all_tokens = [t for t in all_tokens if t]
-        for _i in range(0, len(all_tokens), 500):
+        if _stk_broker == "dhan":
+            _ltp_db = MongoData()
             try:
-                batch_q = kite.quote(all_tokens[_i: _i + 500]) or {}
-                for _sym, _q in batch_q.items():
-                    _tok = str(_q.get("instrument_token") or "").strip()
-                    if _tok:
-                        kite_quote_map[_tok] = _q
-            except Exception as _e:
-                log.warning("[LIVE CHAIN API] quote batch error: %s", _e)
+                _nse_ids = [int(t) for t in _stk_all_tokens
+                            if t.lstrip("-").isdigit() and _stk_ws_segments.get(t, "NSE_FNO").upper() != "BSE_FNO"]
+                _bse_ids = [int(t) for t in _stk_all_tokens
+                            if t.lstrip("-").isdigit() and _stk_ws_segments.get(t, "NSE_FNO").upper() == "BSE_FNO"]
+                if _nse_ids:
+                    for _tok, _md in _fetch_dhan_market_data("NSE_FNO", _nse_ids, _ltp_db).items():
+                        _stk_market[_tok] = _md
+                if _bse_ids:
+                    for _tok, _md in _fetch_dhan_market_data("BSE_FNO", _bse_ids, _ltp_db).items():
+                        _stk_market[_tok] = _md
+            finally:
+                _ltp_db.close()
+        else:
+            # Kite REST quotes
+            kite_rest_stk = _get_kite_rest_client()
+            if kite_rest_stk:
+                if not spot_price:
+                    try:
+                        eq_q = kite_rest_stk.quote([f"NSE:{normalized}"]) or {}
+                        spot_price = float((eq_q.get(f"NSE:{normalized}") or {}).get("last_price") or 0)
+                    except Exception:
+                        pass
+                _kite_all = [int(t) for t in _stk_all_tokens if t.lstrip("-").isdigit()]
+                for _i in range(0, len(_kite_all), 500):
+                    try:
+                        batch_q = kite_rest_stk.quote(_kite_all[_i: _i + 500]) or {}
+                        for _sym, _q in batch_q.items():
+                            _tok = str(_q.get("instrument_token") or "").strip()
+                            if _tok:
+                                _stk_market[_tok] = {"ltp": float(_q.get("last_price") or 0), "oi": int(_q.get("oi") or 0)}
+                    except Exception:
+                        pass
 
-    # ── Time to expiry ────────────────────────────────────────────────────────
-    T = _time_to_expiry(live_expiry)
-    r = _RISK_FREE_RATE
-    q = _DIVIDEND_YIELDS.get(normalized, _DEFAULT_DIVIDEND_YIELD)
+        T = _time_to_expiry(live_expiry)
+        r = _RISK_FREE_RATE
+        q = _DIVIDEND_YIELDS.get(normalized, _DEFAULT_DIVIDEND_YIELD)
 
-    raw_rows: list[dict[str, Any]] = []
-    rows_by_side: dict[str, dict[float, dict]] = {"CE": {}, "PE": {}}
-    for c in contracts:
-        opt_type = str(c.get("option_type") or "").strip().upper()
-        if opt_type not in ("CE", "PE"):
-            continue
-        token = str(c.get("token") or c.get("tokens") or "").strip()
-        symbol = str(c.get("symbol") or "").strip()
-        try:
-            strike = float(c.get("strike") or 0)
-        except (TypeError, ValueError):
-            continue
-        if not strike:
-            continue
+        log.info("[LIVE CHAIN STK] %s tokens=%d market_data=%d spot=%.2f",
+                 normalized, len(_stk_all_tokens), len(_stk_market), spot_price)
 
-        ws_ltp = float(ltp_map.get(token, 0) or 0) if use_ws else 0.0
-        kq = kite_quote_map.get(token) or {}
-        rest_ltp = float(kq.get("last_price") or 0)
-        if rest_ltp == 0:
-            rest_ltp = float((kq.get("ohlc") or {}).get("close") or 0)
-        ltp = ws_ltp if ws_ltp > 0 else rest_ltp
-        oi = int(kq.get("oi") or 0)
-
-        row = {
-            "opt_type": opt_type,
-            "strike": strike,
-            "ltp": round(ltp, 2),
-            "oi": oi,
-            "token": token,
-            "symbol": symbol,
-        }
-        raw_rows.append(row)
-        rows_by_side[opt_type][strike] = row
+        raw_rows: list[dict[str, Any]] = []
+        rows_by_side: dict[str, dict[float, dict]] = {"CE": {}, "PE": {}}
+        for c in contracts:
+            opt_type = str(c.get("option_type") or "").strip().upper()
+            if opt_type not in ("CE", "PE"):
+                continue
+            try:
+                strike = float(c.get("strike") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not strike:
+                continue
+            token = str(c.get("token") or c.get("tokens") or "").strip()
+            symbol = str(c.get("symbol") or "").strip()
+            _md = _stk_market.get(token) or {}
+            ltp = float(_md.get("ltp") or 0)
+            oi  = int(_md.get("oi") or 0)
+            row = {
+                "opt_type": opt_type,
+                "strike": strike,
+                "ltp": round(ltp, 2),
+                "oi": oi,
+                "token": token,
+                "symbol": symbol,
+            }
+            raw_rows.append(row)
+            rows_by_side[opt_type][strike] = row
 
     ref_spot_price = _resolve_chain_reference_spot(rows_by_side, spot_price, T, r, q)
     pricing_spot = ref_spot_price if ref_spot_price > 0 else spot_price
@@ -8126,16 +9885,60 @@ async def get_live_greeks_chain(
     chain["CE"].sort(key=lambda x: float(x["strike"]))
     chain["PE"].sort(key=lambda x: float(x["strike"]))
 
-    # ── India VIX from WebSocket ltp_map (token 264969) ──────────────────────
-    from features.spot_atm_utils import INDIA_VIX_KITE_TOKEN  # type: ignore
-    india_vix = round(float(ltp_map.get(str(INDIA_VIX_KITE_TOKEN), 0) or 0), 2)
+    # ── Strike interval + ATM ─────────────────────────────────────────────────
+    _all_strikes = sorted(set(float(r["strike"]) for r in raw_rows))
+    strike_interval = 0.0
+    if len(_all_strikes) >= 2:
+        _diffs = [_all_strikes[i + 1] - _all_strikes[i] for i in range(len(_all_strikes) - 1)]
+        from collections import Counter as _Counter
+        strike_interval = float(_Counter(_diffs).most_common(1)[0][0])
+
+    _ref = pricing_spot or spot_price
+    atm_strike = 0.0
+    if _all_strikes and _ref > 0:
+        atm_strike = min(_all_strikes, key=lambda s: abs(s - _ref))
+    elif _all_strikes:
+        # No spot: use put-call parity ATM from _resolve_chain_reference_spot
+        ce_by_s = {float(r["strike"]): r["ltp"] for r in raw_rows if r["opt_type"] == "CE"}
+        pe_by_s = {float(r["strike"]): r["ltp"] for r in raw_rows if r["opt_type"] == "PE"}
+        common = [s for s in set(ce_by_s) & set(pe_by_s) if ce_by_s[s] > 0 and pe_by_s[s] > 0]
+        if common:
+            atm_strike = min(common, key=lambda s: abs(ce_by_s[s] - pe_by_s[s]))
+
+    # ── India VIX: WS ltp_map → NSE API fallback ─────────────────────────────
+    india_vix = round(float(ltp_map.get(str(BROKER_VIX_TOKEN), 0) or 0), 2)
+    if not india_vix:
+        try:
+            import requests as _req
+            _sess = _req.Session()
+            _sess.get("https://www.nseindia.com", timeout=4,
+                      headers={"User-Agent": "Mozilla/5.0"})
+            _r = _sess.get(
+                "https://www.nseindia.com/api/allIndices",
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://www.nseindia.com",
+                    "Accept": "application/json",
+                },
+                timeout=4,
+            )
+            if _r.status_code == 200:
+                for _item in (_r.json().get("data") or []):
+                    if "VIX" in str(_item.get("index", "")):
+                        india_vix = round(float(_item.get("last") or 0), 2)
+                        break
+        except Exception as _ve:
+            log.warning("[LIVE CHAIN] VIX NSE fallback error: %s", _ve)
 
     return {
         "instrument": normalized,
         "expiry": live_expiry,
         "expiries": expiries_sorted,
         "spot_price": round(pricing_spot or spot_price, 2),
+        "atm_strike": int(atm_strike) if atm_strike == int(atm_strike) else atm_strike,
+        "strike_interval": int(strike_interval) if strike_interval == int(strike_interval) else strike_interval,
         "india_vix": india_vix,
+        "lot_size": lot_size,
         "chain": chain,
     }
 
@@ -8174,6 +9977,87 @@ async def mock_start(time: str = Query(default="")):
 @app.get("/algo/get_active_tokens/{instrument}")
 async def get_active_tokens(instrument: str):
     return _sync_active_option_tokens(instrument)
+
+
+# ── Background sync state ─────────────────────────────────────────────────────
+_bg_sync_state: dict = {
+    "running": False,
+    "instrument": "",
+    "started_at": "",
+    "finished_at": "",
+    "result": None,
+    "error": "",
+}
+_bg_sync_thread: threading.Thread | None = None
+
+
+def _run_bg_sync(instrument: str) -> None:
+    global _bg_sync_state
+    _bg_sync_state["running"] = True
+    _bg_sync_state["instrument"] = instrument
+    _bg_sync_state["started_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _bg_sync_state["finished_at"] = ""
+    _bg_sync_state["result"] = None
+    _bg_sync_state["error"] = ""
+    try:
+        result = _sync_active_option_tokens(instrument)
+        _bg_sync_state["result"] = result
+    except Exception as exc:
+        _bg_sync_state["error"] = str(exc)
+    finally:
+        _bg_sync_state["running"] = False
+        _bg_sync_state["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@app.get("/algo/sync-tokens/start/{instrument}")
+async def bg_sync_start(instrument: str):
+    """Start a background sync of active_option_tokens. Returns immediately."""
+    global _bg_sync_thread
+    if _bg_sync_state["running"]:
+        return {
+            "status": "already_running",
+            "instrument": _bg_sync_state["instrument"],
+            "started_at": _bg_sync_state["started_at"],
+            "message": "Sync already in progress. Check /algo/sync-tokens/status",
+        }
+    _bg_sync_thread = threading.Thread(
+        target=_run_bg_sync, args=(instrument,), daemon=True
+    )
+    _bg_sync_thread.start()
+    return {
+        "status": "started",
+        "instrument": instrument.upper(),
+        "message": "Sync running in background. Check /algo/sync-tokens/status",
+        "status_url": "/algo/sync-tokens/status",
+        "stop_url": "/algo/sync-tokens/stop",
+    }
+
+
+@app.get("/algo/sync-tokens/status")
+async def bg_sync_status():
+    """Check the status of the background active_option_tokens sync."""
+    state = dict(_bg_sync_state)
+    if state["running"]:
+        status = "running"
+    elif state["error"]:
+        status = "error"
+    elif state["result"] is not None:
+        status = "completed"
+    else:
+        status = "idle"
+    return {"status": status, **state}
+
+
+@app.get("/algo/sync-tokens/stop")
+async def bg_sync_stop():
+    """Signal the background sync to stop (marks as not running; thread finishes current batch)."""
+    global _bg_sync_state
+    if not _bg_sync_state["running"]:
+        return {"status": "not_running", "message": "No sync is currently running."}
+    _bg_sync_state["running"] = False
+    _bg_sync_state["error"] = "Stopped by user"
+    _bg_sync_state["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return {"status": "stop_requested", "message": "Stop signal sent. Thread will finish current batch."}
 
 
 @app.get("/mock/stop")

@@ -2702,6 +2702,14 @@
             var momentumRow = getLegFeatureRow(leg, 'momentum_pending');
 
             var slValue = slRow
+                ? formatDetailMoney(
+                    slRow.order_limit_price != null
+                        ? slRow.order_limit_price
+                        : (slRow.current_sl_price != null ? slRow.current_sl_price : slRow.trigger_price),
+                    '-'
+                )
+                : '-';
+            var slTriggerValue = slRow
                 ? formatDetailMoney(slRow.current_sl_price != null ? slRow.current_sl_price : slRow.trigger_price, '-')
                 : '-';
             var targetValue = targetRow
@@ -2794,6 +2802,7 @@
                 '        </div>' +
                 buildPnlMetricHtml('P&L', leg.pnl) +
                 buildFeatureMetricHtml('SL', slValue, !!slRow) +
+                buildFeatureMetricHtml('SL Trigger', slTriggerValue, !!slRow) +
                 buildFeatureMetricHtml('TG', targetValue, !!targetRow) +
                 buildFeatureMetricHtml('TSL', trailValue, !!trailRow) +
                 '    </div>' +

@@ -136,7 +136,7 @@ def _run_momentum_for_live_ff(
     ltp_map: dict = {}
     spot_map: dict = {}
     try:
-        from features.kite_ticker import ticker_manager as _tm_run
+        from features.broker_gateway import broker_ticker_manager as _tm_run  # type: ignore
         ltp_map = dict(_tm_run.ltp_map or {})
         spot_map = dict(_tm_run.spot_map or {})
     except Exception:

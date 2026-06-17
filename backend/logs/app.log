@@ -1,972 +1,195 @@
-2026-05-14 08:53:20  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 08:53:20  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=34.08 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_3f798ef6-746d-47d0-8761-7de8d9724e7a:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 08:53:20  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 3f798ef6-746d-47d0-8761-7de8d9724e7a: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 3f798ef6-746d-47d0-8761-7de8d9724e7a: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 08:53:26  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 08:53:26  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 08:53:28  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=1.41 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 08:53:28  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 08:53:28  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 08:53:31  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 08:53:31  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 08:53:31  ERROR     kiteconnect.ticker                   Connection closed: None - None
-2026-05-14 08:53:31  INFO      features.kite_ticker                 KiteTicker closed: None None
-2026-05-14 08:56:10  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 08:57:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 08:57:59  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=14.46 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_18e1552c-1c43-48f9-a1b1-0b310abd664b:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 08:57:59  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 18e1552c-1c43-48f9-a1b1-0b310abd664b: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 18e1552c-1c43-48f9-a1b1-0b310abd664b: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 08:58:07  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 08:58:07  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=26.56 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_30fb5da1-6287-4896-8bfe-8851759ddaf7:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 08:58:07  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 30fb5da1-6287-4896-8bfe-8851759ddaf7: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 30fb5da1-6287-4896-8bfe-8851759ddaf7: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 08:58:22  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 08:58:22  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=27.6 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_f9422765-7cd7-4f71-a7fc-58b86733ea93:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 08:58:22  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: f9422765-7cd7-4f71-a7fc-58b86733ea93: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: f9422765-7cd7-4f71-a7fc-58b86733ea93: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 08:58:29  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 08:58:29  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=30.6 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_9d40e33a-43a8-454e-ba5e-65a5f963cbdb:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 08:58:29  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 9d40e33a-43a8-454e-ba5e-65a5f963cbdb: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 9d40e33a-43a8-454e-ba5e-65a5f963cbdb: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 08:58:38  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 08:58:38  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=25.63 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_5f512747-d9b7-44b6-bc29-1feda62278dd:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 08:58:38  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 5f512747-d9b7-44b6-bc29-1feda62278dd: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 5f512747-d9b7-44b6-bc29-1feda62278dd: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 08:58:45  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 08:58:45  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=28.14 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_4f8859b2-68cf-4fde-8a2a-9da3057f9b3f:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 08:58:45  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 4f8859b2-68cf-4fde-8a2a-9da3057f9b3f: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 4f8859b2-68cf-4fde-8a2a-9da3057f9b3f: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:00:47  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:00:47  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=30.94 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_ec8bead2-5231-4f40-a18e-c0278b094999:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:00:47  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: ec8bead2-5231-4f40-a18e-c0278b094999: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: ec8bead2-5231-4f40-a18e-c0278b094999: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:01:07  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:01:07  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=31.1 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_4d7cf553-072e-47e1-a00e-298ce81d9b07:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:01:07  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 4d7cf553-072e-47e1-a00e-298ce81d9b07: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 4d7cf553-072e-47e1-a00e-298ce81d9b07: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:01:26  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:01:26  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=31.65 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_d5afbe71-a5a1-4c4e-ba5b-05e953ce372a:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:01:26  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: d5afbe71-a5a1-4c4e-ba5b-05e953ce372a: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: d5afbe71-a5a1-4c4e-ba5b-05e953ce372a: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:01:42  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:01:42  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=25.98 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_53d8af66-6ac8-4690-aed5-2f6761f5e030:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:01:42  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 53d8af66-6ac8-4690-aed5-2f6761f5e030: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 53d8af66-6ac8-4690-aed5-2f6761f5e030: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:02:05  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
-2026-05-14 09:02:06  INFO      features.spot_atm_utils              [kite_instruments] loaded 48543 option instruments for 2026-05-14
-2026-05-14 09:02:08  INFO      features.spot_atm_utils              [kite_instruments] loaded 48543 option instruments for 2026-05-14
-2026-05-14 09:02:12  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:02:13  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=26.77 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_67de2f90-ad12-484b-bcb4-8064ca440c5f:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:02:13  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 67de2f90-ad12-484b-bcb4-8064ca440c5f: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 67de2f90-ad12-484b-bcb4-8064ca440c5f: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:08:45  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:08:45  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=28.02 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_6a72ce9a-477c-4df2-87da-201539ae1afe:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:08:45  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 6a72ce9a-477c-4df2-87da-201539ae1afe: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 6a72ce9a-477c-4df2-87da-201539ae1afe: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:09:00  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:09:00  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=14.53 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_539d189f-e6e9-45e4-aea7-fd946321587a:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:09:00  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 539d189f-e6e9-45e4-aea7-fd946321587a: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 539d189f-e6e9-45e4-aea7-fd946321587a: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:09:16  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:09:16  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.08 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_fb73ebbd-6fe4-4013-89f8-39fff8dd7eca:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:09:16  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: fb73ebbd-6fe4-4013-89f8-39fff8dd7eca: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: fb73ebbd-6fe4-4013-89f8-39fff8dd7eca: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:10:44  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 09:10:44  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 09:10:46  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.28 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 09:10:46  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 09:10:46  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 09:11:51  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:11:51  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=17.88 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_65f89512-7015-4ed2-aa25-c4f8bcc7ff38:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:11:51  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 65f89512-7015-4ed2-aa25-c4f8bcc7ff38: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 65f89512-7015-4ed2-aa25-c4f8bcc7ff38: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:11:57  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:11:57  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=26.46 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_95be59f0-4083-43b9-b2ff-cb52aa44d030:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:11:57  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 95be59f0-4083-43b9-b2ff-cb52aa44d030: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 95be59f0-4083-43b9-b2ff-cb52aa44d030: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:12:38  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:12:38  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.29 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_ffb80bca-e3ef-4820-99e1-45d311b14d72:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:12:38  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: ffb80bca-e3ef-4820-99e1-45d311b14d72: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: ffb80bca-e3ef-4820-99e1-45d311b14d72: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:13:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:13:03  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.69 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_24f8a573-bdf7-47c1-b081-532a94d383d2:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:13:03  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 24f8a573-bdf7-47c1-b081-532a94d383d2: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 24f8a573-bdf7-47c1-b081-532a94d383d2: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:13:14  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:13:14  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=17.43 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_324b0556-42b8-4262-9083-631eda6c7f12:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:13:14  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 324b0556-42b8-4262-9083-631eda6c7f12: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 324b0556-42b8-4262-9083-631eda6c7f12: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:13:29  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:13:29  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=16.8 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_f125a17c-8d51-4bd1-b0cd-f84e33880469:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:13:29  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: f125a17c-8d51-4bd1-b0cd-f84e33880469: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: f125a17c-8d51-4bd1-b0cd-f84e33880469: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:13:48  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:13:48  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=14.7 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_c9540bf7-672b-4d69-856f-3d685f9d5244:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:13:48  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: c9540bf7-672b-4d69-856f-3d685f9d5244: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: c9540bf7-672b-4d69-856f-3d685f9d5244: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:14:20  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:14:20  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.73 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_01663e2d-d01b-4320-907f-28ccee4d09f8:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:14:20  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 01663e2d-d01b-4320-907f-28ccee4d09f8: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 01663e2d-d01b-4320-907f-28ccee4d09f8: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:14:31  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:14:31  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.38 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_c9a9e211-885f-4334-99b2-cd1a773d14e1:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:14:31  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: c9a9e211-885f-4334-99b2-cd1a773d14e1: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: c9a9e211-885f-4334-99b2-cd1a773d14e1: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:14:41  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:14:41  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.62 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_c8270ae8-8b17-4af7-8ccd-fac32a5d3818:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:14:41  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: c8270ae8-8b17-4af7-8ccd-fac32a5d3818: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: c8270ae8-8b17-4af7-8ccd-fac32a5d3818: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:14:49  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:14:49  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=26.65 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_5e67537b-e045-43c1-99c9-4971a78f6841:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:14:49  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 5e67537b-e045-43c1-99c9-4971a78f6841: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 5e67537b-e045-43c1-99c9-4971a78f6841: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:15:01  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:15:01  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.46 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_56ca3371-7664-428c-8275-7a93c2fae071:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:15:01  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 56ca3371-7664-428c-8275-7a93c2fae071: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 56ca3371-7664-428c-8275-7a93c2fae071: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:17:05  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 09:17:05  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 09:17:07  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.57 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 09:17:07  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 09:17:08  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 09:22:00  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
-2026-05-14 09:22:02  INFO      features.spot_atm_utils              [kite_instruments] loaded 48543 option instruments for 2026-05-14
-2026-05-14 09:22:02  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
-2026-05-14 09:22:02  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13147138]
-2026-05-14 09:22:02  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13147906]
-2026-05-14 09:22:03  INFO      features.kite_broker_ws              [KiteWSManager] connected
-2026-05-14 09:22:03  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19e24926f867779f6f99897  leg_id=38ft41i3  exit_reason=stoploss  exit_price=210.53  ts=2026-05-14T09:22:03
-2026-05-14 09:23:57  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:23:57  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=25.76 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_b6c523b7-c737-4b3b-a490-64be288b40f9:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:23:57  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: b6c523b7-c737-4b3b-a490-64be288b40f9: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: b6c523b7-c737-4b3b-a490-64be288b40f9: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:23:57  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=2 delivered=1
-2026-05-14 09:24:04  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 09:24:04  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=26.43 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_52c92d0b-b66b-483e-bb15-8d26b4902423:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 09:24:04  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 52c92d0b-b66b-483e-bb15-8d26b4902423: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 52c92d0b-b66b-483e-bb15-8d26b4902423: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 09:24:10  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=2 delivered=1
-2026-05-14 09:29:14  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 09:29:14  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 09:29:15  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.8 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 09:29:15  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 09:29:15  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 09:29:16  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19e24926f867779f6f99897  leg_id=lazy3-38ft41i3  exit_reason=stoploss  exit_price=210.93  ts=2026-05-14T09:29:16
-2026-05-14 09:30:40  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
-2026-05-14 09:30:40  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
-2026-05-14 09:30:40  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13147906]
-2026-05-14 09:30:40  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13147650]
-2026-05-14 09:30:40  INFO      features.kite_broker_ws              [KiteWSManager] connected
-2026-05-14 09:30:43  INFO      features.spot_atm_utils              [kite_instruments] loaded 49007 option instruments for 2026-05-14
-2026-05-14 09:36:53  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19e24926f867779f6f99897  leg_id=f0ds5968  exit_reason=stoploss  exit_price=210.28  ts=2026-05-14T09:36:53
-2026-05-14 09:36:54  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13147394]
-2026-05-14 09:38:09  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19e24926f867779f6f99897  leg_id=zy3bg-f0ds5968  exit_reason=stoploss  exit_price=190.68  ts=2026-05-14T09:38:08
-2026-05-14 09:39:34  INFO      features.notification_manager        Trail SL rotated leg=gzc2n-lazy3-38ft41i3 step=1: ₹195.88 → ₹182.3
-2026-05-14 09:54:47  INFO      features.notification_manager        Trail SL rotated leg=gzc2n-lazy3-38ft41i3 step=2: ₹182.3 → ₹168.73
-2026-05-14 10:00:01  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +2 token(s): [284296709, 282211333]
-2026-05-14 10:05:01  INFO      features.trading_core                queue_original_legs trade=exec_19e218b94857dc3f6f99896 queued=2
-2026-05-14 10:05:01  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +2 token(s): [282566661, 283297797]
-2026-05-14 11:58:26  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 11:58:26  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=19.93 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_bde95042-5bb0-4248-8997-30bec5e12e08:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 11:58:26  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: bde95042-5bb0-4248-8997-30bec5e12e08: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: bde95042-5bb0-4248-8997-30bec5e12e08: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 12:17:03  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 12:17:03  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:15:21  INFO      api                                  FlatTrade login started broker_doc_id=69e8f91d0e59052e21916992 state=7544c15d181bb80cbea88ac45184492e:69e8f91d0e59052e21916992
-2026-05-14 14:23:19  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 14:23:19  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=13.77 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_fb3383b3-dab1-46bf-a4a5-eb05df83a556:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 14:23:19  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: fb3383b3-dab1-46bf-a4a5-eb05df83a556: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: fb3383b3-dab1-46bf-a4a5-eb05df83a556: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 14:28:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:28:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:29:31  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=3.25 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 14:29:31  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 14:29:31  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 14:29:32  INFO      db_activity                          [DB WRITE]  col=algo_trades  op=close_leg  id=exec_19e24926f867779f6f99897  leg_id=gzc2n-lazy3-38ft41i3  exit_reason=stoploss  exit_price=168.73  ts=2026-05-14T14:29:32
-2026-05-14 14:29:32  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
-2026-05-14 14:29:34  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
-2026-05-14 14:29:34  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13150722]
-2026-05-14 14:29:34  INFO      features.kite_broker_ws              [KiteWSManager] connected
-2026-05-14 14:29:34  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13150978]
-2026-05-14 14:29:35  INFO      features.spot_atm_utils              [kite_instruments] loaded 49748 option instruments for 2026-05-14
-2026-05-14 14:29:35  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13147394]
-2026-05-14 14:29:35  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +2 token(s): [284013829, 284492037]
-2026-05-14 14:29:40  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:29:40  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:29:40  ERROR     kiteconnect.ticker                   Connection closed: None - None
-2026-05-14 14:29:40  INFO      features.kite_ticker                 KiteTicker closed: None None
-2026-05-14 14:33:03  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 14:33:03  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=30.43 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_e97c4a4c-f107-4291-90ee-f589ca8eb928:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 14:33:03  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: e97c4a4c-f107-4291-90ee-f589ca8eb928: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: e97c4a4c-f107-4291-90ee-f589ca8eb928: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 14:33:08  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=1
-2026-05-14 14:33:45  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 14:33:45  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=16.03 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_48992bc5-5c95-4cc4-8e65-f330a72ed6b2:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 14:33:45  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 48992bc5-5c95-4cc4-8e65-f330a72ed6b2: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 48992bc5-5c95-4cc4-8e65-f330a72ed6b2: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 14:33:51  INFO      features.execution_socket            [BROKER SETTINGS EMIT] user=69dcf52711877c164638d2a7 brokers=0 delivered=1
-2026-05-14 14:36:12  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:36:12  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:37:54  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 14:37:54  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=15.28 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_3d05d77c-b77a-4107-a0c9-df12583ae2f2:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 14:37:54  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 3d05d77c-b77a-4107-a0c9-df12583ae2f2: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 3d05d77c-b77a-4107-a0c9-df12583ae2f2: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 14:38:20  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.34 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 14:38:20  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 14:38:21  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 14:38:21  INFO      features.trading_core                queue_original_legs trade=exec_19e25baffb4de2aa20b6d17 queued=2
-2026-05-14 14:38:21  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
-2026-05-14 14:38:22  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
-2026-05-14 14:38:22  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13150722]
-2026-05-14 14:38:22  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13150978]
-2026-05-14 14:38:23  INFO      features.kite_broker_ws              [KiteWSManager] connected
-2026-05-14 14:38:23  INFO      features.spot_atm_utils              [kite_instruments] loaded 49748 option instruments for 2026-05-14
-2026-05-14 14:38:47  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:38:47  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:38:47  ERROR     kiteconnect.ticker                   Connection closed: None - None
-2026-05-14 14:38:47  INFO      features.kite_ticker                 KiteTicker closed: None None
-2026-05-14 14:44:13  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 14:44:13  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_index__ +6 token(s): [256265, 260105, 265, 257801, 288009, 264969]
-2026-05-14 14:44:14  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 14:44:14  WARNING   features.trading_core                resolve_leg_strike error underlying=NIFTY expiry=2026-05-19: resolve_strike() got an unexpected keyword argument 'strike_parameter'
-2026-05-14 14:44:15  WARNING   features.trading_core                resolve_leg_strike error underlying=NIFTY expiry=2026-05-19: resolve_strike() got an unexpected keyword argument 'strike_parameter'
-2026-05-14 14:44:15  WARNING   features.trading_core                resolve_leg_strike error underlying=NIFTY expiry=2026-05-19: resolve_strike() got an unexpected keyword argument 'strike_parameter'
-2026-05-14 14:44:16  WARNING   features.trading_core                resolve_leg_strike error underlying=NIFTY expiry=2026-05-19: resolve_strike() got an unexpected keyword argument 'strike_parameter'
-2026-05-14 14:44:16  WARNING   features.trading_core                resolve_leg_strike error underlying=NIFTY expiry=2026-05-19: resolve_strike() got an unexpected keyword argument 'strike_parameter'
-2026-05-14 14:44:17  WARNING   features.trading_core                resolve_leg_strike error underlying=NIFTY expiry=2026-05-19: resolve_strike() got an unexpected keyword argument 'strike_parameter'
-2026-05-14 14:44:17  WARNING   features.trading_core                resolve_leg_strike error underlying=NIFTY expiry=2026-05-19: resolve_strike() got an unexpected keyword argument 'strike_parameter'
-2026-05-14 14:44:17  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:44:17  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:44:17  ERROR     kiteconnect.ticker                   Connection closed: None - None
-2026-05-14 14:44:17  INFO      features.kite_ticker                 KiteTicker closed: None None
-2026-05-14 14:46:30  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 14:46:30  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=14.61 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_e9df6a78-bf3f-46e0-95ec-7579c18a806d:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 14:46:30  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: e9df6a78-bf3f-46e0-95ec-7579c18a806d: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: e9df6a78-bf3f-46e0-95ec-7579c18a806d: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 14:57:48  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 14:57:48  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=28.54 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_a1365fe8-39d9-472c-b159-40e52e178635:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 14:57:48  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: a1365fe8-39d9-472c-b159-40e52e178635: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: a1365fe8-39d9-472c-b159-40e52e178635: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 14:58:21  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.28 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 14:58:21  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 14:58:21  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 14:58:21  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
-2026-05-14 14:58:23  INFO      features.spot_atm_utils              [kite_instruments] loaded 49748 option instruments for 2026-05-14
-2026-05-14 14:58:23  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
-2026-05-14 14:58:23  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +2 token(s): [13150722, 13150978]
-2026-05-14 14:58:24  INFO      features.kite_broker_ws              [KiteWSManager] connected
-2026-05-14 14:58:25  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:58:25  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:58:25  ERROR     kiteconnect.ticker                   Connection closed: None - None
-2026-05-14 14:58:25  INFO      features.kite_ticker                 KiteTicker closed: None None
-2026-05-14 14:59:47  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 14:59:47  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_index__ +6 token(s): [256265, 260105, 265, 257801, 288009, 264969]
-2026-05-14 14:59:47  INFO      features.trading_core                queue_original_legs trade=exec_19e25d1dcda607da20b6d17 queued=2
-2026-05-14 14:59:47  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 14:59:47  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +2 token(s): [13149698, 13149954]
-2026-05-14 14:59:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:59:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 14:59:50  ERROR     kiteconnect.ticker                   Connection closed: None - None
-2026-05-14 14:59:50  INFO      features.kite_ticker                 KiteTicker closed: None None
-2026-05-14 15:03:04  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 15:03:04  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=32.21 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_7c9c99ce-d029-463a-b632-86f28e272c11:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 15:03:04  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 7c9c99ce-d029-463a-b632-86f28e272c11: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 7c9c99ce-d029-463a-b632-86f28e272c11: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 15:06:59  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 15:06:59  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.22 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_a3b1157a-9896-48ab-b9f4-3bcefad9d937:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 15:06:59  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: a3b1157a-9896-48ab-b9f4-3bcefad9d937: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: a3b1157a-9896-48ab-b9f4-3bcefad9d937: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 15:07:45  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.33 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 15:07:45  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 15:07:45  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 15:07:45  INFO      features.trading_core                queue_original_legs trade=exec_19e25d94c6852f7a20b6d17 queued=2
-2026-05-14 15:07:46  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
-2026-05-14 15:07:47  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
-2026-05-14 15:07:47  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13149698]
-2026-05-14 15:07:47  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13149954]
-2026-05-14 15:07:48  INFO      features.kite_broker_ws              [KiteWSManager] connected
-2026-05-14 15:07:48  INFO      features.spot_atm_utils              [kite_instruments] loaded 49748 option instruments for 2026-05-14
-2026-05-14 15:07:48  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:48  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:48  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:48  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:48  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:48  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:48  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:48  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:48  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:49  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 15:07:50  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 15:07:50  ERROR     kiteconnect.ticker                   Connection closed: None - None
-2026-05-14 15:07:50  INFO      features.kite_ticker                 KiteTicker closed: None None
-2026-05-14 15:07:51  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:51  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:51  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:51  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:51  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:51  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:53  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:53  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:53  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:53  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:53  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:53  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:54  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:54  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:54  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:54  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:54  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:54  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:56  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:56  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:56  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:56  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:56  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:56  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:58  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:58  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:58  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:58  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:58  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:58  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:59  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:59  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:59  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:59  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:59  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:07:59  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:01  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:01  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:01  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:01  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:01  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:01  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:03  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:03  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:03  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:03  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:03  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:03  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:04  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:04  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:04  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:04  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:04  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:04  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:06  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:06  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:06  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:06  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:06  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:06  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:07  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:07  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:07  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:07  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:07  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:07  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:09  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:09  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:09  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:09  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:09  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:09  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:11  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:11  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:11  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:11  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:11  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:11  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:13  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:13  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:13  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:13  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:13  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:13  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:14  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:14  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:14  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:14  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:14  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:14  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:16  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:16  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:16  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:16  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:16  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:16  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:20  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:20  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:20  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:20  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25d94c6852f7a20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:20  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25d94c6852f7a20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:08:20  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25d94c6852f7a20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:11:58  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 15:11:58  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=20.45 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_f5b37a4a-7d2c-4d1d-8f6b-e6efd9896e31:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 15:11:58  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: f5b37a4a-7d2c-4d1d-8f6b-e6efd9896e31: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: f5b37a4a-7d2c-4d1d-8f6b-e6efd9896e31: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 15:12:22  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 15:12:22  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=20.12 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_68c62088-f82e-4b1c-beef-189349b892a0:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 15:12:22  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 68c62088-f82e-4b1c-beef-189349b892a0: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 68c62088-f82e-4b1c-beef-189349b892a0: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
-2026-05-14 15:16:15  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=0.46 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
-2026-05-14 15:16:15  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-05-14
-2026-05-14 15:16:15  INFO      features.kite_ticker                 KiteTicker connected
-2026-05-14 15:16:16  INFO      features.kite_broker_ws              [kite_broker_ws] common credentials set api_key=h283rtgbdfbdwr3f
-2026-05-14 15:16:17  INFO      features.kite_broker_ws              [KiteWSManager] KiteTicker connected
-2026-05-14 15:16:17  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13149698]
-2026-05-14 15:16:17  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_event__ +1 token(s): [13149442]
-2026-05-14 15:16:17  INFO      features.kite_broker_ws              [KiteWSManager] connected
-2026-05-14 15:16:18  INFO      features.spot_atm_utils              [kite_instruments] loaded 49748 option instruments for 2026-05-14
-2026-05-14 15:16:18  INFO      features.kite_broker_ws              [KiteWSManager] user=__live_entry_option__ +1 token(s): [13149954]
-2026-05-14 15:16:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923650PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:18  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:18  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:18  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:19  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:19  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:19  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:19  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:19  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:19  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:19  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 15:16:19  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 15:16:19  ERROR     kiteconnect.ticker                   Connection closed: None - None
-2026-05-14 15:16:19  INFO      features.kite_ticker                 KiteTicker closed: None None
-2026-05-14 15:16:21  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:21  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:21  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:22  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:22  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:22  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:24  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:24  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:24  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:24  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:24  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:24  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:26  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:26  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:26  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:26  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:26  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:26  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:27  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:27  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:27  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:27  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:27  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:27  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:29  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:29  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:29  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:29  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:29  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:29  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:31  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:31  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:31  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:31  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:31  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:31  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:33  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:33  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:33  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:34  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:34  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:34  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:35  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:35  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:35  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:35  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:35  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:35  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:37  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:37  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:37  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:37  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:37  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:37  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:38  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 15:16:38  INFO      features.db_change_watcher           [DB WATCHER] stopped
-2026-05-14 15:16:38  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:38  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:38  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:38  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:38  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:38  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:41  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:41  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:41  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:41  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:41  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:41  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:42  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:42  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:42  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:42  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:42  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:42  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:44  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=k49do8lv symbol=NIFTY2651923700CE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:44  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/k49do8lv  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:44  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=k49do8lv trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:44  ERROR     features.live_order_manager          [LIVE ORDER FAILED] trade=exec_19e25e11313e77ca20b6d17 leg=ttx2772l symbol=NIFTY2651923700PE: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:44  ERROR     db_activity                          [DB ERROR]  col=broker_orders  op=place_entry_order  id=exec_19e25e11313e77ca20b6d17/ttx2772l  error=FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-Traceback (most recent call last):
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/live_order_manager.py", line 1191, in place_live_entry_order
-    order_id = kite.place_order(**order_params)
-  File "/home/ashok-innoppl/Documents/option-algo/backend/features/flattrade_broker.py", line 259, in place_order
-    raise Exception(
-Exception: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:16:44  WARNING   features.execution_socket            [LIVE ENTRY] order placement failed leg=ttx2772l trade=exec_19e25e11313e77ca20b6d17: FlatTrade PlaceOrder failed: Rejected : ALGO_CHK: Invalid IP address
-2026-05-14 15:38:02  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo/backend/logs
-2026-05-14 15:38:02  ERROR     db_activity                          [DB QUERY ERROR] method=ensure_index collection=saved_strategies query_ms=18.92 db=stock_data target=local collection=saved_strategies index=uniq_strategy_name error={'ok':_0.0,_'errmsg':_'Index_build_failed:_423b43e1-6281-4fcf-88ec-2846785cfbba:_Collection_stock_data.saved_strategies_(_605cf89b-7fb8-4f8d-ae1a-81e8757ba529_)_::_caused_by_::_E11000_duplicate_key_error_collection:_stock_data.saved_strategies_index:_uniq_strategy_name_dup_key:_{_name:_"n_new"_}',_'code':_11000,_'codeName':_'DuplicateKey',_'keyPattern':_{'name':_1},_'keyValue':_{'name':_'n_new'}}
-2026-05-14 15:38:02  WARNING   db_activity                          [DB INDEX WARN] db=stock_data target=local error=Index build failed: 423b43e1-6281-4fcf-88ec-2846785cfbba: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }, full error: {'ok': 0.0, 'errmsg': 'Index build failed: 423b43e1-6281-4fcf-88ec-2846785cfbba: Collection stock_data.saved_strategies ( 605cf89b-7fb8-4f8d-ae1a-81e8757ba529 ) :: caused by :: E11000 duplicate key error collection: stock_data.saved_strategies index: uniq_strategy_name dup key: { name: "n new" }', 'code': 11000, 'codeName': 'DuplicateKey', 'keyPattern': {'name': 1}, 'keyValue': {'name': 'n new'}}
+2026-06-17 07:11:09  INFO      features.app_logger                  Logging initialised — log dir: /home/ashok-innoppl/Documents/option-algo-wo-dhan/backend/logs
+2026-06-17 07:11:13  INFO      features.span_file                   SPAN params loaded from DB: 6 underlyings
+2026-06-17 07:11:13  INFO      features.span_file                   SPAN defaults seeded to DB: 6 records
+2026-06-17 07:11:13  INFO      features.span_file                   SPAN params loaded from DB: 6 underlyings
+2026-06-17 07:11:17  INFO      features.span_file                   BSE SPAN loaded from BSERISK20260522-00.XML: 219 underlyings
+2026-06-17 07:11:17  INFO      api                                  [STARTUP] Broker ticker auto-started.
+2026-06-17 07:11:18  INFO      websocket                            Websocket connected
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=0 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN FIRST TICKS] count=1 spot_map={'NIFTY': 23989.150390625} sample=[('13', 23989.150390625)] oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=1 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=2 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=3 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=4 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=5 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=6 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=7 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=8 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=9 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=10 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=11 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=12 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=13 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=14 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=15 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=16 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=17 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=18 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=19 idx=2 fno=0 full=0 changed=2 oi_map=0
+2026-06-17 07:11:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=21 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=22 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:20  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=23 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:20  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=24 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:20  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=25 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:20  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=26 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:20  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=27 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=28 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=29 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=30 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=31 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=32 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=33 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=34 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=35 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=36 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:21  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=37 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:22  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=38 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:22  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=39 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:22  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=40 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:22  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=41 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:22  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=42 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:22  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=43 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:22  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=44 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:22  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=45 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:23  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=46 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:23  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=47 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:23  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=48 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:23  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=49 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:23  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=50 idx=2 fno=0 full=0 changed=2 oi_map=0
+2026-06-17 07:11:23  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=52 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:23  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=53 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:24  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=54 idx=2 fno=0 full=0 changed=2 oi_map=0
+2026-06-17 07:11:24  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=56 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:24  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=57 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:24  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=58 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:24  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=59 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:24  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=60 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:24  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=61 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:25  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=62 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:25  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=63 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:25  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=64 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:25  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=65 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:25  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=66 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:25  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=67 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:26  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=68 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:26  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=69 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:26  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=70 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:26  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=71 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:26  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=72 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:26  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=73 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:27  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=74 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:27  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=75 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:27  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=76 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:27  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=77 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:27  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=78 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:27  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=79 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:27  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=80 idx=2 fno=0 full=0 changed=2 oi_map=0
+2026-06-17 07:11:28  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=82 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:28  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=83 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:28  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=84 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:28  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=85 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:28  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=86 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:28  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=87 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=88 idx=2 fno=0 full=0 changed=2 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=90 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=91 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=92 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=93 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=94 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=95 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=96 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=97 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:29  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=98 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:30  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=99 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 07:11:48  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=186 market_data=186
+2026-06-17 07:11:50  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=186 market_data=186
+2026-06-17 07:12:01  INFO      api                                  [LIVE CHAIN STK] 360ONE tokens=88 market_data=88 spot=1133.60
+2026-06-17 07:12:06  INFO      api                                  [LIVE CHAIN STK] 360ONE tokens=50 market_data=50 spot=1133.60
+2026-06-17 07:12:29  INFO      api                                  [LIVE CHAIN STK] 360ONE tokens=50 market_data=50 spot=1133.60
+2026-06-17 07:12:33  INFO      api                                  [LIVE CHAIN STK] LT tokens=248 market_data=248 spot=4186.40
+2026-06-17 07:13:03  INFO      api                                  [LIVE CHAIN STK] LT tokens=248 market_data=248 spot=4186.40
+2026-06-17 07:13:33  INFO      api                                  [LIVE CHAIN STK] LT tokens=248 market_data=248 spot=4186.40
+2026-06-17 07:14:03  INFO      api                                  [LIVE CHAIN STK] LT tokens=248 market_data=248 spot=4186.40
+2026-06-17 07:40:07  ERROR     features.dhan_ticker                 [DHAN TICKER] ws error: Connection to remote host was lost.
+2026-06-17 07:40:07  ERROR     websocket                            Connection to remote host was lost. - goodbye
+2026-06-17 07:40:14  INFO      websocket                            Websocket connected
+2026-06-17 08:30:13  ERROR     features.dhan_ticker                 [DHAN TICKER] ws error: Connection to remote host was lost.
+2026-06-17 08:30:13  ERROR     websocket                            Connection to remote host was lost. - goodbye
+2026-06-17 08:30:24  INFO      websocket                            Websocket connected
+2026-06-17 11:35:22  WARNING   api                                  [DHAN QUOTE] segment=NSE_FNO status=401 body={"data":{"808":"Authentication Failed - Client ID or Token invalid"},"status":"failed"}
+2026-06-17 11:35:22  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=186 market_data=0
+2026-06-17 11:35:24  WARNING   api                                  [DHAN QUOTE] segment=NSE_FNO status=401 body={"data":{"808":"Authentication Failed - Client ID or Token invalid"},"status":"failed"}
+2026-06-17 11:35:24  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=186 market_data=0
+2026-06-17 11:35:32  WARNING   api                                  [DHAN QUOTE] segment=NSE_FNO status=401 body={"data":{"808":"Authentication Failed - Client ID or Token invalid"},"status":"failed"}
+2026-06-17 11:35:32  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=0
+2026-06-17 11:35:45  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-06-17 11:35:45  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-06-17 11:35:48  INFO      api                                  Dhan consent generated user_id=1103877976 consent=2cef0a9c-876d-4d90-a76f-c7ac666687aa
+2026-06-17 11:35:51  WARNING   api                                  [DHAN QUOTE] segment=NSE_FNO status=401 body={"data":{"808":"Authentication Failed - Client ID or Token invalid"},"status":"failed"}
+2026-06-17 11:35:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=0
+2026-06-17 11:36:16  INFO      api                                  Dhan access token saved client_id=1103877976 expiry=2026-06-18T11:36:16
+2026-06-17 11:36:17  ERROR     db_activity                          [DB QUERY ERROR] method=replSetGetStatus collection=1 query_ms=13.49 db=admin target=local error={'ok':_0.0,_'errmsg':_'not_running_with_--replSet',_'code':_76,_'codeName':_'NoReplicationEnabled'}
+2026-06-17 11:36:17  INFO      features.db_change_watcher           [DB WATCHER] polling mode (no replica set), trade_date=2026-06-17
+2026-06-17 11:36:18  INFO      websocket                            Websocket connected
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=0 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN FIRST TICKS] count=1 spot_map={'NIFTY': 24091.75} sample=[('13', 24091.75)] oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=1 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=2 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=3 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=4 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=5 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=6 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=7 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=8 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=9 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=10 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:18  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=11 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=12 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=13 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=14 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=15 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=16 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:19  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=17 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:20  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=18 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:20  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=19 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:20  INFO      features.dhan_ticker                 [DHAN BINARY SEG] tick_count=20 idx=1 fno=0 full=0 changed=1 oi_map=0
+2026-06-17 11:36:20  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-06-17 11:36:20  INFO      features.db_change_watcher           [DB WATCHER] stopped
+2026-06-17 11:36:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:36:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:37:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:37:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:38:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:38:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:39:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:39:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:40:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:40:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:41:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:41:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:42:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:42:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:43:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:43:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:44:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:45:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:46:22  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:46:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:47:21  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:47:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:48:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:49:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:50:51  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:51:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:52:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:53:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:54:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:55:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:56:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:57:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:58:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 11:59:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 12:00:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 12:01:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 12:02:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293
+2026-06-17 12:03:46  INFO      api                                  [LIVE CHAIN IDX] NIFTY tokens=293 market_data=293

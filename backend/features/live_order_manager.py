@@ -682,6 +682,7 @@ def _persist_protection_order_refs(
             array_filters=[{'elem.id': leg_id}],
         )
     if set_fields_hist:
+        print(f'[HIST_UPDATE][ENTRY_FILL] trade={trade_id} leg={leg_id} data={set_fields_hist}')
         db._db['algo_trade_positions_history'].update_one(
             {'trade_id': trade_id, 'leg_id': leg_id},
             {'$set': set_fields_hist},
@@ -719,6 +720,7 @@ def _recalc_sl_for_actual_fill(db, trade_id: str, leg_id: str, actual_fill: floa
             {'_id': trade_id, 'legs.id': leg_id},
             {'$set': {'legs.$.current_sl_price': new_sl, 'legs.$.initial_sl_value': new_sl}},
         )
+        print(f'[HIST_UPDATE][SL_RECALC] trade={trade_id} leg={leg_id} data={{"current_sl_price": {new_sl}, "initial_sl_value": {new_sl}}}')
         db._db['algo_trade_positions_history'].update_one(
             {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
             {'$set': {'current_sl_price': new_sl, 'initial_sl_value': new_sl}},
@@ -982,6 +984,7 @@ def _place_initial_protection_orders(
                     'legs.$.initial_sl_value': sl_price,
                 }},
             )
+            print(f'[HIST_UPDATE][SL_SYNC] trade={trade_id} leg={leg_id} data={{"current_sl_price": {sl_price}, "initial_sl_value": {sl_price}}}')
             db._db['algo_trade_positions_history'].update_one(
                 {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
                 {'$set': {'current_sl_price': sl_price, 'initial_sl_value': sl_price}},
@@ -1450,14 +1453,14 @@ def get_broker_for_trade(db, trade: dict):
                     log.debug('broker=flattrade trade=%s', str(trade.get('_id') or ''))
                     return ft
             elif access_token:
-                from features.kite_broker import get_kite_instance
+                from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance
                 return get_kite_instance(access_token)
         except Exception as exc:
             log.debug('broker lookup error broker=%s: %s', broker_id, exc)
 
     # Fallback — default Kite market config
     try:
-        from features.kite_broker import get_kite_instance
+        from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance
         market_cfg = db._db['kite_market_config'].find_one({'enabled': True}, {'access_token': 1}) or {}
         access_token = str(market_cfg.get('access_token') or '').strip()
         if access_token:
@@ -2784,17 +2787,19 @@ def _convert_to_aggressive_limit(
         # Update DB so poller tracks the new order_id + reset modification timer
         history_id = hist_doc.get('_id')
         if history_id is not None:
+            _retry_set = {
+                'entry_trade.order_id': new_order_id,
+                'entry_trade.order_status': _ORDER_STATUS_OPEN,
+                'entry_trade.order_placed_at': now_ts,
+                'entry_trade.last_modified_at': now_ts,
+                'entry_trade.aggressive_retry': True,
+                'entry_trade.limit_price': limit_price,
+                'entry_trade.price': limit_price,
+            }
+            print(f'[HIST_UPDATE][ORDER_RETRY] history_id={history_id} trade={trade_id} leg={leg_id} data={_retry_set}')
             db._db['algo_trade_positions_history'].update_one(
                 {'_id': history_id},
-                {'$set': {
-                    'entry_trade.order_id':        new_order_id,
-                    'entry_trade.order_status':    _ORDER_STATUS_OPEN,
-                    'entry_trade.order_placed_at': now_ts,
-                    'entry_trade.last_modified_at': now_ts,
-                    'entry_trade.aggressive_retry': True,
-                    'entry_trade.limit_price':     limit_price,
-                    'entry_trade.price':           limit_price,
-                }},
+                {'$set': _retry_set},
             )
             _sync_leg_entry_feature_from_positions_history(db, trade_id, leg_id)
         db._db['algo_trades'].update_one(

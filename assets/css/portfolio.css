@@ -2,6 +2,294 @@
     position: relative;
 }
 
+.portfolio-detail-page {
+    font-family: "Manrope", Inter, ui-sans-serif, system-ui, sans-serif;
+    background:
+        radial-gradient(circle at top left, rgba(58, 123, 255, 0.08), transparent 24%),
+        linear-gradient(180deg, #f8fbff 0%, #f3f7fc 100%);
+    min-height: 100vh;
+}
+
+.portfolio-detail-shell {
+    width: 100%;
+    max-width: none;
+    padding: 24px 24px 40px;
+}
+
+.portfolio-detail-topbar {
+    margin-bottom: 20px;
+    border: 1px solid #dbe5f1;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 14px 40px rgba(15, 23, 42, 0.06);
+    padding: 22px 28px;
+}
+
+.portfolio-detail-content {
+    border: 1px solid #dbe5f1;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.06);
+    padding: 24px 28px 32px;
+}
+
+.portfolio-settings-card {
+    margin-bottom: 24px;
+    border: 1px solid #dbe5f1;
+    border-radius: 22px;
+    background: #ffffff;
+    padding: 22px 24px 20px !important;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+}
+
+.portfolio-strategy-table {
+    overflow: hidden;
+    border: 1px solid #dbe5f1;
+    border-radius: 22px;
+    background: #ffffff;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+}
+
+.portfolio-strategy-table > .my-2.hidden.items-center.justify-between {
+    background: #f7faff !important;
+    border: 0 !important;
+    border-bottom: 1px solid #dbe5f1 !important;
+    padding: 16px 20px !important;
+    color: #587093 !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.portfolio-strategy-table #portfolio-strategy-rows {
+    padding: 8px 12px 12px;
+}
+
+.portfolio-strategy-table #portfolio-strategy-row-template,
+.portfolio-strategy-table #portfolio-strategy-rows > [draggable="true"] {
+    margin: 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid #edf2f8 !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    padding: 18px 16px !important;
+    min-height: 88px;
+    transition: background 160ms ease;
+}
+
+.portfolio-strategy-table #portfolio-strategy-row-template:last-child,
+.portfolio-strategy-table #portfolio-strategy-rows > [draggable="true"]:last-child {
+    border-bottom: 0 !important;
+}
+
+.portfolio-strategy-table #portfolio-strategy-row-template:hover,
+.portfolio-strategy-table #portfolio-strategy-rows > [draggable="true"]:hover {
+    background: #f9fbff !important;
+}
+
+.portfolio-detail-page #portfolio-page-title {
+    color: #10213d;
+    font-size: 32px !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.03em;
+}
+
+.portfolio-detail-page .portfolio-settings-card > p,
+.portfolio-detail-page .portfolio-duration-card span:first-child {
+    color: #11223f !important;
+    font-weight: 700 !important;
+}
+
+.portfolio-detail-page button,
+.portfolio-detail-page input,
+.portfolio-detail-page select,
+.portfolio-detail-page label,
+.portfolio-detail-page span,
+.portfolio-detail-page p,
+.portfolio-detail-page div {
+    font-family: inherit;
+}
+
+.portfolio-detail-page button {
+    border-radius: 12px !important;
+}
+
+.portfolio-detail-page [data-testid="portfolio-edit-btn"],
+.portfolio-detail-page [data-testid="portfolio-delete-btn"],
+.portfolio-detail-page [data-testid="portfolio-export-btn"] {
+    min-height: 40px;
+    border-color: #d4deeb !important;
+    background: #ffffff !important;
+    color: #27466f !important;
+    font-weight: 700 !important;
+    box-shadow: none !important;
+}
+
+.portfolio-detail-page [data-testid="portfolio-delete-btn"] {
+    color: #d64646 !important;
+}
+
+.portfolio-detail-page #portfolio-qty-apply,
+.portfolio-detail-page #portfolio-slippage-apply {
+    min-height: 40px;
+    border-radius: 12px !important;
+    background: #456dff !important;
+    border-color: #456dff !important;
+    font-weight: 700 !important;
+}
+
+.portfolio-detail-page .portfolio-settings-card button,
+.portfolio-detail-page .portfolio-settings-card select,
+.portfolio-detail-page .portfolio-settings-card input,
+.portfolio-detail-page .portfolio-duration-card input {
+    min-height: 40px;
+    border: 1px solid #d4deeb !important;
+    border-radius: 12px !important;
+    background: #ffffff !important;
+    color: #163154 !important;
+    font-size: 13px !important;
+    font-weight: 600;
+    box-shadow: none !important;
+}
+
+.portfolio-detail-page [data-testid="DTE-button"],
+.portfolio-detail-page [data-testid="Weekdays-button"],
+.portfolio-detail-page [data-testid="Budget Days-button"] {
+    min-width: 92px;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+}
+
+.portfolio-detail-page [data-testid="Weekdays-button"] {
+    background: #4a74ff !important;
+    color: #ffffff !important;
+}
+
+.portfolio-detail-page .portfolio-top-filter-menu,
+.portfolio-detail-page .portfolio-qty-popover,
+.portfolio-detail-page .portfolio-slippage-popover {
+    border: 1px solid #dbe5f1;
+    border-radius: 16px;
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+}
+
+.portfolio-detail-page #portfolio-selected-count,
+.portfolio-detail-page #portfolio-selected-total {
+    color: #1e3556;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.portfolio-detail-page [for="overallSelect"] {
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.portfolio-detail-page #portfolio-strategy-rows .text-sm.font-medium.text-primaryBlack-750,
+.portfolio-detail-page #portfolio-strategy-rows [data-testid="special-text-tooltip"] {
+    color: #152949 !important;
+    font-size: 19px;
+    font-weight: 800 !important;
+    letter-spacing: -0.02em;
+}
+
+.portfolio-detail-page #portfolio-strategy-rows .text-xs.font-normal.text-primaryBlack-700 {
+    color: #627492 !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.portfolio-detail-page #portfolio-strategy-rows .h-4.w-4.cursor-pointer.rounded,
+.portfolio-detail-page #overallSelect {
+    accent-color: #4a74ff;
+}
+
+.portfolio-detail-page #portfolio-strategy-rows input[type="number"],
+.portfolio-detail-page #portfolio-strategy-rows select {
+    min-width: 68px;
+    min-height: 40px;
+    border: 1px solid #d4deeb !important;
+    border-radius: 12px !important;
+    background: #ffffff !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    color: #163154 !important;
+}
+
+.portfolio-detail-page #portfolio-strategy-rows label[class*="cursor-pointer text-center text-xs leading-5"] {
+    width: 36px !important;
+    height: 32px !important;
+    border-radius: 10px !important;
+    border-color: #d4deeb !important;
+    font-weight: 700 !important;
+}
+
+.portfolio-detail-page #portfolio-strategy-rows label[class*="!border-secondaryBlue-500"] {
+    border-color: #4a74ff !important;
+    background: #eef3ff !important;
+    color: #365ee8 !important;
+}
+
+.portfolio-duration-card {
+    margin-top: 24px;
+    border: 1px solid #dbe5f1 !important;
+    border-radius: 22px !important;
+    background: #ffffff !important;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+    padding: 20px 24px !important;
+}
+
+.portfolio-detail-page #strategy-date-input {
+    margin-left: auto;
+}
+
+@media (min-width: 1280px) {
+    .portfolio-detail-shell {
+        padding-left: 36px;
+        padding-right: 36px;
+    }
+
+    .portfolio-detail-content {
+        padding-left: 32px;
+        padding-right: 32px;
+    }
+}
+
+@media (max-width: 767px) {
+    .portfolio-detail-shell {
+        padding: 12px 12px 28px;
+    }
+
+    .portfolio-detail-topbar,
+    .portfolio-detail-content,
+    .portfolio-settings-card,
+    .portfolio-strategy-table,
+    .portfolio-duration-card {
+        border-radius: 18px;
+    }
+
+    .portfolio-detail-topbar {
+        padding: 16px 18px;
+    }
+
+    .portfolio-detail-content {
+        padding: 16px 14px 22px;
+    }
+
+    .portfolio-detail-page #portfolio-page-title {
+        font-size: 24px !important;
+    }
+
+    .portfolio-strategy-table #portfolio-strategy-rows {
+        padding: 6px 8px 10px;
+    }
+}
+
 .portfolio-top-filter-menu {
     position: absolute;
     top: calc(100% + 8px);

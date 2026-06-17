@@ -488,7 +488,7 @@ class LiveEntryMonitor:
         (which is empty until entry time) and NOT option_chain_historical_data
         (live/fast-forward never reads from that collection).
         """
-        from features.kite_broker_ws import register_user_tokens, is_configured  # type: ignore
+        from features.broker_gateway import broker_register_user_tokens as register_user_tokens, broker_is_configured as is_configured  # type: ignore
 
         if not is_configured():
             return
@@ -538,10 +538,7 @@ class LiveEntryMonitor:
         Falls back to DB option chain close price if kite LTP not yet available.
         """
         from features.trading_core import TickContext, process_pending_entries  # type: ignore
-        from features.kite_broker_ws import (
-            register_user_tokens,
-            wait_for_tokens_ltp,
-        )  # type: ignore
+        from features.broker_gateway import broker_register_user_tokens as register_user_tokens, broker_wait_for_tokens_ltp as wait_for_tokens_ltp  # type: ignore
 
         trade_id      = str(trade.get('_id') or '')
         strategy_name = str(trade.get('name') or '')
@@ -650,7 +647,7 @@ class LiveEntryMonitor:
         After entry, subscribe the resolved option instrument tokens to Kite
         so that LiveMonitorService receives their ticks for SL/TP checks.
         """
-        from features.kite_broker_ws import register_user_tokens, is_configured  # type: ignore
+        from features.broker_gateway import broker_register_user_tokens as register_user_tokens, broker_is_configured as is_configured  # type: ignore
 
         if not is_configured():
             return
@@ -682,7 +679,7 @@ class LiveEntryMonitor:
         Subscribe major index tokens to Kite so live spot prices are always
         available in the LTP map before entry time.
         """
-        from features.kite_broker_ws import register_user_tokens, is_configured  # type: ignore
+        from features.broker_gateway import broker_register_user_tokens as register_user_tokens, broker_is_configured as is_configured  # type: ignore
 
         if not is_configured():
             runtime_print('[LiveEntryMonitor] Kite not configured — index tokens not subscribed yet')
@@ -715,7 +712,7 @@ class LiveEntryMonitor:
                - by _id   IN object_id refs AND exit_trade=null
           4. Collect token from those history docs and subscribe.
         """
-        from features.kite_broker_ws import register_user_tokens, is_configured  # type: ignore
+        from features.broker_gateway import broker_register_user_tokens as register_user_tokens, broker_is_configured as is_configured  # type: ignore
         from bson import ObjectId  # type: ignore
 
         if not is_configured():
@@ -827,7 +824,7 @@ class LiveEntryMonitor:
         Get current spot price.
         Priority: live Kite index LTP → DB option_chain_index_spot.
         """
-        from features.kite_broker_ws import get_ltp_map  # type: ignore
+        from features.broker_gateway import get_broker_ltp_map as get_ltp_map  # type: ignore
 
         # 1. Try Kite index LTP (fastest, real-time)
         idx_tok = INDEX_TOKENS.get(underlying.upper())

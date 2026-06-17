@@ -76,8 +76,8 @@ def _get_active_ticker_manager():
     if mock_ticker_manager.status in ('running', 'connecting') and mock_ticker_manager._ticker:
         return mock_ticker_manager
 
-    from features.kite_ticker import ticker_manager
-    return ticker_manager
+    from features.broker_gateway import broker_ticker_manager  # type: ignore
+    return broker_ticker_manager
 
 
 def _load_live_strategies(db: MongoData, trade_date: str, activation_mode: str) -> list[dict]:
@@ -211,7 +211,8 @@ def _get_quote_access_token(db: MongoData, trade_doc: dict) -> str:
         except Exception as exc:
             log.debug('quote broker token lookup error broker=%s: %s', broker_id, exc)
     try:
-        market_cfg = db._db['kite_market_config'].find_one(
+        from features.broker_gateway import BROKER_CONFIG_COLLECTION  # type: ignore
+        market_cfg = db._db[BROKER_CONFIG_COLLECTION].find_one(
             {'enabled': True},
             {'access_token': 1},
         ) or {}
@@ -230,7 +231,7 @@ def _get_quote_spot_price(db: MongoData, trade_doc: dict, underlying: str) -> tu
     if not access_token:
         return 0.0, instrument
     try:
-        from features.kite_broker import get_kite_instance
+        from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance  # type: ignore
 
         kite = get_kite_instance(access_token)
         quote_map = kite.quote([instrument]) or {}
@@ -417,7 +418,7 @@ class _LiveMonitorLoop:
                         for token, ltp in _tm.ltp_map.items()
                         if token not in spot_token_set and ltp and float(ltp) > 0
                     ]
-                    from features.kite_ticker import INDIA_VIX_TOKEN_ID as _VIX_TOKEN_ID
+                    from features.broker_gateway import BROKER_VIX_TOKEN as _VIX_TOKEN_ID  # type: ignore
                     _vix_ltp = float(_tm.ltp_map.get(str(_VIX_TOKEN_ID), 0) or 0)
                     vix_ltp_list = [{
                         'token': 'NSE_00',

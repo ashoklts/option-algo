@@ -56,8 +56,8 @@ _LIVE_KITE_OWNER = '__live_event__'
 
 def _get_live_ltp_map() -> dict[str, float]:
     try:
-        from features.kite_broker_ws import get_ltp_map
-        return dict(get_ltp_map() or {})
+        from features.broker_gateway import get_broker_ltp_map  # type: ignore
+        return dict(get_broker_ltp_map() or {})
     except Exception:
         return {}
 
@@ -84,8 +84,8 @@ def resolve_kite_token_for_symbol(kite_symbol: str) -> str:
     if not sym:
         return ''
     try:
-        from features.spot_atm_utils import _load_kite_instruments
-        cache = _load_kite_instruments()
+        from features.broker_gateway import load_broker_instruments  # type: ignore
+        cache = load_broker_instruments()
         for (_name, _exp, _strike, _opt), inst in cache.items():
             if str(inst.get('symbol') or '').strip() == sym:
                 tok = inst.get('token')
@@ -98,7 +98,11 @@ def resolve_kite_token_for_symbol(kite_symbol: str) -> str:
 
 def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
     normalized_token = str(token or '').strip()
-    if not normalized_token or not normalized_token.isdigit():
+    if not normalized_token:
+        return
+    # Strip exchange prefix if present: "NSE_54808" → "54808"
+    numeric_part = normalized_token.split('_', 1)[-1] if '_' in normalized_token else normalized_token
+    if not numeric_part.isdigit():
         return
     try:
         from features.live_monitor_socket import _get_active_ticker_manager
@@ -113,7 +117,7 @@ def _subscribe_live_option_token(token: str, symbol: str = '') -> None:
             if symbol:
                 ticker_manager.register_option_token(normalized_token, symbol)
             return
-        subscribe_token = int(normalized_token)
+        subscribe_token = int(numeric_part)
         ticker_manager._ticker.subscribe([subscribe_token])
         ticker_manager._ticker.set_mode(ticker_manager._ticker.MODE_LTP, [subscribe_token])
         ticker_manager.register_option_token(normalized_token, symbol)
@@ -167,7 +171,7 @@ def get_live_option_quote_price(db, trade: dict, symbol: str) -> float:
     if not instrument:
         return 0.0
     try:
-        from features.kite_broker import get_kite_instance
+        from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance  # type: ignore
 
         access_token = _get_quote_access_token(db, trade)
         if not access_token:
@@ -248,7 +252,9 @@ def sync_live_open_position_subscriptions(trade_date: str = '') -> int:
                 option_type = opt_raw.split('.')[-1].upper() if '.' in opt_raw else opt_raw.upper()
                 if underlying and expiry and strike not in (None, '') and option_type:
                     try:
+                        from features.market_feed_tokens import active_token_broker_filter as _atbf  # type: ignore
                         tok_doc = db._db['active_option_tokens'].find_one({
+                            **_atbf(db),
                             'instrument': underlying,
                             'expiry': expiry,
                             'strike': strike,
@@ -366,18 +372,19 @@ def resolve_live_pending_entry_snapshot(
     token = ''
     symbol = ''
     ltp = 0.0
+    from features.market_feed_tokens import active_token_broker_filter as _atbf2  # type: ignore
     expiries = sorted([
         str(e)
         for e in db._db['active_option_tokens'].distinct(
             'expiry',
-            {'instrument': underlying, 'expiry': {'$gte': str(now_ts or '')[:10]}},
+            {**_atbf2(db), 'instrument': underlying, 'expiry': {'$gte': str(now_ts or '')[:10]}},
         )
         if e
     ])
     if not expiries:
         try:
-            from features.spot_atm_utils import get_kite_expiries
-            expiries = get_kite_expiries(underlying, str(now_ts or '')[:10])
+            from features.broker_gateway import get_broker_expiries  # type: ignore
+            expiries = get_broker_expiries(underlying, str(now_ts or '')[:10])
         except Exception:
             pass
     expiry = _resolve_expiry(str(now_ts or '')[:10], expiry_kind, expiries) if expiries else None
@@ -422,7 +429,9 @@ def resolve_live_pending_entry_snapshot(
 
     if expiry and strike not in (None, ''):
         if not token:
+            from features.market_feed_tokens import active_token_broker_filter as _atbf3  # type: ignore
             token_doc = db._db['active_option_tokens'].find_one({
+                **_atbf3(db),
                 'instrument': underlying,
                 'expiry': expiry,
                 'strike': strike,
@@ -432,8 +441,8 @@ def resolve_live_pending_entry_snapshot(
             symbol = str(token_doc.get('symbol') or '').strip()
             if not token:
                 try:
-                    from features.spot_atm_utils import get_kite_chain_doc
-                    _kcd = get_kite_chain_doc(underlying, expiry, strike, option_type.upper())
+                    from features.broker_gateway import get_broker_chain_doc  # type: ignore
+                    _kcd = get_broker_chain_doc(underlying, expiry, strike, option_type.upper())
                     token = str(_kcd.get('token') or '').strip()
                     symbol = str(_kcd.get('symbol') or symbol or '').strip()
                     if token:

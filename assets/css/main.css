@@ -3061,6 +3061,16 @@ a.request__feature:hover {
     opacity: 0.8;
 }
 
+.green__text .stats_percent,
+.exited__TP .stats_percent {
+    color: green;
+}
+
+.red__text .stats_percent,
+.exited__SL .stats_percent {
+    color: red;
+}
+
 .calculate_margin {
     color: #52b3d2 !important;
     font-size: 14px;

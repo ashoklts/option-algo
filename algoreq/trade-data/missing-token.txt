@@ -1,0 +1,7 @@
+formla 1- 
+
+( 45% * ( ( ( ( 40% * ( 60% * 1 Year Performance + 30% * 6 Month Performance + 10% * 3 Month Performance ) ) + ( 60% * ( 10% * 1 Year Volatility + 10% * 1 Month Volatility + 50% * 9 Month Volatility + 30% * 6 Month Volatility ) ) ) + ( 40% * ( 60% * 1 Year Performance + 30% * 6 Month Performance + 10% * 1 Month Performance ) + ( 60% * ( 10% * 1 Month Volatility + 50% * 9 Month Volatility + 40% * 6 Month Volatility ) ) ) ) / ( 80% * 3 Month Volatility + 20% * 1 Month Volatility ) ) ) + ( 55% * ( ( 80% * 1 Year Performance + 10% * 6 Month Performance + 10% * ( 70% * 1 Month Volatility + 10% * 3 Month Volatility + 40% * 6 Month Volatility ) ) / ( (3 Month Volatility + 1 Month Volatility) - (1 Month Volatility ) ) ) )
+
+formula2- 
+
+((60% * 9 Month Volatility) + (20% * 3 Month Performance) + (20% * 1 Year Performance)) / (3 Month Volatility + 1 Month Volatility+ 1 Year Volatility)

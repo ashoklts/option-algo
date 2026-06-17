@@ -59,26 +59,38 @@ def _load_kite_instruments(force: bool = False) -> dict[tuple, dict]:
             return _kite_inst_cache
 
         try:
-            from features.kite_broker_ws import get_common_credentials, is_configured  # type: ignore
-            if not is_configured():
+            # Skip Kite REST API entirely when Dhan is the active broker
+            try:
+                from features.market_feed_tokens import get_active_feed_broker as _gafb  # type: ignore
+                from features.mongo_data import MongoData as _MD2  # type: ignore
+                _cfg_db = _MD2()
+                try:
+                    if _gafb(_cfg_db._db) == 'dhan':
+                        return _kite_inst_cache
+                finally:
+                    _cfg_db.close()
+            except Exception:
+                pass
+
+            from features.broker_gateway import get_broker_credentials, broker_is_configured, load_broker_credentials_from_db  # type: ignore
+            if not broker_is_configured():
                 try:
                     from features.mongo_data import MongoData  # type: ignore
-                    from features.kite_broker_ws import load_credentials_from_db  # type: ignore
 
                     _db = MongoData()
                     try:
-                        load_credentials_from_db(_db)
+                        load_broker_credentials_from_db(_db)
                     finally:
                         _db.close()
                 except Exception as exc:
                     log.warning('[kite_instruments] credential load error: %s', exc)
 
-            if not is_configured():
+            if not broker_is_configured():
                 log.warning('[kite_instruments] Kite access token not configured')
                 return _kite_inst_cache
 
             from kiteconnect import KiteConnect  # type: ignore
-            api_key, access_token = get_common_credentials()
+            api_key, access_token = get_broker_credentials()
             if not api_key or not access_token:
                 log.warning('[kite_instruments] api_key/access_token missing after credential load')
                 return _kite_inst_cache
@@ -159,8 +171,8 @@ def get_kite_chain_doc(
     # 2. Fallback: WebSocket LTP map (available after token is subscribed)
     if ltp <= 0:
         try:
-            from features.kite_broker_ws import get_ltp_map  # type: ignore
-            ltp = float(get_ltp_map().get(token_str, 0.0))
+            from features.broker_gateway import get_broker_ltp_map  # type: ignore
+            ltp = float(get_broker_ltp_map().get(token_str, 0.0))
         except Exception:
             pass
 
@@ -298,11 +310,11 @@ def fetch_kite_quotes_for_expiry(underlying: str, expiry: str) -> dict[str, floa
 
     ltp_data: dict[str, float] = {}
     try:
-        from features.kite_broker_ws import get_common_credentials, is_configured  # type: ignore
-        if not is_configured():
+        from features.broker_gateway import get_broker_credentials, broker_is_configured  # type: ignore
+        if not broker_is_configured():
             return {}
         from kiteconnect import KiteConnect  # type: ignore
-        api_key, access_token = get_common_credentials()
+        api_key, access_token = get_broker_credentials()
         if not api_key or not access_token:
             return {}
 
@@ -338,6 +350,191 @@ def fetch_kite_quotes_for_expiry(underlying: str, expiry: str) -> dict[str, floa
     return ltp_data
 
 
+# ─── Dhan instrument helpers (active_option_tokens collection) ────────────────
+# For Dhan broker, all option tokens are pre-synced into active_option_tokens
+# (broker="dhan") from Dhan instruments CSV.  No REST instrument API needed.
+
+_dhan_inst_cache: dict = {}
+_dhan_inst_date:  str  = ''
+_dhan_inst_lock         = threading.Lock()
+
+
+def _load_dhan_instruments(force: bool = False) -> dict:
+    """
+    Load Dhan option instruments from active_option_tokens (broker=dhan).
+    Returns same dict structure as _load_kite_instruments():
+      {(name, expiry, strike, option_type): {token, symbol, exchange}}
+    """
+    global _dhan_inst_cache, _dhan_inst_date
+
+    today = _ist_today()
+    with _dhan_inst_lock:
+        if not force and _dhan_inst_date == today and _dhan_inst_cache:
+            return _dhan_inst_cache
+
+        try:
+            from features.mongo_data import MongoData  # type: ignore
+            _db = MongoData()
+            try:
+                new_cache: dict = {}
+                for doc in _db._db['active_option_tokens'].find(
+                    {'broker': 'dhan'}, {'_id': 0}
+                ):
+                    inst  = str(doc.get('instrument') or '').strip().upper()
+                    opt   = str(doc.get('option_type') or '').strip().upper()
+                    exp   = str(doc.get('expiry') or '').strip()[:10]
+                    stk   = doc.get('strike')
+                    token = str(doc.get('token') or '').strip()
+                    sym   = str(doc.get('symbol') or '').strip()
+                    exch  = str(doc.get('exchange') or doc.get('ws_segment') or 'NSE_FNO').strip()
+                    if inst and opt in ('CE', 'PE') and exp and stk is not None and token:
+                        key = (inst, exp, float(stk), opt)
+                        new_cache[key] = {'token': token, 'symbol': sym, 'exchange': exch}
+                _dhan_inst_cache = new_cache
+                _dhan_inst_date  = today
+                log.info('[dhan_instruments] loaded %d option instruments', len(new_cache))
+            finally:
+                _db.close()
+        except Exception as exc:
+            log.warning('[dhan_instruments] load error: %s', exc)
+
+        return _dhan_inst_cache
+
+
+def get_dhan_expiries(underlying: str, from_date: str, *, force_refresh: bool = False) -> list[str]:  # noqa: ARG001
+    """Return sorted expiry date strings for underlying from active_option_tokens (dhan)."""
+    try:
+        from features.mongo_data import MongoData  # type: ignore
+        _db = MongoData()
+        try:
+            return sorted([
+                str(e) for e in _db._db['active_option_tokens'].distinct(
+                    'expiry',
+                    {
+                        'broker': 'dhan',
+                        'instrument': str(underlying or '').strip().upper(),
+                        'expiry': {'$gte': str(from_date or '')[:10]},
+                    },
+                ) if e
+            ])
+        finally:
+            _db.close()
+    except Exception as exc:
+        log.warning('[dhan_expiries] error: %s', exc)
+        return []
+
+
+def list_dhan_option_contracts(underlying: str, expiry: str, *, force_refresh: bool = False) -> list[dict]:  # noqa: ARG001
+    """Return all active_option_tokens docs for underlying + expiry (dhan)."""
+    try:
+        from features.mongo_data import MongoData  # type: ignore
+        _db = MongoData()
+        try:
+            return list(_db._db['active_option_tokens'].find(
+                {
+                    'broker':     'dhan',
+                    'instrument': str(underlying or '').strip().upper(),
+                    'expiry':     str(expiry or '').strip()[:10],
+                },
+                {'_id': 0},
+            ))
+        finally:
+            _db.close()
+    except Exception as exc:
+        log.warning('[dhan_contracts] error: %s', exc)
+        return []
+
+
+def get_dhan_chain_doc(
+    underlying: str,
+    expiry: str,
+    strike: float,
+    option_type: str,
+) -> dict:
+    """
+    Build a synthetic option chain doc from active_option_tokens (dhan) + Dhan WS LTP.
+    Same return shape as get_kite_chain_doc().
+    """
+    try:
+        from features.mongo_data import MongoData  # type: ignore
+        _db = MongoData()
+        try:
+            doc = _db._db['active_option_tokens'].find_one({
+                'broker':      'dhan',
+                'instrument':  str(underlying  or '').strip().upper(),
+                'expiry':      str(expiry      or '').strip()[:10],
+                'strike':      float(strike),
+                'option_type': str(option_type or '').strip().upper(),
+            }) or {}
+        finally:
+            _db.close()
+
+        if not doc:
+            return {}
+
+        token  = str(doc.get('token') or '').strip()
+        symbol = str(doc.get('symbol') or '').strip()
+        exch   = str(doc.get('exchange') or doc.get('ws_segment') or 'NSE_FNO').strip()
+        ltp    = 0.0
+        if token:
+            from features.dhan_ticker import dhan_ticker_manager  # type: ignore
+            ltp = float(dhan_ticker_manager.ltp_map.get(token) or 0)
+
+        spot = _get_live_spot_for_underlying(str(underlying or '').strip().upper())
+        iv   = _calculate_live_iv(spot, float(strike), str(expiry or '')[:10], ltp, str(option_type or '').upper())
+
+        return {
+            'underlying':    str(underlying or '').strip().upper(),
+            'expiry':        str(expiry or '')[:10],
+            'strike':        float(strike),
+            'type':          str(option_type or '').strip().upper(),
+            'token':         token,
+            'symbol':        symbol,
+            'exchange':      exch,
+            'close':         ltp,
+            'ltp':           ltp,
+            'current_price': ltp,
+            'price':         ltp,
+            'last_price':    ltp,
+            'iv':            iv or None,
+        }
+    except Exception as exc:
+        log.warning('[dhan_chain_doc] error: %s', exc)
+        return {}
+
+
+def fetch_dhan_quotes_for_expiry(underlying: str, expiry: str) -> dict[str, float]:
+    """
+    Get LTP for all Dhan option tokens of underlying + expiry from the WS ltp_map.
+    Returns {str(security_id): float(ltp)}.
+    """
+    try:
+        from features.dhan_ticker import dhan_ticker_manager  # type: ignore
+        from features.mongo_data import MongoData  # type: ignore
+        _db = MongoData()
+        try:
+            tokens = [
+                str(d.get('token') or '').strip()
+                for d in _db._db['active_option_tokens'].find(
+                    {
+                        'broker':     'dhan',
+                        'instrument': str(underlying or '').strip().upper(),
+                        'expiry':     str(expiry or '')[:10],
+                    },
+                    {'token': 1, '_id': 0},
+                )
+                if d.get('token')
+            ]
+        finally:
+            _db.close()
+
+        ltp_map = dhan_ticker_manager.ltp_map
+        return {tok: float(ltp_map.get(tok) or 0) for tok in tokens}
+    except Exception as exc:
+        log.warning('[dhan_quotes] error: %s', exc)
+        return {}
+
+
 # Kite numeric instrument tokens for major index underlyings.
 # Used by live / fast-forward mode to get real-time spot price from
 # kite_broker_ws LTP map instead of querying the DB.
@@ -353,15 +550,24 @@ INDIA_VIX_KITE_TOKEN = 264969
 
 
 def _get_live_spot_for_underlying(underlying: str) -> float:
-    """Get real-time spot price for an underlying from Kite WebSocket LTP map."""
-    token = KITE_INDEX_TOKENS.get(str(underlying or '').strip().upper(), 0)
-    if not token:
-        return 0.0
+    """Get real-time spot price for an underlying from broker WebSocket spot_map."""
+    und = str(underlying or '').strip().upper()
     try:
-        from features.kite_broker_ws import get_ltp_map  # type: ignore
-        return float(get_ltp_map().get(str(token), 0.0))
+        from features.broker_gateway import broker_ticker_manager  # type: ignore
+        price = broker_ticker_manager.get_spot(und)
+        if price and float(price) > 0:
+            return float(price)
     except Exception:
-        return 0.0
+        pass
+    # Fallback: direct ltp_map lookup via broker index token
+    try:
+        from features.broker_gateway import BROKER_INDEX_TOKENS, get_broker_ltp_map  # type: ignore
+        token = BROKER_INDEX_TOKENS.get(und, 0)
+        if token:
+            return float(get_broker_ltp_map().get(str(token), 0.0))
+    except Exception:
+        pass
+    return 0.0
 
 
 def _calculate_live_iv(spot: float, strike: float, expiry: str, ltp: float, option_type: str) -> float:
@@ -552,17 +758,12 @@ def preload_market_data_cache(
 
 def _kite_spot_doc(underlying_norm: str, ts: str) -> dict:
     """
-    Return a synthetic spot doc built from live Kite LTP for the index.
-    Used only in live / fast-forward mode (no pre-loaded market_cache).
-    Returns {} if Kite is not configured or LTP not yet received.
+    Return a synthetic spot doc built from live broker WS spot_map / LTP map.
+    Works for both Kite and Dhan — uses spot_map (keyed by underlying name).
     """
-    index_token = KITE_INDEX_TOKENS.get(underlying_norm)
-    if not index_token:
-        return {}
     try:
-        from features.kite_broker_ws import get_ltp_map  # type: ignore
-        ltp_map = get_ltp_map()
-        price = float(ltp_map.get(str(index_token), 0.0))
+        from features.broker_gateway import broker_ticker_manager  # type: ignore
+        price = float(broker_ticker_manager.get_spot(underlying_norm) or 0)
         if price > 0:
             return {
                 'underlying': underlying_norm,
@@ -595,8 +796,10 @@ def _active_option_token_doc(
         return {}
 
     try:
+        from features.market_feed_tokens import active_token_broker_filter as _atbf  # type: ignore
         doc = db['active_option_tokens'].find_one(
             {
+                **_atbf(db),
                 'instrument': underlying_norm,
                 'expiry': expiry_norm,
                 'strike': strike_val,
@@ -631,8 +834,8 @@ def _active_option_token_doc(
 
     ltp = 0.0
     try:
-        from features.kite_broker_ws import get_ltp_map  # type: ignore
-        ltp = float(get_ltp_map().get(token_str, 0.0))
+        from features.broker_gateway import get_broker_ltp_map  # type: ignore
+        ltp = float(get_broker_ltp_map().get(token_str, 0.0))
     except Exception:
         pass
 
@@ -710,7 +913,7 @@ def get_cached_spot_doc(
     if db is None:
         return {}
 
-    # 1. Try live Kite LTP for the index token (real-time, most accurate)
+    # 1. Try live broker LTP for the index token (real-time, most accurate)
     kite_doc = _kite_spot_doc(normalized_underlying, ts or '')
     if kite_doc:
         return kite_doc
@@ -861,7 +1064,30 @@ def build_option_chain_snapshots_for_record(
     market_cache: dict | None = None,
 ) -> list[dict]:
     config = record.get('config') if isinstance(record.get('config'), dict) else {}
+    strategy = record.get('strategy') if isinstance(record.get('strategy'), dict) else {}
     leg_configs = config.get('LegConfigs') if isinstance(config.get('LegConfigs'), dict) else {}
+    if not leg_configs:
+        strategy_leg_list = strategy.get('ListOfLegConfigs') if isinstance(strategy.get('ListOfLegConfigs'), list) else []
+        normalized_leg_configs: dict[str, dict] = {}
+        for leg_cfg in strategy_leg_list:
+            if not isinstance(leg_cfg, dict):
+                continue
+            leg_id = str(leg_cfg.get('id') or '').strip()
+            if not leg_id:
+                continue
+            inst_kind = str(leg_cfg.get('InstrumentKind') or '').strip().upper()
+            option_type = 'CE' if 'CE' in inst_kind else 'PE' if 'PE' in inst_kind else ''
+            normalized_leg_configs[leg_id] = {
+                **leg_cfg,
+                'PositionType': leg_cfg.get('PositionType') or leg_cfg.get('Position') or '',
+                'ContractType': {
+                    'Option': option_type,
+                    'Expiry': leg_cfg.get('ExpiryKind') or 'ExpiryType.Weekly',
+                    'EntryKind': leg_cfg.get('EntryType') or 'EntryType.EntryByStrikeType',
+                    'StrikeParameter': leg_cfg.get('StrikeParameter'),
+                },
+            }
+        leg_configs = normalized_leg_configs
     snapshots: list[dict] = []
 
     for leg_id, leg_config in leg_configs.items():
@@ -869,9 +1095,12 @@ def build_option_chain_snapshots_for_record(
             continue
         contract = leg_config.get('ContractType') if isinstance(leg_config.get('ContractType'), dict) else {}
         option_type = str(contract.get('Option') or '').strip().upper()
+        if not option_type:
+            inst_kind = str(leg_config.get('InstrumentKind') or '').strip().upper()
+            option_type = 'CE' if 'CE' in inst_kind else 'PE' if 'PE' in inst_kind else ''
         expiry_kind = str(contract.get('Expiry') or leg_config.get('ExpiryKind') or 'ExpiryType.Weekly').strip()
         entry_kind = str(contract.get('EntryKind') or leg_config.get('EntryType') or 'EntryType.EntryByStrikeType').strip()
-        strike_param = contract.get('StrikeParameter')
+        strike_param = contract.get('StrikeParameter') if contract.get('StrikeParameter') is not None else leg_config.get('StrikeParameter')
         expiry = _resolve_expiry(trade_date, expiry_kind, expiries)
         if not expiry:
             continue

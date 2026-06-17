@@ -58,7 +58,7 @@ class _RuntimeModeRegistry:
         normalized_mode = str(activation_mode or '').strip()
         with self._lock:
             if not self._enabled:
-                return True
+                return False
             return bool(self._records_by_mode.get(normalized_mode) or [])
 
     def snapshot(self) -> dict[str, Any]:

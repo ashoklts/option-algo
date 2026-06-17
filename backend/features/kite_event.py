@@ -18,6 +18,7 @@ execution_socket.py is NOT imported here — no circular dependency.
 from __future__ import annotations
 
 from features.mongo_data import MongoData
+import features.debug_flags as _debug_flags
 from features.debug_flags import runtime_print
 
 
@@ -131,7 +132,24 @@ def broker_live_tick(
         activation_mode=activation_mode,
     )
 
+    # Suppress runtime prints for this tick if all trades are waiting for entry time
+    _now_hhmm = now_ts[11:16] if len(now_ts) >= 16 else ''
+    _all_waiting = bool(running_trades) and all(
+        (lambda _et: bool(_et and _now_hhmm and _now_hhmm < _et))(
+            (lambda _raw: _raw[11:16] if len(_raw) >= 16 else _raw[:5])(
+                str((t.get('config') or {}).get('entry_time') or t.get('entry_time') or '')
+            )
+        )
+        for t in running_trades
+    )
+    _debug_flags.fast_forward_mode = (activation_mode == 'fast-forward')
+    if not _debug_flags.fast_forward_mode:
+        _debug_flags.suppress_runtime_logs = _all_waiting
+
     result = process_broker_tick(ctx, running_trades, broker_ltp_map)
+
+    _debug_flags.fast_forward_mode = False
+    _debug_flags.suppress_runtime_logs = False
 
     # Build subscribe_tokens from all open legs
     subscribe_tokens: list[str] = []
@@ -155,15 +173,15 @@ def broker_live_tick(
             if tok and tok not in subscribe_tokens:
                 subscribe_tokens.append(tok)
 
-    runtime_print('[BROKER TICK]', {
-        'mode':            activation_mode,
-        'timestamp':       now_ts,
-        'ticks_received':  len(broker_ltp_map),
-        'running_trades':  len(running_trades),
-        'subscribe_count': len(subscribe_tokens),
-        'actions':         result.actions_taken,
-        'hit_trades':      result.hit_trade_ids,
-    })
+    # runtime_print('[BROKER TICK]', {
+    #     'mode':            activation_mode,
+    #     'timestamp':       now_ts,
+    #     'ticks_received':  len(broker_ltp_map),
+    #     'running_trades':  len(running_trades),
+    #     'subscribe_count': len(subscribe_tokens),
+    #     'actions':         result.actions_taken,
+    #     'hit_trades':      result.hit_trade_ids,
+    # })
 
     return {
         'actions_taken':     result.actions_taken,

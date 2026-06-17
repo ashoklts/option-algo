@@ -168,7 +168,7 @@ class _LiveFastMonitorSupervisor:
                 current_hhmm = now_ts[11:16] if len(now_ts) >= 16 else ''
                 ticker_tick_count = 0
                 try:
-                    from features.kite_ticker import ticker_manager
+                    from features.broker_gateway import broker_ticker_manager as ticker_manager  # type: ignore
                     ticker_tick_count = int(ticker_manager.tick_count or 0)
                 except Exception:
                     ticker_tick_count = 0
@@ -233,7 +233,7 @@ class _LiveFastMonitorSupervisor:
                     live_records = records_by_mode.get('live') or []
                     if live_records:
                         from features.kite_event import broker_live_tick
-                        from features.kite_ticker import ticker_manager
+                        from features.broker_gateway import broker_ticker_manager as ticker_manager  # type: ignore
                         from features.live_tick_dispatcher import _run_entries_for_mode
 
                         if SHOW_MONITOR_LOGS:
@@ -290,7 +290,7 @@ class _LiveFastMonitorSupervisor:
                         or _should_run_fast_forward_quote_cycle(now_ts, ticker_tick_count)
                     ):
                         from features.live_tick_dispatcher import _run_entries_for_mode
-                        from features.kite_ticker import ticker_manager
+                        from features.broker_gateway import broker_ticker_manager as ticker_manager  # type: ignore
 
                         if SHOW_MONITOR_LOGS:
                             print(
@@ -313,14 +313,21 @@ class _LiveFastMonitorSupervisor:
                         )
                 except Exception as exc:
                     log.warning('[FAST-FORWARD QUOTE CYCLE] error: %s', exc)
-                # ── Broadcast Kite LTP → update channel (fast-forward / live dashboards) ──
+                # ── Broadcast Kite LTP → update channel (per-user filtered) ──────────
+                # Only send each user the tokens they have subscribed to
+                # (active strategy spot tokens + open leg tokens).
+                # This prevents broadcasting all 1000+ broker tokens to every client.
                 try:
                     from features.live_monitor_socket import (
                         _get_active_ticker_manager,
                         _SPOT_TOKEN_BY_UNDERLYING,
                         _build_message as _ltp_build_message,
                     )
-                    from features.execution_socket import broadcast_to_channel
+                    from features.execution_socket import (
+                        _broadcast_user_channel_message,
+                        get_update_user_subscribed_tokens,
+                    )
+                    from features.broker_gateway import BROKER_VIX_TOKEN as _VIX_TOKEN_ID  # type: ignore
 
                     _tm = _get_active_ticker_manager()
                     _spot_token_set = set(_SPOT_TOKEN_BY_UNDERLYING.values())
@@ -335,16 +342,11 @@ class _LiveFastMonitorSupervisor:
                         for und, ltp in _tm.spot_map.items()
                         if ltp and float(ltp) > 0
                     ]
-                    _option_ltp_list = [
-                        {
-                            'token': tok,
-                            'ltp': float(ltp),
-                            'timestamp': now_ts,
-                        }
+                    _full_option_ltp_map = {
+                        tok: float(ltp)
                         for tok, ltp in _tm.ltp_map.items()
                         if tok not in _spot_token_set and ltp and float(ltp) > 0
-                    ]
-                    from features.kite_ticker import INDIA_VIX_TOKEN_ID as _VIX_TOKEN_ID
+                    }
                     _vix_ltp = float(_tm.ltp_map.get(str(_VIX_TOKEN_ID), 0) or 0)
                     _vix_ltp_list = [{
                         'token': 'NSE_00',
@@ -353,29 +355,39 @@ class _LiveFastMonitorSupervisor:
                         'ltp': _vix_ltp,
                         'timestamp': now_ts,
                     }] if _vix_ltp > 0 else []
-                    await broadcast_to_channel('update', _ltp_build_message(
-                        'ltp_update',
-                        'Live LTP tick',
-                        {
-                            'trade_date': now_ts[:10],
-                            'listen_time': current_hhmm,
-                            'listen_timestamp': now_ts,
-                            'ltp': _spot_ltp_list + _option_ltp_list + _vix_ltp_list,
-                            'spot_map': dict(_tm.spot_map),
-                            'broker_status': _tm.status,
-                            'mode': 'fast-forward',
-                        },
-                    ))
+
+                    _user_token_map = get_update_user_subscribed_tokens()
                     _spot_parts = '  '.join(
                         f'{s["underlying"]}={s["ltp"]:.2f}' for s in _spot_ltp_list
                     ) or 'no spot'
-                    if SHOW_MONITOR_LOGS:
-                        print(
-                            f'[FF LTP EMIT]  {now_ts}'
-                            f'  |  spot: {_spot_parts}'
-                            f'  |  option tokens: {len(_option_ltp_list)}'
-                            f'  |  vix: {_vix_ltp:.2f}' if _vix_ltp > 0 else ''
+                    for _uid, _user_tokens in _user_token_map.items():
+                        _user_option_ltp = [
+                            {'token': tok, 'ltp': ltp, 'timestamp': now_ts}
+                            for tok, ltp in _full_option_ltp_map.items()
+                            if tok in _user_tokens
+                        ]
+                        _user_payload = _ltp_build_message(
+                            'ltp_update',
+                            'Live LTP tick',
+                            {
+                                'trade_date': now_ts[:10],
+                                'listen_time': current_hhmm,
+                                'listen_timestamp': now_ts,
+                                'ltp': _spot_ltp_list + _user_option_ltp + _vix_ltp_list,
+                                'spot_map': dict(_tm.spot_map),
+                                'broker_status': _tm.status,
+                                'mode': 'fast-forward',
+                            },
                         )
+                        await _broadcast_user_channel_message(_uid, 'update', _user_payload)
+                        if SHOW_MONITOR_LOGS:
+                            print(
+                                f'[FF LTP EMIT]  {now_ts}'
+                                f'  |  user: {_uid}'
+                                f'  |  spot: {_spot_parts}'
+                                f'  |  option tokens: {len(_user_option_ltp)}'
+                                f'  |  vix: {_vix_ltp:.2f}' if _vix_ltp > 0 else ''
+                            )
                 except Exception as _ltp_exc:
                     log.debug('[FF LTP EMIT] error: %s', _ltp_exc)
 
