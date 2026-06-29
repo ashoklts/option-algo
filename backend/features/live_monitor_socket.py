@@ -27,6 +27,7 @@ from typing import Any
 from bson import ObjectId
 
 from features.mongo_data import MongoData
+from features.telegram_notifier import notify_admin, notify_both
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -392,7 +393,8 @@ class _LiveMonitorLoop:
                         },
                     ))
                 except Exception as exc:
-                    log.debug('live_tick error: %s', exc)
+                    log.error('live_tick error: %s', exc)
+                    notify_admin('entry_logic_error', f'live_tick broadcast error: {exc}')
 
                 # ── Event 1b: ltp_update → update channel (fast-forward / live dashboards) ──
                 try:
@@ -452,7 +454,8 @@ class _LiveMonitorLoop:
                         f'  |  option tokens: {len(option_ltp_list)}'
                     )
                 except Exception as exc:
-                    log.debug('ltp_update broadcast error: %s', exc)
+                    log.error('ltp_update broadcast error: %s', exc)
+                    notify_admin('entry_logic_error', f'ltp_update broadcast error: {exc}')
 
                 # ── Event 2: live_strategy_update  (DB query) ─────────────────
                 try:
@@ -501,8 +504,13 @@ class _LiveMonitorLoop:
                             f'open_legs={rec["open_legs"]}/{rec["total_legs"]}'
                         )
 
-                        # Entry condition: current_time >= entry_time and legs not yet entered
-                        if listen_hhmm and entry_hhmm and listen_hhmm >= entry_hhmm and has_pending:
+                        # Entry condition: current_time >= entry_time and legs not yet entered.
+                        # is_paused: a sibling leg's entry already failed for this strategy —
+                        # don't take any further entries until someone clears it.
+                        if (
+                            listen_hhmm and entry_hhmm and listen_hhmm >= entry_hhmm and has_pending
+                            and not (trade_doc or {}).get('is_paused')
+                        ):
                             from features.spot_atm_utils import resolve_atm_price
                             from features.backtest_engine import _resolve_expiry, _resolve_strike, STRIKE_STEPS
 
@@ -537,6 +545,7 @@ class _LiveMonitorLoop:
                             rec['atm_price']           = atm_price
 
                             # Resolve strike and expiry per leg using same logic as algo-backtest
+                            leg_entries: list[dict] = []
                             try:
                                 if trade_doc:
                                     if use_quote and quote_spot_price > 0:
@@ -611,14 +620,30 @@ class _LiveMonitorLoop:
                                                 'symbol':     symbol,
                                                 'ltp':        ltp,
                                                 'spot_price': spot_price,
+                                                # Lot size synced from Dhan's instrument feed for this
+                                                # exact contract — apply_resolved_live_entries prefers
+                                                # this over the static lot_sizes table when present.
+                                                'lot_size':   (token_doc or {}).get('lot_size'),
                                             })
 
-                                    # Execute live entry across 3 tables
-                                    if leg_entries:
-                                        _execute_live_entry(db, trade_doc, leg_entries, now_ts)
-
                             except Exception as _leg_exc:
-                                log.debug('leg resolve error: %s', _leg_exc)
+                                log.error('leg resolve error trade=%s: %s', rec.get('_id'), _leg_exc)
+                                notify_admin('entry_logic_error', f'leg resolve error trade={rec.get("_id")}: {_leg_exc}', {'trade_id': str(rec.get('_id') or '')})
+                                leg_entries = []
+
+                            # Execute live entry across 3 tables — separate try so a genuinely
+                            # unexpected failure here (as opposed to a leg-resolution error above)
+                            # is reported as "unknown", per the explicit both-admin-and-user case.
+                            if leg_entries:
+                                try:
+                                    _execute_live_entry(db, trade_doc, leg_entries, now_ts)
+                                except Exception as _entry_exc:
+                                    log.error('_execute_live_entry unknown error trade=%s: %s', rec.get('_id'), _entry_exc)
+                                    notify_both(
+                                        'unknown_entry_error',
+                                        f'Unexpected error taking entry for trade={rec.get("_id")}: {_entry_exc}',
+                                        {'trade_id': str(rec.get('_id') or '')},
+                                    )
 
                     await _broadcast(_build_message(
                         'live_strategy_update',
@@ -633,7 +658,8 @@ class _LiveMonitorLoop:
                         },
                     ))
                 except Exception as exc:
-                    log.debug('live_strategy_update error: %s', exc)
+                    log.error('live_strategy_update error: %s', exc)
+                    notify_admin('entry_logic_error', f'live_strategy_update error: {exc}')
 
                 await asyncio.sleep(1)
 

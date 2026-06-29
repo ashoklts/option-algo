@@ -15,8 +15,24 @@ from bson.errors import InvalidId
 from pymongo import UpdateOne
 
 from features.mongo_data import MongoData
-from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance
+from features.kite_broker import get_kite_instance
 from features.spot_atm_utils import KITE_INDEX_TOKENS
+from common.historical_data import (
+    HISTORICAL_INTERVAL,
+    HISTORICAL_CHUNK_DAYS,
+    DHAN_HISTORICAL_CHUNK_DAYS,
+    DHAN_INTRADAY_CHUNK_DAYS,
+    KITE_INTRADAY_RESOLUTION_MAP as _KITE_INTRADAY_RESOLUTION_MAP,
+    DHAN_INTRADAY_RESOLUTION_MAP as _DHAN_INTRADAY_RESOLUTION_MAP,
+    FEED_API_CALL_COUNTS as _FEED_API_CALL_COUNTS,
+    format_day_span as _format_day_span,
+    fetch_dhan_daily_candles as _fetch_dhan_daily_candles,
+    fetch_dhan_intraday_candles as _fetch_dhan_intraday_candles,
+    aggregate_intraday_candles as _aggregate_intraday_candles,
+    fetch_dhan_daily_index_candles_cached as _fetch_dhan_daily_index_candles_cached,
+    fetch_kite_daily_candles as _fetch_kite_daily_candles,
+    fetch_kite_intraday_candles as _fetch_kite_intraday_candles,
+)
 
 DEFAULT_FORMULA = "((70% * 6 Month Volatility) + (20% * 3 Month Performance) + (10% * 1 Year Performance)) / 3 Month Volatility"
 LOOKBACK_DAYS = 500
@@ -41,6 +57,7 @@ FORMULA_TOKEN_MAP = {
     "1 Year Volatility": "vol_1Y",
 }
 PORTFOLIO_COLLECTION = "scanner_portfolio_settings"
+PORTFOLIO_MASTER_COLLECTION = "scanner_portfolio"
 INVESTMENT_COLLECTION = "scanner_investment_portfolio"
 STOCKS_COLLECTION = "scanner_stocks_list"
 HISTORY_COLLECTION = "scanner_stock_historical_data"
@@ -48,16 +65,22 @@ INDEX_HISTORY_COLLECTION = "scanner_index_historical_data"
 INDEX_STOCKS_COLLECTION = "scanner_index_stocks"
 MARKET_HOLIDAYS_COLLECTION = "market_holidays"
 PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS = 10.0
-HISTORICAL_INTERVAL = "day"
-HISTORICAL_CHUNK_DAYS = 2000   # Kite allows up to 2000 days per call for day interval
-DHAN_HISTORICAL_CHUNK_DAYS = 365   # Dhan allows up to 1 year per call
 HISTORICAL_LOOKBACK_BUFFER_DAYS = 10
 
-# Dhan security IDs for indices (used when broker=dhan)
+# Dhan security IDs for indices (used when broker=dhan), verified against
+# Dhan's scrip master (https://images.dhan.co/api-data/api-scrip-master.csv), segment IDX_I.
 DHAN_INDEX_SECURITY_IDS: dict[str, int] = {
     "NIFTY": 13, "BANKNIFTY": 25, "SENSEX": 51,
     "FINNIFTY": 27, "MIDCPNIFTY": 11915,
+    "NIFTY100": 17, "NIFTY200": 18, "NIFTY500": 19,
+    "NIFTYMIDCAP50": 20, "NIFTYMIDCAP100": 37,
+    "NIFTYNXT50": 38, "NIFTYSMLCAP100": 5,
+    "INDIA_VIX": 21,
 }
+
+# GOLDBEES is an NSE-listed ETF (not a true index) — Dhan exposes it via the
+# equity NSE_EQ segment under its own security_id, not the IDX_I index segment.
+DHAN_GOLDBEES_SECURITY_ID = "14428"
 
 SCANNER_INDEX_ALIASES: dict[str, tuple[str, str]] = {
     "GOLDBEES": ("GOLDBEES", "gold_bees"),
@@ -143,8 +166,10 @@ NSE_MARKET_HOLIDAYS: dict[int, list[dict[str, str]]] = {
     ],
 }
 
-_portfolio_summary_cache_value: list[dict[str, Any]] | None = None
-_portfolio_summary_cache_expires_at = 0.0
+_portfolio_summary_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_equity_last_good_ltp: dict[str, float] = {}
+_index_history_chunk_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_INDEX_HISTORY_CACHE_TTL_SECONDS = 20.0
 _historical_sync_stop_requested = False
 _historical_sync_running = False
 _historical_sync_thread: threading.Thread | None = None
@@ -173,6 +198,18 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     if np.isnan(numeric) or np.isinf(numeric):
         return default
     return numeric
+
+
+def _epoch_millis(value: datetime) -> int:
+    """Correct epoch-millis for both naive-UTC datetimes (Dhan) and
+    tz-aware Asia/Kolkata datetimes (Kite's historical_data SDK) — using
+    calendar.timegm on a tz-aware value would silently ignore its tzinfo
+    and misread local wall-clock digits as UTC, shifting intraday bars by
+    5:30h.
+    """
+    if value.tzinfo is not None:
+        return int(value.timestamp() * 1000)
+    return calendar.timegm(value.timetuple()) * 1000
 
 
 def _serialize_value(value: Any) -> Any:
@@ -325,7 +362,6 @@ def _load_stock_meta_map(symbols: list[str]) -> dict[str, dict[str, Any]]:
                 "instrument_token": 1,
                 "exchange_token": 1,
                 "code": 1,
-                "dhan_security_id": 1,
             },
         )
     )
@@ -360,7 +396,7 @@ def _load_latest_closes(symbols: list[str]) -> dict[str, float]:
 def _load_kite_credentials() -> tuple[str, str]:
     db = MongoData()._db
     doc = db["kite_market_config"].find_one(
-        {"_id": _as_object_id(KITE_MARKET_CONFIG_ID)},
+        {"broker": "kite"},
         {"api_key": 1, "access_token": 1},
     ) or {}
     api_key = str(doc.get("api_key") or "").strip()
@@ -411,74 +447,22 @@ def _resolve_stock_dhan_security_id(stock: dict[str, Any]) -> tuple[str, str]:
     return symbol, nse_id
 
 
-def _fetch_dhan_daily_candles(
-    access_token: str,
-    security_id: str,
-    exchange_segment: str,
-    instrument: str,
-    from_date: datetime,
-    to_date: datetime,
-    *,
-    _retry: int = 3,
-) -> list[dict[str, Any]]:
-    import requests as _req
-    url = "https://api.dhan.co/v2/charts/historical"
-    headers = {"access-token": access_token, "Content-Type": "application/json"}
-    body = {
-        "securityId": str(security_id),
-        "exchangeSegment": exchange_segment,
-        "instrument": instrument,
-        "expiryCode": 0,
-        "fromDate": from_date.strftime("%Y-%m-%d"),
-        "toDate": to_date.strftime("%Y-%m-%d"),
-    }
-    # DH-904 = explicit rate limit; DH-905 = sometimes rate limit in disguise
-    _RATE_LIMIT_CODES = {"DH-904", "DH-905"}
-    for attempt in range(1, _retry + 1):
-        resp = _req.post(url, json=body, headers=headers, timeout=30)
-        if resp.status_code == 429:
-            wait = 2 * attempt
-            print(f"[DHAN] 429 — sleeping {wait}s (attempt {attempt}/{_retry})", flush=True)
-            time.sleep(wait)
-            continue
-        if resp.status_code == 400:
-            try:
-                err_json = resp.json()
-            except Exception:
-                err_json = {}
-            err_code = err_json.get("errorCode", "")
-            if err_code in _RATE_LIMIT_CODES:
-                wait = 2 * attempt
-                print(f"[DHAN] {err_code} rate-limit — sleeping {wait}s (attempt {attempt}/{_retry})", flush=True)
-                time.sleep(wait)
-                continue
-            raise Exception(f"400 — {err_json}")
-        if not resp.ok:
-            try:
-                err_detail = resp.json()
-            except Exception:
-                err_detail = resp.text[:200]
-            raise Exception(f"{resp.status_code} {resp.reason} — {err_detail}")
-        data = resp.json()
-        opens = data.get("open") or []
-        highs = data.get("high") or []
-        lows = data.get("low") or []
-        closes = data.get("close") or []
-        volumes = data.get("volume") or []
-        timestamps = data.get("timestamp") or []
-        candles = []
-        for i in range(len(timestamps)):
-            dt = datetime.utcfromtimestamp(timestamps[i]) + timedelta(hours=5, minutes=30)
-            candles.append({
-                "date": dt,
-                "open": opens[i] if i < len(opens) else 0.0,
-                "high": highs[i] if i < len(highs) else 0.0,
-                "low": lows[i] if i < len(lows) else 0.0,
-                "close": closes[i] if i < len(closes) else 0.0,
-                "volume": volumes[i] if i < len(volumes) else 0,
-            })
-        return candles
-    raise Exception(f"Dhan rate-limit (DH-904/905) after {_retry} retries for security_id={security_id}")
+_index_history_chunk_inflight_lock = threading.Lock()
+_index_history_chunk_inflight: dict[str, dict[str, Any]] = {}
+
+
+def _get_active_market_data_broker() -> str:
+    """"kite" or "dhan" — whichever is marked enabled in kite_market_config.
+
+    The chart feed should follow whichever broker the user has actually logged
+    into (BrokerLogin page sets this), not a hardcoded choice — Kite and Dhan
+    use different instrument-id schemes and have different per-interval date
+    range limits, so the right one has to be picked before fetching.
+    """
+    db = MongoData()._db
+    enabled_doc = db["kite_market_config"].find_one({"enabled": True}, {"_id": 0, "broker": 1})
+    broker = str((enabled_doc or {}).get("broker") or "").strip().lower()
+    return broker if broker in {"kite", "dhan"} else "dhan"
 
 
 def _parse_ymd_date(value: Any, *, field_name: str) -> datetime:
@@ -535,21 +519,6 @@ def _resolve_index_identity(stock: dict[str, Any]) -> tuple[str, str] | None:
         if alias:
             return alias
     return None
-
-
-def _fetch_kite_daily_candles(
-    kite,
-    instrument_token: int,
-    from_date: datetime,
-    to_date: datetime,
-) -> list[dict[str, Any]]:
-    candles = kite.historical_data(
-        instrument_token=instrument_token,
-        from_date=from_date,
-        to_date=to_date,
-        interval=HISTORICAL_INTERVAL,
-    )
-    return candles if isinstance(candles, list) else []
 
 
 def _chunkify_strings(items: list[str], size: int):
@@ -1326,9 +1295,8 @@ def sync_scanner_historical_data(
     _historical_sync_stop_requested = False
 
     try:
-        from features.broker_gateway import _active_broker
         db = MongoData()._db
-        broker = _active_broker()
+        broker = _get_active_broker()
         kite = None
         dhan_access_token = ""
         if broker == "dhan":
@@ -1406,10 +1374,7 @@ def sync_scanner_historical_data(
         else:
             progress_print("📂 Source: scanner_stocks_list")
             rows = list(db[STOCKS_COLLECTION].find({}, stock_fields))
-        if broker == "dhan":
-            nse_instrument_map = {}
-        else:
-            nse_instrument_map = _load_kite_nse_instrument_map(kite)
+        nse_instrument_map = {} if broker == "dhan" else _load_kite_nse_instrument_map(kite)
         index_rows = _load_scanner_index_master(db, nse_instrument_map)
 
         stock_rows: list[dict[str, Any]] = []
@@ -1492,8 +1457,12 @@ def sync_scanner_historical_data(
                 continue
 
             if broker == "dhan":
-                dhan_index_id = DHAN_INDEX_SECURITY_IDS.get(kite_key, 0)
-                if not dhan_index_id:
+                if kite_key == "GOLDBEES":
+                    dhan_segment, dhan_instrument, dhan_security_id = "NSE_EQ", "EQUITY", DHAN_GOLDBEES_SECURITY_ID
+                else:
+                    dhan_security_id = str(DHAN_INDEX_SECURITY_IDS.get(kite_key, 0) or "")
+                    dhan_segment, dhan_instrument = "IDX_I", "INDEX"
+                if not dhan_security_id or dhan_security_id == "0":
                     skipped.append({"symbol": kite_key, "reason": "missing_dhan_index_security_id"})
                     progress_print(f"   ⚠️ Skipped: no Dhan security_id for index {kite_key}")
                     continue
@@ -1502,8 +1471,7 @@ def sync_scanner_historical_data(
                 while current_from <= to_dt:
                     current_to = min(current_from + timedelta(days=DHAN_HISTORICAL_CHUNK_DAYS), to_dt)
                     try:
-                        time.sleep(0.4)
-                        all_candles.extend(_fetch_dhan_daily_candles(dhan_access_token, str(dhan_index_id), "IDX_I", "INDEX", current_from, current_to))
+                        all_candles.extend(_fetch_dhan_daily_candles(dhan_access_token, dhan_security_id, dhan_segment, dhan_instrument, current_from, current_to))
                         auth_validated = True
                     except Exception as exc:
                         skipped.append({"symbol": kite_key, "reason": f"dhan_error:{exc}"})
@@ -1529,6 +1497,7 @@ def sync_scanner_historical_data(
                     skipped.append({"symbol": kite_key, "reason": "missing_index_token"})
                     progress_print(f"   ⚠️ Skipped: missing index token ({fetch_mode})")
                     continue
+
                 all_candles = []
                 current_from = fetch_start_base
                 while current_from <= to_dt:
@@ -1617,7 +1586,6 @@ def sync_scanner_historical_data(
                             all_candles = []
                             break
                         try:
-                            time.sleep(0.7)
                             batch = _fetch_dhan_daily_candles(dhan_access_token, dhan_nse_id, "NSE_EQ", "EQUITY", current_from, current_to)
                             all_candles.extend(batch)
                             auth_validated = True
@@ -1704,103 +1672,48 @@ def _get_active_broker() -> str:
         return "kite"
 
 
-def _load_dhan_equity_quotes(symbols: list[str]) -> tuple[dict[str, float], dict[str, float]]:
-    normalized = [str(s or "").strip().upper() for s in symbols if str(s or "").strip()]
-    if not normalized:
-        return {}, {}
-    try:
-        import requests as _req
-        db = MongoData()._db
-        cfg = db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
-        access_token = str(cfg.get("access_token") or "").strip()
-        client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
-        if not access_token:
-            return {}, {}
-
-        rows = list(db[STOCKS_COLLECTION].find(
-            {"symbol": {"$in": normalized}},
-            {"_id": 0, "symbol": 1, "dhan_security_id": 1},
-        ))
-        symbol_to_sid: dict[str, str] = {}
-        sid_to_symbol: dict[str, str] = {}
-        for row in rows:
-            sym = str(row.get("symbol") or "").strip().upper()
-            sid = str(row.get("dhan_security_id") or "").strip()
-            if sym and sid:
-                symbol_to_sid[sym] = sid
-                sid_to_symbol[sid] = sym
-
-        if not symbol_to_sid:
-            return {}, {}
-
-        resp = _req.post(
-            "https://api.dhan.co/v2/marketfeed/ltp",
-            headers={
-                "access-token": access_token,
-                "client-id": client_id,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            json={"NSE_EQ": [int(s) for s in symbol_to_sid.values()]},
-            timeout=15,
-        )
-        if not resp.ok:
-            return {}, {}
-
-        raw = resp.json()
-        eq_data = (raw.get("data") or {}).get("NSE_EQ") or raw.get("NSE_EQ") or {}
-
-        ltp_map: dict[str, float] = {}
-        for sid, v in eq_data.items():
-            sym = sid_to_symbol.get(str(sid), "")
-            if not sym:
-                continue
-            if isinstance(v, dict):
-                ltp = _safe_float(v.get("last_price") or v.get("ltp") or v.get("lastTradedPrice"))
-            else:
-                ltp = _safe_float(v)
-            if ltp > 0:
-                ltp_map[sym] = round(ltp, 2)
-
-        return ltp_map, {}
-    except Exception:
-        return {}, {}
-
-
 def _load_kite_quotes(symbols: list[str]) -> tuple[dict[str, float], dict[str, float]]:
-    normalized_symbols = [str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()]
-    if not normalized_symbols:
-        return {}, {}
+    """
+    Live LTP for portfolio-detail display, from whichever broker is active
+    (kite_market_config.enabled=True) — not hardcoded to kite. This used to
+    only ever call Kite, so every load returned ({}, {}) whenever dhan was
+    the active feed broker, silently falling back to entry_price for every
+    holding. close_map is intentionally left empty here: _build_live_price_map's
+    history fallback (_load_latest_closes, actual previous-day close from
+    scanner_stock_historical_data) is the more correct source for that and
+    already runs whenever this returns nothing for it.
 
+    Backfills anything missing from this fetch (Dhan's shared 1.05s quote
+    rate-gate skipping the call because another part of the app just used
+    it, or a flaky token-validation ping) from the last successfully-fetched
+    price per symbol. Without this, a single transient miss fell straight
+    through to entry_price in _build_portfolio_snapshot, which renders as
+    mtm/returns of exactly 0 on that refresh even though the position is
+    live — the symptom was "same API call, sometimes correct, sometimes
+    everything shows 0". save_investment_portfolio (new entries) calls
+    _fetch_live_ltp_map directly, not this wrapper, so that path still
+    raises and never enters at a stale/cached price.
+    """
+    if not symbols:
+        return {}, {}
     try:
-        access_token = _load_kite_access_token()
-        if not access_token:
-            return {}, {}
+        ltp_map = _fetch_live_ltp_map([{"symbol": symbol} for symbol in symbols])
+    except Exception as exc:
+        print(f"⚠️ [portfolio detail] live LTP fetch failed, falling back to last-good cache: {exc}", flush=True)
+        ltp_map = {}
 
-        kite = get_kite_instance(access_token)
-        instruments = [f"NSE:{symbol}" for symbol in normalized_symbols]
-        quotes = kite.quote(instruments) or {}
+    _equity_last_good_ltp.update(ltp_map)
+    for symbol in symbols:
+        if symbol not in ltp_map:
+            cached = _equity_last_good_ltp.get(symbol)
+            if cached:
+                ltp_map[symbol] = cached
 
-        ltp_map: dict[str, float] = {}
-        close_map: dict[str, float] = {}
-        for instrument, payload in quotes.items():
-            symbol = str(instrument).split(":")[-1].strip().upper()
-            last_price = _safe_float((payload or {}).get("last_price"))
-            ohlc = (payload or {}).get("ohlc") or {}
-            prev_close = _safe_float(ohlc.get("close"))
-            if last_price > 0:
-                ltp_map[symbol] = round(last_price, 2)
-            if prev_close > 0:
-                close_map[symbol] = round(prev_close, 2)
-        return ltp_map, close_map
-    except Exception:
-        return {}, {}
+    return ltp_map, {}
 
 
 def _clear_portfolio_summary_cache() -> None:
-    global _portfolio_summary_cache_value, _portfolio_summary_cache_expires_at
-    _portfolio_summary_cache_value = None
-    _portfolio_summary_cache_expires_at = 0.0
+    _portfolio_summary_cache.clear()
 
 
 def _build_live_price_map(
@@ -1818,15 +1731,12 @@ def _build_live_price_map(
         }
     )
     if prefetched_ltp_map is None or prefetched_close_map is None:
-        if _get_active_broker() == "dhan":
-            broker_ltp_map, broker_close_map = _load_dhan_equity_quotes(active_symbols)
-        else:
-            broker_ltp_map, broker_close_map = _load_kite_quotes(active_symbols)
-        close_map = dict(broker_close_map)
+        kite_ltp_map, kite_close_map = _load_kite_quotes(active_symbols)
+        close_map = dict(kite_close_map)
         if allow_history_fallback:
             for symbol, close in _load_latest_closes(active_symbols).items():
                 close_map.setdefault(symbol.upper(), close)
-        ltp_map: dict[str, float] = dict(broker_ltp_map)
+        ltp_map: dict[str, float] = dict(kite_ltp_map)
     else:
         close_map = {
             symbol.upper(): round(_safe_float(prefetched_close_map.get(symbol)), 2)
@@ -1939,7 +1849,10 @@ def _build_portfolio_snapshot(
                 {
                     "company_name": company_map.get(symbol, symbol or "N/A"),
                     "kite_token": investment_row.get("kite_token") or stock_meta.get("kite_token") or stock_meta.get("token") or "",
-                    "dhan_token": investment_row.get("dhan_token") or stock_meta.get("dhan_security_id") or "",
+                    "token": investment_row.get("token") or stock_meta.get("token") or stock_meta.get("tokens") or stock_meta.get("instrument_token") or stock_meta.get("exchange_token") or stock_meta.get("code") or "",
+                    "tokens": investment_row.get("tokens") or stock_meta.get("tokens") or stock_meta.get("token") or "",
+                    "instrument_token": investment_row.get("instrument_token") or stock_meta.get("instrument_token") or stock_meta.get("token") or stock_meta.get("tokens") or "",
+                    "exchange_token": investment_row.get("exchange_token") or stock_meta.get("exchange_token") or stock_meta.get("code") or "",
                     "investment_amount": round(entry_price * quantity, 2),
                     "ltp": round(ltp, 2),
                     "overall_pnl_amount": round(overall_pnl_amount, 2),
@@ -1960,6 +1873,9 @@ def _build_portfolio_snapshot(
     snapshot = {
         "portfolio_id": str(portfolio_doc.get("_id") or ""),
         "portfolio_name": str(portfolio_doc.get("strategy_name") or portfolio_doc.get("name") or "Unnamed").strip() or "Unnamed",
+        "strategy_name": str(portfolio_doc.get("strategy_name") or portfolio_doc.get("name") or "Unnamed").strip() or "Unnamed",
+        "portfolio_master_id": str(portfolio_doc.get("portfolio_master_id") or portfolio_doc.get("portfolio_id") or "").strip(),
+        "portfolio_master_name": str(portfolio_doc.get("portfolio_master_name") or portfolio_doc.get("portfolio_name") or portfolio_doc.get("name") or portfolio_doc.get("strategy_name") or "Unnamed").strip() or "Unnamed",
         "description": str(portfolio_doc.get("description") or "").strip(),
         "investment_value": round(current_investment, 2),
         "current_value": current_value,
@@ -1971,9 +1887,9 @@ def _build_portfolio_snapshot(
         "day_returns": round(day_returns, 2),
         "day_returns_percent": round(day_returns_pct, 2),
         "combained_portfilio": bool(portfolio_doc.get("combained_portfilio")),
+        "is_live": bool(portfolio_doc.get("is_live", False)),
         "holdings": active_holdings,
         "created_at": _serialize_value(portfolio_doc.get("created_at")),
-        "broker": _get_active_broker(),
     }
 
     if include_investments:
@@ -2030,6 +1946,216 @@ def get_indexes() -> list[dict[str, str]]:
         for row in rows
         if str(row.get("filter_symbol") or "").strip()
     ]
+
+
+def get_index_historical_chart_bars(
+    i_symbol: str,
+    from_ts: int | None = None,
+    to_ts: int | None = None,
+    resolution: str = "1D",
+) -> dict[str, Any]:
+    """OHLCV bars for a scanner index, sourced live from whichever broker
+    (Kite or Dhan) is currently marked enabled in kite_market_config.
+
+    Important: this endpoint intentionally fetches only one broker-sized chunk
+    per request — the max date span depends on both the active broker and the
+    interval (Kite: 100/200/400/2000 days for 5min/15-30min/60min/day; Dhan:
+    90 days flat for any intraday interval, 365 for daily — see
+    _KITE_INTRADAY_RESOLUTION_MAP / _DHAN_INTRADAY_RESOLUTION_MAP /
+    *_HISTORICAL_CHUNK_DAYS). The frontend pages backwards/forwards with
+    continued requests for adjacent ranges instead of asking for multi-year
+    history in one call. Weekly/monthly bars are derived by the frontend from
+    daily bars, not fetched here — neither broker has a native week/month
+    intraday-style interval worth a round trip for.
+    """
+    symbol = str(i_symbol or "").strip().lower()
+    if not symbol:
+        raise ValueError("i_symbol is required.")
+    resolution = str(resolution or "1D").strip()
+
+    alias_name = next(
+        (broker_symbol for broker_symbol, normalized_symbol in SCANNER_INDEX_ALIASES.values() if normalized_symbol == symbol),
+        "",
+    )
+    if not alias_name:
+        raise ValueError(f"No index alias configured for i_symbol={symbol}")
+
+    now_utc = datetime.utcnow()
+    from_date = datetime.utcfromtimestamp(from_ts) if from_ts is not None else datetime(2018, 1, 1)
+    to_date = datetime.utcfromtimestamp(to_ts) if to_ts is not None else now_utc
+    if from_date > to_date:
+        raise ValueError("'from' must be less than or equal to 'to'.")
+
+    broker = _get_active_market_data_broker()
+    is_intraday = resolution in _KITE_INTRADAY_RESOLUTION_MAP or resolution in _DHAN_INTRADAY_RESOLUTION_MAP
+
+    if not is_intraday:
+        if broker == "kite":
+            max_chunk_days = HISTORICAL_CHUNK_DAYS
+        else:
+            # Dhan's /v2/charts/historical (EOD) endpoint rejects every IDX_I
+            # request with DH-905 regardless of params/date-range — confirmed
+            # by direct testing, it simply doesn't support index instruments,
+            # only equities/derivatives. So daily index bars are derived below
+            # from /v2/charts/intraday instead, which is capped at 90 days.
+            max_chunk_days = DHAN_INTRADAY_CHUNK_DAYS
+    elif broker == "kite":
+        _, _, max_chunk_days = _KITE_INTRADAY_RESOLUTION_MAP[resolution]
+    else:
+        _, _, max_chunk_days = _DHAN_INTRADAY_RESOLUTION_MAP[resolution]
+
+    max_chunk_span = timedelta(days=max_chunk_days - 1)
+    effective_from = from_date
+    effective_to = to_date
+    if (effective_to - effective_from) > max_chunk_span:
+        effective_from = max(from_date, effective_to - max_chunk_span)
+
+    cache_key = f"{symbol}:{resolution}:{broker}:{int(effective_from.timestamp())}:{int(effective_to.timestamp())}"
+    cached = _index_history_chunk_cache.get(cache_key)
+    if cached and (time.time() - cached[0]) <= _INDEX_HISTORY_CACHE_TTL_SECONDS:
+        print(
+            f"[FEED] {symbol} resolution={resolution} broker={broker} "
+            f"{effective_from.date()}->{effective_to.date()} ({_format_day_span(effective_from.strftime('%Y-%m-%d'), effective_to.strftime('%Y-%m-%d'))}) "
+            f"— served from {_INDEX_HISTORY_CACHE_TTL_SECONDS:.0f}s cache, no API hit",
+            flush=True,
+        )
+        return cached[1]
+
+    wait_event: threading.Event | None = None
+    wait_record: dict[str, Any] | None = None
+    is_request_leader = False
+    with _index_history_chunk_inflight_lock:
+        inflight = _index_history_chunk_inflight.get(cache_key)
+        if inflight:
+            wait_record = inflight
+            wait_event = inflight["event"]
+            print(
+                f"[FEED] {symbol} resolution={resolution} broker={broker} "
+                f"{effective_from.date()}->{effective_to.date()} "
+                "— waiting on identical in-flight request",
+                flush=True,
+            )
+        else:
+            wait_event = threading.Event()
+            _index_history_chunk_inflight[cache_key] = {"event": wait_event, "result": None, "error": None}
+            is_request_leader = True
+
+    if not is_request_leader:
+        wait_event.wait()
+        if wait_record and wait_record.get("error") is not None:
+            raise wait_record["error"]
+        if wait_record and wait_record.get("result") is not None:
+            return wait_record["result"]
+        cached = _index_history_chunk_cache.get(cache_key)
+        if cached and (time.time() - cached[0]) <= _INDEX_HISTORY_CACHE_TTL_SECONDS:
+            return cached[1]
+        raise Exception("Historical chart request finished without cache result.")
+
+    print(
+        f"[FEED] {symbol} resolution={resolution} broker={broker} requesting "
+        f"{effective_from.date()}->{effective_to.date()} "
+        f"({_format_day_span(effective_from.strftime('%Y-%m-%d'), effective_to.strftime('%Y-%m-%d'))}) "
+        f"— dhan_hits_so_far={_FEED_API_CALL_COUNTS['dhan']} kite_hits_so_far={_FEED_API_CALL_COUNTS['kite']}",
+        flush=True,
+    )
+    try:
+        if broker == "kite":
+            instrument_token = int(KITE_INDEX_TOKENS.get(alias_name) or 0)
+            if not instrument_token:
+                raise ValueError(f"Kite instrument token not configured for i_symbol={symbol}")
+            kite = _build_kite_client_from_config()
+            if is_intraday:
+                native_interval, factor, _ = _KITE_INTRADAY_RESOLUTION_MAP[resolution]
+                candles = _fetch_kite_intraday_candles(kite, instrument_token, native_interval, effective_from, effective_to)
+                candles = _aggregate_intraday_candles(candles, factor)
+            else:
+                candles = _fetch_kite_daily_candles(kite, instrument_token, effective_from, effective_to)
+        else:
+            dhan_security_id = str(DHAN_INDEX_SECURITY_IDS.get(alias_name, 0) or "").strip()
+            if not dhan_security_id or dhan_security_id == "0":
+                raise ValueError(f"Dhan security id not configured for i_symbol={symbol}")
+            client_id, access_token = _load_dhan_credentials()
+            if not access_token:
+                raise ValueError("Active Dhan access token not configured.")
+            if not client_id:
+                raise ValueError("Active Dhan client id not configured.")
+            if is_intraday:
+                native_interval, factor, _ = _DHAN_INTRADAY_RESOLUTION_MAP[resolution]
+                candles = _fetch_dhan_intraday_candles(
+                    access_token, dhan_security_id, "IDX_I", "INDEX", native_interval, effective_from, effective_to
+                )
+                candles = _aggregate_intraday_candles(candles, factor)
+            else:
+                candles = _fetch_dhan_daily_index_candles_cached(
+                    dhan_security_id, access_token, symbol, effective_from, effective_to
+                )
+
+        if is_intraday:
+            bars = [
+                {
+                    "time": _epoch_millis(candle["date"]),
+                    "open": _safe_float(candle.get("open")),
+                    "high": _safe_float(candle.get("high")),
+                    "low": _safe_float(candle.get("low")),
+                    "close": _safe_float(candle.get("close")),
+                    "volume": _safe_float(candle.get("volume")),
+                }
+                for candle in sorted(
+                    (c for c in candles if isinstance(c.get("date"), datetime)),
+                    key=lambda c: c["date"],
+                )
+            ]
+        else:
+            unique_by_day: dict[str, dict[str, Any]] = {}
+            for candle in candles:
+                date_value = candle.get("date")
+                if not isinstance(date_value, datetime):
+                    continue
+                day_key = date_value.strftime("%Y-%m-%d")
+                unique_by_day[day_key] = candle
+
+            bars = [
+                {
+                    "time": calendar.timegm(datetime.strptime(day_key, "%Y-%m-%d").timetuple()) * 1000,
+                    "open": _safe_float(candle.get("open")),
+                    "high": _safe_float(candle.get("high")),
+                    "low": _safe_float(candle.get("low")),
+                    "close": _safe_float(candle.get("close")),
+                    "volume": _safe_float(candle.get("volume")),
+                }
+                for day_key, candle in sorted(unique_by_day.items(), key=lambda item: item[0])
+            ]
+
+        result = {
+            "status": "success",
+            "i_symbol": symbol,
+            "resolution": resolution,
+            "broker": broker,
+            "bars": bars,
+            "range": {
+                "from": int(effective_from.timestamp()),
+                "to": int(effective_to.timestamp()),
+            },
+            "partial": effective_from != from_date or effective_to != to_date,
+        }
+        _index_history_chunk_cache[cache_key] = (time.time(), result)
+        with _index_history_chunk_inflight_lock:
+            inflight = _index_history_chunk_inflight.get(cache_key)
+            if inflight:
+                inflight["result"] = result
+        return result
+    except Exception as exc:
+        with _index_history_chunk_inflight_lock:
+            inflight = _index_history_chunk_inflight.get(cache_key)
+            if inflight:
+                inflight["error"] = exc
+        raise
+    finally:
+        with _index_history_chunk_inflight_lock:
+            inflight = _index_history_chunk_inflight.get(cache_key)
+            if inflight:
+                inflight["event"].set()
+                _index_history_chunk_inflight.pop(cache_key, None)
 
 
 UNIVERSE_STOCK_LIST_COLLECTION = "scanner_universe_stock_list"
@@ -2649,87 +2775,6 @@ def backfill_stocks_list_kite_tokens() -> dict[str, Any]:
     }
 
 
-def backfill_dhan_security_ids() -> dict[str, Any]:
-    """
-    Downloads Dhan scrip master CSV and saves dhan_security_id (NSE) and
-    dhan_bse_security_id (BSE) into scanner_stocks_list.
-    Some stocks fail on NSE_EQ historical API but work via BSE_EQ.
-    """
-    import io
-    import requests as _req
-
-    DHAN_SCRIP_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
-
-    resp = _req.get(DHAN_SCRIP_MASTER_URL, timeout=60)
-    resp.raise_for_status()
-
-    df = pd.read_csv(io.StringIO(resp.text), dtype=str)
-    df.columns = [c.strip() for c in df.columns]
-
-    exch_col = next((c for c in df.columns if "EXM_EXCH_ID" in c.upper() or c.upper() == "SEM_EXM_EXCH_ID"), None)
-    seg_col  = next((c for c in df.columns if c.upper() == "SEM_SEGMENT"), None)
-    sym_col  = next((c for c in df.columns if "TRADING_SYMBOL" in c.upper()), None)
-    sid_col  = next((c for c in df.columns if "SECURITY_ID" in c.upper()), None)
-    inst_col = next((c for c in df.columns if "INSTRUMENT_NAME" in c.upper()), None)
-
-    missing = [n for n, c in [("exch", exch_col), ("segment", seg_col), ("symbol", sym_col), ("security_id", sid_col)] if not c]
-    if missing:
-        raise ValueError(f"Dhan scrip master missing columns {missing}. Found: {list(df.columns)}")
-
-    def _build_map(exchange: str) -> dict[str, str]:
-        mask = (
-            (df[exch_col].str.strip().str.upper() == exchange) &
-            (df[seg_col].str.strip().str.upper() == "E")
-        )
-        if inst_col:
-            mask = mask & (df[inst_col].str.strip().str.upper() == "EQUITY")
-        result: dict[str, str] = {}
-        for _, r in df[mask].iterrows():
-            sym = str(r[sym_col] or "").strip().upper()
-            sid = str(r[sid_col] or "").strip()
-            if sym and sid:
-                result[sym] = sid
-        return result
-
-    nse_map = _build_map("NSE")
-    bse_map = _build_map("BSE")
-
-    db = MongoData()._db
-    now = datetime.utcnow()
-
-    stocks = list(db[STOCKS_COLLECTION].find({}, {"_id": 1, "symbol": 1, "tradingsymbol": 1}))
-    updated = 0
-    not_found: list[str] = []
-
-    for row in stocks:
-        symbol = str(row.get("symbol") or row.get("tradingsymbol") or "").strip().upper()
-        if not symbol:
-            continue
-        nse_sid = nse_map.get(symbol)
-        bse_sid = bse_map.get(symbol)
-        if not nse_sid and not bse_sid:
-            not_found.append(symbol)
-            continue
-        update_fields: dict[str, Any] = {"updated_at": now}
-        if nse_sid:
-            update_fields["dhan_security_id"] = nse_sid
-        if bse_sid:
-            update_fields["dhan_bse_security_id"] = bse_sid
-        db[STOCKS_COLLECTION].update_one(
-            {"_id": row["_id"]},
-            {"$set": update_fields},
-        )
-        updated += 1
-
-    return {
-        "status": "success",
-        "total": len(stocks),
-        "updated": updated,
-        "not_found_in_dhan": not_found,
-        "not_found_count": len(not_found),
-    }
-
-
 _MISSING_STOCK_SYMBOLS = [
     "TATAMOTORS", "LTIM", "AKZOINDIA", "DUMMYDBRLT", "GSPL", "RELINFRA",
     "DBREALTY", "CIGNITITEC", "DHANI", "INFIBEAM", "JAIBALAJI", "JCHAC",
@@ -3030,7 +3075,7 @@ def _compute_metrics(history: pd.DataFrame) -> pd.DataFrame:
         vol_col = f"vol_{suffix}"
         df[perf_col] = df.groupby("h_symbol")["ch_closing_price"].pct_change(periods=periods) * 100.0
         df[vol_col] = df.groupby("h_symbol")["ret"].transform(
-            lambda series: series.rolling(periods, min_periods=5).std() * np.sqrt(252) * 100.0
+            lambda series: series.rolling(periods, min_periods=5).std() * 100.0
         )
 
     metric_columns = [column for column in df.columns if column.startswith(("perf_", "vol_"))]
@@ -3073,12 +3118,14 @@ def _attach_kite_tokens(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             or stock_meta.get("code")
             or ""
         )
-        dhan_token = str(row.get("dhan_token") or row.get("dhan_security_id") or stock_meta.get("dhan_security_id") or "").strip()
         enriched_rows.append(
             {
                 **row,
                 "kite_token": resolved_token,
-                "dhan_token": dhan_token,
+                "symbol_token": row.get("symbol_token") or resolved_token,
+                "token": row.get("token") or resolved_token,
+                "tokens": row.get("tokens") or resolved_token,
+                "instrument_token": row.get("instrument_token") or resolved_token,
             }
         )
     return enriched_rows
@@ -3160,7 +3207,10 @@ def _build_portfolio(score_rows: pd.DataFrame, total_capital: float, top_n: int)
 
 
 def generate_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
-    score_model = str(payload.get("score_model") or "current").strip().lower()
+    if str(payload.get("score_model") or "current").strip().lower() == "old":
+        from scanner.service_before_change_score_code import generate_stock_scores as _old_fn
+        return _old_fn({k: v for k, v in payload.items() if k != "score_model"})
+
     index_names = _normalize_list_payload(payload.get("index_name") or payload.get("index_names"))
     sectors = _normalize_list_payload(payload.get("sectors"))
     min_price = payload.get("min_price")
@@ -3209,7 +3259,7 @@ def generate_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(history.index, pd.DatetimeIndex)
         else history
     )
-    latest = compute_sigma_scores_core(history_df, score_ts, expr, meta, "sigma", score_model)
+    latest = compute_sigma_scores_core(history_df, score_ts, expr, meta, "sigma")
     if latest is None or latest.empty:
         return {"status": "no_data", "message": "No stocks scored."}
 
@@ -3278,23 +3328,30 @@ def generate_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def get_portfolio_summary() -> list[dict[str, Any]]:
-    global _portfolio_summary_cache_value, _portfolio_summary_cache_expires_at
+def get_portfolio_summary(portfolio_master_id: str = "") -> list[dict[str, Any]]:
+    cache_key = str(portfolio_master_id or "").strip()
     now = time.monotonic()
-    if _portfolio_summary_cache_value is not None and now < _portfolio_summary_cache_expires_at:
-        return _portfolio_summary_cache_value
+    cached = _portfolio_summary_cache.get(cache_key)
+    if cached is not None and now < cached[0]:
+        return cached[1]
 
     db = MongoData()._db
+    portfolio_filter: dict[str, Any] = {}
+    if cache_key:
+        portfolio_filter["portfolio_id"] = cache_key
     portfolios = list(
         db[PORTFOLIO_COLLECTION]
         .find(
-            {},
+            portfolio_filter,
             {
                 "_id": 1,
                 "strategy_name": 1,
                 "name": 1,
+                "portfolio_id": 1,
+                "portfolio_name": 1,
                 "description": 1,
                 "combained_portfilio": 1,
+                "is_live": 1,
                 "created_at": 1,
             },
         )
@@ -3302,6 +3359,31 @@ def get_portfolio_summary() -> list[dict[str, Any]]:
     )
     if not portfolios:
         return []
+
+    portfolio_master_ids = {
+        _as_object_id(item.get("portfolio_id"))
+        for item in portfolios
+        if str(item.get("portfolio_id") or "").strip()
+    }
+    portfolio_master_map: dict[str, dict[str, Any]] = {
+        str(doc.get("_id")): doc
+        for doc in db[PORTFOLIO_MASTER_COLLECTION].find(
+            {"_id": {"$in": list(portfolio_master_ids)}},
+            {"_id": 1, "name": 1},
+        )
+    } if portfolio_master_ids else {}
+
+    for item in portfolios:
+        raw_master_id = str(item.get("portfolio_id") or "").strip()
+        master_doc = portfolio_master_map.get(raw_master_id, {})
+        item["portfolio_master_id"] = raw_master_id
+        item["portfolio_master_name"] = str(
+            master_doc.get("name")
+            or item.get("portfolio_name")
+            or item.get("name")
+            or item.get("strategy_name")
+            or ""
+        ).strip()
 
     portfolio_ids = [item.get("_id") for item in portfolios if item.get("_id") is not None]
     investments = list(
@@ -3337,10 +3419,7 @@ def get_portfolio_summary() -> list[dict[str, Any]]:
             if symbol:
                 all_active_symbols.add(symbol)
 
-    if _get_active_broker() == "dhan":
-        prefetched_ltp_map, prefetched_close_map = _load_dhan_equity_quotes(sorted(all_active_symbols))
-    else:
-        prefetched_ltp_map, prefetched_close_map = _load_kite_quotes(sorted(all_active_symbols))
+    prefetched_ltp_map, prefetched_close_map = _load_kite_quotes(sorted(all_active_symbols))
     for symbol, close in _load_latest_closes(sorted(all_active_symbols)).items():
         prefetched_close_map.setdefault(symbol.upper(), close)
 
@@ -3362,8 +3441,7 @@ def get_portfolio_summary() -> list[dict[str, Any]]:
                 prefetched_close_map=prefetched_close_map,
             )
         )
-    _portfolio_summary_cache_value = snapshots
-    _portfolio_summary_cache_expires_at = now + PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS
+    _portfolio_summary_cache[cache_key] = (now + PORTFOLIO_SUMMARY_CACHE_TTL_SECONDS, snapshots)
     return snapshots
 
 
@@ -3564,7 +3642,6 @@ def _build_combained_portfolio_snapshot(portfolio_doc: dict[str, Any], investmen
         "uncorrelated_asset_status": bool(serialized_portfolio.get("uncorrelated_asset_status", False)),
         "uncorrelated_asset_allocation": _safe_float(serialized_portfolio.get("uncorrelated_asset_allocation")),
         "uncorrelated_asset_type": serialized_portfolio.get("uncorrelated_asset_type", "gold_bees"),
-        "score_model": str(serialized_portfolio.get("score_model") or "current").strip().lower(),
         "created_at": _serialize_value(portfolio_doc.get("created_at")),
         "timestamp": datetime.utcnow().isoformat(),
         "stocks_ltp": {key: round(_safe_float(value), 2) for key, value in ltp_map.items()},
@@ -3599,17 +3676,120 @@ def generate_combained_stock_scores(payload: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
-def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: str, entry_date: datetime | None = None) -> int:
+def _fetch_live_ltp_map(stocks: list[dict[str, Any]]) -> dict[str, float]:
+    """
+    Current LTP (not the scanner's last close) for each stock, sourced from
+    whichever broker is enabled=True in kite_market_config — that collection
+    is the single switch for "which broker feeds market data" (kite/dhan are
+    both wired for trading, but only one is ever the active data feed).
+    Raises ValueError if that broker's access token is missing/expired so a
+    new portfolio is never silently entered at a stale close price.
+    """
+    symbols = sorted({str(stock.get("symbol") or "").strip().upper() for stock in stocks if str(stock.get("symbol") or "").strip()})
+    if not symbols:
+        return {}
+
+    db = MongoData()._db
+    broker = _get_active_broker()
+
+    if broker == "dhan":
+        client_id, access_token = _load_dhan_credentials()
+        if not access_token or not client_id:
+            raise ValueError("Dhan is the active data-feed broker (kite_market_config) but its access token is not configured.")
+        from features.dhan_broker_ws import validate_access_token as _validate_dhan_token
+        if not _validate_dhan_token(access_token):
+            raise ValueError("Dhan access token has expired or is invalid. Please relogin to Dhan before creating the portfolio.")
+
+        security_id_by_symbol: dict[str, str] = {}
+        for row in db[STOCKS_COLLECTION].find({"symbol": {"$in": symbols}}, {"_id": 0, "symbol": 1, "dhan_security_id": 1}):
+            symbol = str(row.get("symbol") or "").strip().upper()
+            sec_id = str(row.get("dhan_security_id") or "").strip()
+            if symbol and sec_id:
+                security_id_by_symbol[symbol] = sec_id
+        for stock in stocks:
+            symbol = str(stock.get("symbol") or "").strip().upper()
+            sec_id = str(stock.get("dhan_token") or "").strip()
+            if symbol and sec_id:
+                security_id_by_symbol.setdefault(symbol, sec_id)
+
+        symbol_by_security_id = {sec_id: symbol for symbol, sec_id in security_id_by_symbol.items() if sec_id.isdigit()}
+        if not symbol_by_security_id:
+            return {}
+
+        from features.broker_gateway import dhan_quote_post
+        ltp_map: dict[str, float] = {}
+        for batch in _chunkify_strings(list(symbol_by_security_id.keys()), 100):
+            try:
+                response = dhan_quote_post({"NSE_EQ": [int(sec_id) for sec_id in batch]}, access_token, client_id, 10.0)
+                payload = response.json() if response is not None and response.ok else {}
+            except Exception:
+                payload = {}
+            eq_data = (payload.get("data") or {}).get("NSE_EQ") or payload.get("NSE_EQ") or {}
+            if not isinstance(eq_data, dict):
+                continue
+            for sec_id_str, info in eq_data.items():
+                symbol = symbol_by_security_id.get(str(sec_id_str))
+                ltp = _safe_float((info or {}).get("last_price"))
+                if symbol and ltp > 0:
+                    ltp_map[symbol] = round(ltp, 2)
+        return ltp_map
+
+    # kite
+    cfg = db["kite_market_config"].find_one({"broker": "kite", "enabled": True}, {"api_key": 1, "access_token": 1}) or {}
+    api_key = str(cfg.get("api_key") or "").strip()
+    access_token = str(cfg.get("access_token") or "").strip()
+    if not access_token or not api_key:
+        raise ValueError("Kite is the active data-feed broker (kite_market_config) but its access token is not configured.")
+    from features.kite_broker_ws import validate_access_token as _validate_kite_token
+    if not _validate_kite_token(access_token):
+        raise ValueError("Kite access token has expired or is invalid. Please relogin to Kite before creating the portfolio.")
+
+    token_by_symbol: dict[str, str] = {}
+    for stock in stocks:
+        symbol = str(stock.get("symbol") or "").strip().upper()
+        token = str(stock.get("kite_token") or "").strip()
+        if symbol and token:
+            token_by_symbol.setdefault(symbol, token)
+    missing_symbols = [symbol for symbol in symbols if symbol not in token_by_symbol]
+    if missing_symbols:
+        for row in db[STOCKS_COLLECTION].find({"symbol": {"$in": missing_symbols}}, {"_id": 0, "symbol": 1, "kite_token": 1}):
+            symbol = str(row.get("symbol") or "").strip().upper()
+            token = str(row.get("kite_token") or "").strip()
+            if symbol and token:
+                token_by_symbol.setdefault(symbol, token)
+
+    symbol_by_token = {token: symbol for symbol, token in token_by_symbol.items() if token.isdigit()}
+    if not symbol_by_token:
+        return {}
+
+    kite = get_kite_instance(access_token)
+    ltp_map: dict[str, float] = {}
+    for batch in _chunkify_strings(list(symbol_by_token.keys()), 500):
+        try:
+            quotes = kite.quote([int(token) for token in batch]) or {}
+        except Exception:
+            quotes = {}
+        for token_str, quote_payload in quotes.items():
+            symbol = symbol_by_token.get(str(token_str))
+            ltp = _safe_float((quote_payload or {}).get("last_price"))
+            if symbol and ltp > 0:
+                ltp_map[symbol] = round(ltp, 2)
+    return ltp_map
+
+
+def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: str) -> int:
     strategy_oid = _as_object_id(strategy_id)
     db = MongoData()._db
     stock_meta_map = _load_stock_meta_map(
         [str(stock.get("symbol") or "").strip() for stock in invest_stocks if str(stock.get("symbol") or "").strip()]
     )
+    live_ltp_map = _fetch_live_ltp_map(invest_stocks)
     investment_docs = []
     for stock in invest_stocks:
         symbol = str(stock.get("symbol") or "").strip()
         stock_meta = stock_meta_map.get(symbol, {})
-        kite_token = (
+        entry_price = live_ltp_map.get(symbol.upper()) or _safe_float(stock.get("last_price"))
+        resolved_token = (
             stock.get("kite_token")
             or stock.get("symbol_token")
             or stock.get("token")
@@ -3618,19 +3798,15 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
             or stock.get("exchange_token")
             or stock.get("code")
             or stock_meta.get("kite_token")
+            or stock_meta.get("symbol_token")
             or stock_meta.get("token")
             or stock_meta.get("tokens")
             or stock_meta.get("instrument_token")
             or stock_meta.get("exchange_token")
             or stock_meta.get("code")
         )
-        dhan_token = (
-            stock.get("dhan_token")
-            or stock.get("dhan_security_id")
-            or stock_meta.get("dhan_security_id")
-        )
         investment_doc = {
-            "entry_price": _safe_float(stock.get("last_price")),
+            "entry_price": entry_price,
             "position_qty": int(_safe_float(stock.get("qty"), 0)),
             "rank": int(_safe_float(stock.get("rank"), 0)),
             "universe": stock.get("universe"),
@@ -3646,13 +3822,17 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
             "vol_3M": _safe_float(stock.get("vol_3M")),
             "vol_6M": _safe_float(stock.get("vol_6M")),
             "vol_1Y": _safe_float(stock.get("vol_1Y")),
-            "entry_date": entry_date or datetime.utcnow(),
+            "entry_date": datetime.utcnow(),
             "strategy_id": strategy_oid,
             "position_status": 1,
             "exited_qty": 0,
             "symbol_type": "equity",
-            "kite_token": kite_token,
-            "dhan_token": dhan_token,
+            "kite_token": resolved_token,
+            "symbol_token": resolved_token,
+            "token": resolved_token,
+            "tokens": resolved_token,
+            "instrument_token": resolved_token,
+            "exchange_token": stock.get("exchange_token") or stock_meta.get("exchange_token") or stock.get("code") or stock_meta.get("code"),
             "indentification": stock.get("indentification"),
             "primary_investment_amount": stock.get("primary_investment_amount"),
             "primary_investment_investment": stock.get("primary_investment_investment"),
@@ -3666,7 +3846,29 @@ def save_investment_portfolio(invest_stocks: list[dict[str, Any]], strategy_id: 
         investment_docs.append(investment_doc)
     if not investment_docs:
         return 0
-    db[INVESTMENT_COLLECTION].insert_many(investment_docs)
+    insert_result = db[INVESTMENT_COLLECTION].insert_many(investment_docs)
+    inserted_ids = list(insert_result.inserted_ids or [])
+    post_insert_updates: list[UpdateOne] = []
+    for inserted_id, investment_doc in zip(inserted_ids, investment_docs):
+        resolved_token = investment_doc.get("symbol_token") or investment_doc.get("kite_token") or investment_doc.get("token")
+        if resolved_token in (None, ""):
+            continue
+        post_insert_updates.append(
+            UpdateOne(
+                {"_id": inserted_id},
+                {
+                    "$set": {
+                        "symbol_token": resolved_token,
+                        "kite_token": resolved_token,
+                        "token": resolved_token,
+                        "tokens": resolved_token,
+                        "instrument_token": resolved_token,
+                    }
+                },
+            )
+        )
+    if post_insert_updates:
+        db[INVESTMENT_COLLECTION].bulk_write(post_insert_updates, ordered=False)
     _clear_portfolio_summary_cache()
     return len(investment_docs)
 
@@ -3683,18 +3885,70 @@ def save_portfolio_settings(portfolio_data: dict[str, Any]) -> str:
     return str(result.inserted_id)
 
 
+
+
+def get_scanner_portfolio_options() -> list[dict[str, str]]:
+    db = MongoData()._db
+    items = list(
+        db[PORTFOLIO_MASTER_COLLECTION]
+        .find({}, {"_id": 1, "name": 1, "created_at": 1})
+        .sort("created_at", -1)
+    )
+    options: list[dict[str, str]] = []
+    for item in items:
+        value = str(item.get("_id") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if value and name:
+            options.append({"_id": value, "name": name})
+    return options
+
+
+def _resolve_scanner_portfolio_master(portfolio_settings: dict[str, Any]) -> tuple[str, str]:
+    db = MongoData()._db
+    provided_portfolio_id = str(portfolio_settings.get("portfolio_id") or "").strip()
+    provided_name = str(portfolio_settings.get("portfolio_name") or portfolio_settings.get("name") or "").strip()
+
+    if provided_portfolio_id:
+        portfolio_doc = db[PORTFOLIO_MASTER_COLLECTION].find_one({"_id": _as_object_id(provided_portfolio_id)}, {"_id": 1, "name": 1})
+        if not portfolio_doc:
+            raise ValueError("Portfolio not found.")
+        portfolio_name = str(portfolio_doc.get("name") or "").strip()
+        if not portfolio_name:
+            raise ValueError("Selected portfolio name is empty.")
+        return str(portfolio_doc.get("_id")), portfolio_name
+
+    if not provided_name:
+        raise ValueError("portfolio_name is required.")
+
+    existing_doc = db[PORTFOLIO_MASTER_COLLECTION].find_one(
+        {"name": {"$regex": f"^{re.escape(provided_name)}$", "$options": "i"}},
+        {"_id": 1, "name": 1},
+    )
+    if existing_doc:
+        portfolio_name = str(existing_doc.get("name") or "").strip() or provided_name
+        return str(existing_doc.get("_id")), portfolio_name
+
+    result = db[PORTFOLIO_MASTER_COLLECTION].insert_one({"name": provided_name, "created_at": datetime.utcnow()})
+    return str(result.inserted_id), provided_name
+
 def save_portfolio(portfolio_settings: dict[str, Any], invest_stock_data: list[dict[str, Any]]) -> dict[str, Any]:
     if not portfolio_settings:
         raise ValueError("portfolio_settings is required.")
     if not invest_stock_data:
         raise ValueError("invest_stock_data is required.")
 
-    portfolio_strategy_id = save_portfolio_settings(portfolio_settings)
-    raw_score_date = portfolio_settings.get("score_date")
-    score_entry_date = _coerce_score_date(raw_score_date) if raw_score_date else None
-    inserted_count = save_investment_portfolio(invest_stock_data, portfolio_strategy_id, entry_date=score_entry_date)
+    resolved_portfolio_id, resolved_portfolio_name = _resolve_scanner_portfolio_master(portfolio_settings)
+    next_portfolio_settings = dict(portfolio_settings)
+    next_portfolio_settings["portfolio_id"] = resolved_portfolio_id
+    next_portfolio_settings["portfolio_name"] = resolved_portfolio_name
+    next_portfolio_settings["name"] = resolved_portfolio_name
+
+    portfolio_strategy_id = save_portfolio_settings(next_portfolio_settings)
+    inserted_count = save_investment_portfolio(invest_stock_data, portfolio_strategy_id)
     return {
         "status": "success",
+        "portfolio_id": resolved_portfolio_id,
+        "portfolio_name": resolved_portfolio_name,
         "portfolio_strategy_id": portfolio_strategy_id,
         "inserted_investments": inserted_count,
     }
@@ -3768,8 +4022,6 @@ def _update_position_as_exited(investment_id: ObjectId, exit_price: float, exit_
 
 def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
     detail = get_portfolio_detail(strategy_id)
-    raw_score_model = (detail.get("portfolio") or {}).get("score_model")
-    score_model = str(raw_score_model).strip().lower() if raw_score_model else "old"
     score_request = {
         "index_name": detail.get("strategy_index"),
         "sectors": detail.get("sector"),
@@ -3779,7 +4031,6 @@ def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
         "total_capital": detail.get("starting_capital"),
         "score_date": datetime.now().strftime("%Y-%m-%d"),
         "formula": detail.get("formula"),
-        "score_model": score_model,
     }
     score_result = generate_stock_scores(score_request)
     stocks_scored = score_result.get("stocks_scored", [])
@@ -3792,9 +4043,7 @@ def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
     exited_stocks: list[dict[str, Any]] = []
     update_status: list[dict[str, Any]] = []
     insert_status: list[dict[str, Any]] = []
-    new_stocks_detail: list[dict[str, Any]] = []
     exit_stock_investment_amount = 0.0
-    total_realized_profit = 0.0
 
     exit_rank_threshold = int(_safe_float(detail.get("exit_rank"), 0))
     entry_rank_threshold = int(_safe_float(detail.get("entry_rank"), 0))
@@ -3803,26 +4052,20 @@ def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
         current_rank = int(_safe_float((score_map.get(symbol) or {}).get("rank"), 999999))
         if symbol and current_rank > exit_rank_threshold:
             ltp = _safe_float(stock.get("ltp"), _safe_float(stock.get("entry_price")))
-            entry_price = _safe_float(stock.get("entry_price"))
             qty = int(_safe_float(stock.get("position_qty"), 0))
             exit_value = qty * ltp
-            realized_profit = round((ltp - entry_price) * qty, 2)
             ok = _update_position_as_exited(_as_object_id(stock.get("_id")), ltp, qty, current_rank)
             update_status.append({"symbol": symbol, "status": "Updated" if ok else "Failed"})
             exited_stocks.append(
                 {
                     "symbol": symbol,
-                    "entry_price": round(entry_price, 2),
                     "exit_price": round(ltp, 2),
                     "exit_date": datetime.utcnow().isoformat(),
                     "exit_qty": qty,
-                    "entry_value": round(entry_price * qty, 2),
                     "exit_value": round(exit_value, 2),
-                    "realized_profit": realized_profit,
                 }
             )
             exit_stock_investment_amount += exit_value
-            total_realized_profit += realized_profit
 
     remaining_payment += exit_stock_investment_amount
     active_symbols = {str(p.get("symbol") or "").strip() for p in active_positions if int(p.get("position_status", 1) or 1) == 1}
@@ -3853,28 +4096,16 @@ def rebalance_portfolio(strategy_id: str) -> dict[str, Any]:
             }
         )
         insert_status.append({"symbol": stock.get("symbol"), "status": "Inserted"})
-        new_stocks_detail.append({
-            "symbol": stock.get("symbol"),
-            "rank": stock.get("rank"),
-            "sector": stock.get("sector"),
-            "entry_price": round(ltp, 2),
-            "qty": qty,
-            "investment_amount": round(investment_amount, 2),
-            "score": round(_safe_float(stock.get("score")), 4),
-        })
         remaining_payment -= investment_amount
         _clear_portfolio_summary_cache()
 
     return {
         "total_investment_before": round(total_investment_amount, 2),
-        "exit_stock_value": round(sum(s["exit_value"] for s in exited_stocks), 2),
-        "total_realized_profit": round(total_realized_profit, 2),
+        "exit_stock_value": round(exit_stock_investment_amount, 2),
         "remaining_capital_after": round(remaining_payment, 2),
-        "new_buy_amount": round(sum(s["investment_amount"] for s in new_stocks_detail), 2),
         "exited_count": len(exited_stocks),
-        "new_buy_count": len(new_stocks_detail),
+        "new_buy_count": len(insert_status),
         "exited_stocks": exited_stocks,
-        "new_stocks": new_stocks_detail,
         "update_status": update_status,
         "insert_status": insert_status,
     }
@@ -4003,7 +4234,9 @@ def exit_goldbees_strategy(strategy_id: str) -> dict[str, Any]:
 # Scanner Backtest
 # =====================================================================
 def run_scanner_backtest(payload: dict[str, Any]) -> dict[str, Any]:
-    score_model = str(payload.get("score_model") or "current").strip().lower()
+    if str(payload.get("score_model") or "current").strip().lower() == "old":
+        from scanner.service_before_change_score_code import run_scanner_backtest as _old_fn
+        return _old_fn({k: v for k, v in payload.items() if k != "score_model"})
 
     from scanner.backtest_engine import (
         ultra_backtest_v2_fastest_fixed_v3,
@@ -4013,7 +4246,7 @@ def run_scanner_backtest(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     INDICATOR_SETTINGS: dict[str, dict[str, Any]] = {
-        "supertrend_1_2_5": {"name": "supertrend", "params": (1, 2.5)},
+        "supertrend_1_2_5": {"name": "supertrend", "params": (1, 2.7)},
     }
     DEFAULT_FORMULA = "((70% * 6 Month Volatility) + (20% * 3 Month Performance) + (10% * 1 Year Performance)) / 3 Month Volatility"
     DEFAULT_FILTER_ACTION = "go_cash"
@@ -4099,12 +4332,11 @@ def run_scanner_backtest(payload: dict[str, Any]) -> dict[str, Any]:
         EXIT_REGIME_FILTER_STATUS=exit_regime_filter_status,
         UNCORRELATED_ASSET_STATUS=uncorrelated_asset_status,
         INDICATOR_NAME=indicator_name,
-        INDICATOR_PARAMS={"atr_period": indicator_cfg["params"][0], "multiplier": indicator_cfg["params"][1]},
+        INDICATOR_PARAMS={"atr_period": 1, "multiplier": 2.7},
         FILTER_ACTION=regime_filter_action,
         REBALANCE_FREQUENCY=rebalance_frequency,
         REBALANCE_DAY_OR_WEEK=rebalance_day,
         UNIVERSE_INDEXES=indexes,
-        score_model=score_model,
     )
 
     # Serialize closed_trades_df — convert Timestamps to ISO strings for JSON safety
@@ -5086,86 +5318,3 @@ def run_backtest_from_file_inputs(files: list[dict[str, Any]]) -> dict[str, Any]
         "reports": reports,
         "combined_report": combined_report,
     }
-
-
-def get_equity_quotes(tokens: list[str]) -> dict[str, dict]:
-    """
-    Fetch live LTP for NSE equity (spot) tokens.
-    Returns {token: {"token": token, "ltp": float, "source": str}}.
-    Supports both Dhan (NSE_EQ segment) and Kite brokers.
-    """
-    tokens = [str(t).strip() for t in tokens if str(t).strip()]
-    if not tokens:
-        return {}
-
-    db = MongoData()
-    try:
-        raw_db = db._db
-        cfg = raw_db["kite_market_config"].find_one({"enabled": True}) or {}
-        broker = str(cfg.get("broker") or "kite").strip().lower()
-
-        if broker == "dhan":
-            dhan_cfg = raw_db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
-            access_token = str(dhan_cfg.get("access_token") or "").strip()
-            client_id = str(dhan_cfg.get("user_id") or dhan_cfg.get("dhan_client_id") or "").strip()
-            if not access_token:
-                return {}
-
-            import requests as _req
-
-            int_tokens = [int(t) for t in tokens if t.lstrip("-").isdigit()]
-            if not int_tokens:
-                return {}
-
-            headers = {
-                "access-token": access_token,
-                "client-id": client_id,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            }
-            try:
-                r = _req.post(
-                    "https://api.dhan.co/v2/marketfeed/ltp",
-                    headers=headers,
-                    json={"NSE_EQ": int_tokens},
-                    timeout=4,
-                )
-                raw = r.json() if r.ok else {}
-            except Exception:
-                raw = {}
-
-            eq_data = (raw.get("data") or {}).get("NSE_EQ") or raw.get("NSE_EQ") or {}
-            result: dict[str, dict] = {}
-            for sid, v in eq_data.items():
-                tok = str(sid).strip()
-                ltp = float(v.get("last_price") or v.get("ltp") or v.get("lastTradedPrice") or 0) if isinstance(v, dict) else float(v or 0)
-                if ltp > 0:
-                    result[tok] = {"token": tok, "ltp": round(ltp, 2), "source": "dhan_eq"}
-            return result
-
-        else:
-            # Kite broker — use REST quote API
-            from features.broker_gateway import get_broker_rest_client_with_token as _get_kite
-            from features.kite_connect_helper import get_common_credentials, is_configured
-            if not is_configured():
-                return {}
-            api_key, access_token = get_common_credentials()
-            if not api_key or not access_token:
-                return {}
-            kite = _get_kite(access_token)
-            int_tokens = [int(t) for t in tokens if t.lstrip("-").isdigit()]
-            if not int_tokens:
-                return {}
-            try:
-                quote_docs = kite.quote(int_tokens) or {}
-            except Exception:
-                return {}
-            result = {}
-            for _, doc in quote_docs.items():
-                tok = str(doc.get("instrument_token") or "").strip()
-                ltp = float((doc.get("last_price") or doc.get("last_trade_price") or 0))
-                if tok and ltp > 0:
-                    result[tok] = {"token": tok, "ltp": round(ltp, 2), "source": "kite_eq"}
-            return result
-    finally:
-        db.close()

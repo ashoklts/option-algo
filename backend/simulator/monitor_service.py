@@ -241,7 +241,7 @@ class SimulatorMonitorService:
         portfolio_name: str = "",
     ) -> tuple[MiniStrangleRequest, dict[str, Any]]:
         db = MongoData()
-        strategy_col = db._db["paper_trade_strategy"]
+        strategy_col = db._db["simulator_strategy"]
 
         try:
             if strategy_id:

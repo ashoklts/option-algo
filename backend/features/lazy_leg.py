@@ -133,7 +133,10 @@ def process_lazy_legs(idx, day: str, exit_time: str, expiries: list,
             debug_print(f"{tag} SKIP: no base_px for momentum at trigger_time={trigger_time}")
             return []
 
-        target_px = base_px * (1 - c["momentum_val"] / 100) if "Percentage" in c["momentum_type"] else base_px - c["momentum_val"]
+        if "Up" in c["momentum_type"]:
+            target_px = base_px * (1 + c["momentum_val"] / 100) if "Percentage" in c["momentum_type"] else base_px + c["momentum_val"]
+        else:
+            target_px = base_px * (1 - c["momentum_val"] / 100) if "Percentage" in c["momentum_type"] else base_px - c["momentum_val"]
         debug_print(f"{tag} momentum={c['momentum_type']} val={c['momentum_val']}% base_px={base_px:.2f} target={target_px:.2f} scan={_add_one_minute(trigger_time)}→{exit_time}")
 
         mom_time, mom_px = _find_momentum_entry(

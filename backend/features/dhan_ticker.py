@@ -119,6 +119,29 @@ def _load_dhan_spot_tokens(db) -> tuple[dict[str, str], str]:
         return _DHAN_SPOT_FALLBACK, _DHAN_VIX_FALLBACK
 
 
+def _resolve_dhan_exchange_segments(security_ids: list[str]) -> dict[str, str]:
+    """security_id → ws_segment ('NSE_FNO'/'BSE_FNO') from active_option_tokens.
+
+    Without this, every incremental subscribe defaulted to NSE_FNO regardless
+    of instrument — fine for NIFTY/BANKNIFTY (genuinely NSE_FNO) but wrong for
+    SENSEX/BANKEX (BSE_FNO), so those legs silently never received ticks.
+    """
+    try:
+        from features.mongo_data import MongoData
+        db = MongoData()
+        try:
+            docs = db._db["active_option_tokens"].find(
+                {"broker": "dhan", "token": {"$in": security_ids}},
+                {"token": 1, "ws_segment": 1},
+            )
+            return {str(d.get("token")): str(d.get("ws_segment") or DHAN_FO_EXCHANGE) for d in docs}
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("[dhan_ticker] exchange segment lookup error: %s", exc)
+        return {}
+
+
 class _DhanCompatTicker:
     """
     KiteTicker-compatible shim so existing code that calls
@@ -133,8 +156,14 @@ class _DhanCompatTicker:
 
     def subscribe(self, tokens: list) -> None:
         str_ids = [str(t) for t in tokens if t]
-        if str_ids:
-            self._mgr.subscribe_tokens(str_ids, exchange=DHAN_FO_EXCHANGE)
+        if not str_ids:
+            return
+        segment_by_id = _resolve_dhan_exchange_segments(str_ids)
+        by_segment: dict[str, list[str]] = {}
+        for sid in str_ids:
+            by_segment.setdefault(segment_by_id.get(sid, DHAN_FO_EXCHANGE), []).append(sid)
+        for segment, ids in by_segment.items():
+            self._mgr.subscribe_tokens(ids, exchange=segment)
 
     def set_mode(self, mode, tokens: list) -> None:
         pass   # Dhan has no mode concept — all subscriptions are LTP

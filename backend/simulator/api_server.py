@@ -35,11 +35,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from pymongo import MongoClient
 
+from features import auth as app_auth
+from features.mongo_data import MongoData
+from features.simulator_risk_monitor import simulator_risk_monitor
 from .models import MiniStrangleRequest
 from .monitor_service import get_simulator_monitor_service
 from .monitor_ui import build_monitor_toggle_page
@@ -57,17 +60,16 @@ _broker = ZerodhaBroker()
 _mongo_client = MongoClient("mongodb://localhost:27017/")
 _stock_db = _mongo_client["stock_data"]
 _holiday_collection = _stock_db["market_holidays"]
-_option_chain_collection = _stock_db["option_chain"]
-_paper_trade_portfolio_col = _stock_db["paper_trade_portfolio"]
-_paper_trade_strategy_col = _stock_db["paper_trade_strategy"]
+_option_chain_collection = _stock_db["option_chain_historical_data"]
+_simulator_portfolio_col = _stock_db["simulator_portfolio"]
+_simulator_strategy_col = _stock_db["simulator_strategy"]
+_tv_chart_state_col = _stock_db["tv_chart_state"]
+_tv_alerts_col = _stock_db["tv_alerts"]
 _lot_sizes_col = _stock_db["lot_sizes"]
 IST = timezone(timedelta(hours=5, minutes=30))
 _DEFAULT_PAPER_TRADE_SPOT_BROKER_ID = "69e18416c3d234dc8c90e6ca"
 _DEFAULT_PAPER_TRADE_PORTFOLIOS = [
-    "Running Trades", "Exited Trades", "Archived Trades",
-    "Aditional Position Strategy", "Nifty Weekly Expiry BB Stra",
-    "Nifty Expiry Day BB Stra", "Banknifty Expiry Day BB Stra",
-    "Nifty Monthly Stra", "Week On Nct Mnth", "Small Strangle",
+    "Running Trades",  "Week On Nct Mnth"
 ]
 
 logger = logging.getLogger(__name__)
@@ -99,6 +101,29 @@ class PTPositionIn(BaseModel):
     pnl_pct: Optional[float] = None
 
 
+class PTPositionRiskIn(BaseModel):
+    index: int
+    sl_mode: str = "percent"
+    sl_value: float = 0.0
+    tp_mode: str = "percent"
+    tp_value: float = 0.0
+
+
+class PTStrategyAlertConfigIn(BaseModel):
+    positions: List[PTPositionRiskIn] = []
+    trading_mode: str = "auto"
+    stoploss: Dict[str, Any] = {}
+    target: Dict[str, Any] = {}
+    trailing_stop: Dict[str, Any] = {}
+    hedge_strike_type: Dict[str, Any] = {}
+    hedge_time_control: Dict[str, Any] = {}
+
+
+class PTStrategySlMarkerIn(BaseModel):
+    sl_upper: Optional[float] = None
+    sl_lower: Optional[float] = None
+
+
 class PTStrategyIn(BaseModel):
     portfolio_name: str
     strategy_name: str
@@ -106,6 +131,25 @@ class PTStrategyIn(BaseModel):
     spot_price: Optional[float] = None
     config: Optional[Dict[str, Any]] = None
     positions: Optional[List[PTPositionIn]] = []
+    # "backtest" for strategies saved from the historical-data builder
+    # (PaperTradeBacktest.tsx), "live" for everything saved from the
+    # live-broker/positions views. Only honoured on create (pt_save_strategy)
+    # — pt_update_strategy deliberately leaves it out of its $set so an
+    # update can never flip a strategy's mode back to the model default.
+    mode: Optional[str] = "live"
+
+
+class SimulatorChartStateIn(BaseModel):
+    page_id: str = "simulator_chart_workspace"
+    symbol: str = "nifty_50"
+    layout: Any = None
+    resolution: Optional[str] = None
+
+
+class SimulatorAlertIn(BaseModel):
+    page_id: str = "simulator_chart_workspace"
+    symbol: str = "nifty_50"
+    alert: Dict[str, Any]
 
 
 def _str_id(doc: Optional[dict]) -> Optional[dict]:
@@ -114,10 +158,17 @@ def _str_id(doc: Optional[dict]) -> Optional[dict]:
     return doc
 
 
-def _ensure_default_paper_trade_portfolios() -> None:
+def _get_required_user_id(current_user: dict) -> str:
+    user_id = str(current_user.get("_id") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authenticated user is required")
+    return user_id
+
+
+def _ensure_default_simulator_portfolios() -> None:
     for portfolio_name in _DEFAULT_PAPER_TRADE_PORTFOLIOS:
-        if not _paper_trade_portfolio_col.find_one({"name": portfolio_name}, {"_id": 1}):
-            _paper_trade_portfolio_col.insert_one({
+        if not _simulator_portfolio_col.find_one({"name": portfolio_name}, {"_id": 1}):
+            _simulator_portfolio_col.insert_one({
                 "name": portfolio_name,
                 "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
             })
@@ -145,7 +196,7 @@ def _get_instrument_spot_token_docs(broker_id: str = "") -> list[dict]:
     return [_serialize_instrument_spot_token(doc) for doc in docs]
 
 
-def _get_paper_trade_default_quote_tokens(broker_id: str = "") -> list[str]:
+def _get_simulator_default_quote_tokens(broker_id: str = "") -> list[str]:
     return [
         str(item.get("token") or "").strip()
         for item in _get_instrument_spot_token_docs(broker_id)
@@ -232,7 +283,7 @@ async def start_monitor(
             ))
         payload = await simulator_bridge_start(
             _broker.kite,
-            _paper_trade_strategy_col,
+            _simulator_strategy_col,
             _stock_db,
         )
         detail_parts = []
@@ -276,7 +327,7 @@ async def start_monitor_post(
             }
         payload = await simulator_bridge_start(
             _broker.kite,
-            _paper_trade_strategy_col,
+            _simulator_strategy_col,
             _stock_db,
         )
         if strategy_id or portfolio_name:
@@ -292,7 +343,7 @@ async def stop_monitor() -> HTMLResponse:
     try:
         payload = await simulator_bridge_stop(
             getattr(_broker, "kite", None),
-            _paper_trade_strategy_col,
+            _simulator_strategy_col,
             _stock_db,
         )
         return HTMLResponse(content=build_monitor_toggle_page(
@@ -321,7 +372,7 @@ async def stop_monitor_post() -> dict:
     try:
         return await simulator_bridge_stop(
             getattr(_broker, "kite", None),
-            _paper_trade_strategy_col,
+            _simulator_strategy_col,
             _stock_db,
         )
     except Exception as exc:
@@ -332,7 +383,7 @@ async def stop_monitor_post() -> dict:
 async def monitor_status() -> dict:
     return await simulator_bridge_status(
         getattr(_broker, "kite", None),
-        _paper_trade_strategy_col,
+        _simulator_strategy_col,
         _stock_db,
     )
 
@@ -341,7 +392,7 @@ async def monitor_status() -> dict:
 async def monitor_reentry_status() -> dict:
     return await simulator_bridge_reentry_status(
         getattr(_broker, "kite", None),
-        _paper_trade_strategy_col,
+        _simulator_strategy_col,
         _stock_db,
     )
 
@@ -411,11 +462,138 @@ async def get_lot_size(instrument: str = "nifty") -> dict:
     return {"instrument": symbol, "lot_size": defaults.get(symbol, 75)}
 
 
-@router.get("/paper-trade/portfolios")
-async def pt_list_portfolios() -> dict:
+@router.get("/chart-state")
+async def get_chart_state(
+    page_id: str = Query(default="simulator_chart_workspace"),
+    symbol: str = Query(default="nifty_50"),
+    current_user: dict = Depends(app_auth.require_current_user),
+) -> dict:
+    """Layout + resolution only — each alert is its own document in
+    tv_alerts (see GET /alerts), not nested in this doc anymore."""
     try:
-        _ensure_default_paper_trade_portfolios()
-        docs = list(_paper_trade_portfolio_col.find({}, {"_id": 1, "name": 1}))
+        user_id = _get_required_user_id(current_user)
+        doc = _tv_chart_state_col.find_one(
+            {"user_id": user_id, "page_id": page_id, "symbol": symbol},
+            {"_id": 0, "layout": 1, "resolution": 1, "updated_at": 1, "page_id": 1, "symbol": 1},
+        )
+        return {
+            "status": "success",
+            "state": doc
+            or {
+                "page_id": page_id,
+                "symbol": symbol,
+                "layout": None,
+                "resolution": None,
+                "updated_at": None,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.put("/chart-state")
+async def save_chart_state(
+    body: SimulatorChartStateIn,
+    current_user: dict = Depends(app_auth.require_current_user),
+) -> dict:
+    try:
+        user_id = _get_required_user_id(current_user)
+        normalized_page_id = str(body.page_id or "simulator_chart_workspace").strip() or "simulator_chart_workspace"
+        normalized_symbol = str(body.symbol or "nifty_50").strip() or "nifty_50"
+        now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        _tv_chart_state_col.update_one(
+            {"user_id": user_id, "page_id": normalized_page_id, "symbol": normalized_symbol},
+            {
+                "$set": {
+                    "user_id": user_id,
+                    "page_id": normalized_page_id,
+                    "symbol": normalized_symbol,
+                    "layout": body.layout,
+                    "resolution": body.resolution,
+                    "updated_at": now_str,
+                }
+            },
+            upsert=True,
+        )
+        return {"status": "success", "updated_at": now_str}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/alerts")
+async def list_chart_alerts(
+    page_id: str = Query(default="simulator_chart_workspace"),
+    symbol: str = Query(default="nifty_50"),
+    current_user: dict = Depends(app_auth.require_current_user),
+) -> dict:
+    """Every alert is its own tv_alerts document — one new record per
+    alert created, never a shared array field rewritten on every save."""
+    try:
+        user_id = _get_required_user_id(current_user)
+        docs = list(_tv_alerts_col.find({"user_id": user_id, "page_id": page_id, "symbol": symbol}, {"_id": 0}))
+        return {"status": "success", "alerts": docs}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.put("/alerts/{alert_id}")
+async def save_chart_alert(
+    alert_id: str,
+    body: SimulatorAlertIn,
+    current_user: dict = Depends(app_auth.require_current_user),
+) -> dict:
+    """Upserts exactly one alert document, scoped to this user — creating
+    a new alert and editing an existing one both land here, keyed on the
+    alert's own client-generated id (tv_alerts_id_uq)."""
+    try:
+        user_id = _get_required_user_id(current_user)
+        normalized_page_id = str(body.page_id or "simulator_chart_workspace").strip() or "simulator_chart_workspace"
+        normalized_symbol = str(body.symbol or "nifty_50").strip() or "nifty_50"
+        now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        doc = dict(body.alert)
+        doc["id"] = alert_id
+        doc["user_id"] = user_id
+        doc["page_id"] = normalized_page_id
+        doc["symbol"] = normalized_symbol
+        doc["updated_at"] = now_str
+        _tv_alerts_col.update_one(
+            {"id": alert_id, "user_id": user_id},
+            {"$set": doc},
+            upsert=True,
+        )
+        return {"status": "success", "updated_at": now_str}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.delete("/alerts/{alert_id}")
+async def delete_chart_alert(
+    alert_id: str,
+    current_user: dict = Depends(app_auth.require_current_user),
+) -> dict:
+    try:
+        user_id = _get_required_user_id(current_user)
+        _tv_alerts_col.delete_one({"id": alert_id, "user_id": user_id})
+        return {"status": "success"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.get("/paper-trade/portfolios")
+async def pt_list_portfolios(current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    try:
+        _ensure_default_simulator_portfolios()
+        docs = list(_simulator_portfolio_col.find({}, {"_id": 1, "name": 1}))
         for doc in docs:
             doc["_id"] = str(doc["_id"])
         return {"status": "success", "portfolios": docs}
@@ -424,12 +602,12 @@ async def pt_list_portfolios() -> dict:
 
 
 @router.post("/paper-trade/portfolios")
-async def pt_create_portfolio(body: PTPortfolioIn) -> dict:
+async def pt_create_portfolio(body: PTPortfolioIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
-        existing = _paper_trade_portfolio_col.find_one({"name": body.name}, {"_id": 1})
+        existing = _simulator_portfolio_col.find_one({"name": body.name}, {"_id": 1})
         if existing:
             return {"status": "success", "id": str(existing["_id"]), "created": False}
-        result = _paper_trade_portfolio_col.insert_one({
+        result = _simulator_portfolio_col.insert_one({
             "name": body.name,
             "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
         })
@@ -439,12 +617,20 @@ async def pt_create_portfolio(body: PTPortfolioIn) -> dict:
 
 
 @router.get("/paper-trade/strategies")
-async def pt_list_strategies(portfolio_name: Optional[str] = None) -> dict:
+async def pt_list_strategies(
+    portfolio_id: Optional[str] = None,
+    portfolio_name: Optional[str] = None,
+    current_user: dict = Depends(app_auth.get_current_user),
+) -> dict:
     try:
         filt = {}
-        if portfolio_name:
-            filt["portfolio_name"] = portfolio_name
-        docs = list(_paper_trade_strategy_col.find(filt).sort("saved_at", -1))
+        normalized_portfolio_id = str(portfolio_id or "").strip()
+        normalized_portfolio_name = str(portfolio_name or "").strip()
+        if normalized_portfolio_id:
+            filt["portfolio_id"] = normalized_portfolio_id
+        elif normalized_portfolio_name:
+            filt["portfolio_name"] = normalized_portfolio_name
+        docs = list(_simulator_strategy_col.find(filt).sort("saved_at", -1))
         result = []
         for doc in docs:
             doc["_id"] = str(doc["_id"])
@@ -482,18 +668,138 @@ async def pt_list_strategies(portfolio_name: Optional[str] = None) -> dict:
 
 
 @router.get("/paper-trade/strategies/{strategy_id}")
-async def pt_get_strategy(strategy_id: str) -> dict:
+async def pt_get_strategy(strategy_id: str, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
-        doc = _paper_trade_strategy_col.find_one({"_id": ObjectId(strategy_id)})
+        doc = _simulator_strategy_col.find_one({"_id": ObjectId(strategy_id)})
         if not doc:
             return {"status": "error", "message": "Not found"}
-        return {"status": "success", "strategy": _str_id(doc)}
+        # This module is mounted at the "/algo" prefix (api.py:
+        # app.include_router(simulator_router, prefix="/algo")) and
+        # PaperTradeNew.tsx's API_BASE *is* "http://localhost:8000/algo"
+        # (VITE_API_BASE_URL) — so the frontend's "get saved strategy" call
+        # actually lands here, not on api.py's own same-named
+        # /simulator/paper-trade/strategies/{id} route. That route's handler
+        # (simulator_pt_get_strategy) resolves each position's token and
+        # fetches current_ltp via _enrich_pt_strategy_positions; this one
+        # used to just return the raw doc, so token/current_ltp were always
+        # absent and the frontend fell back to entry_price for "ltp" every
+        # time — same bug, just on the endpoint actually being hit. Lazy
+        # import (not at module level) since api.py imports *this* module at
+        # startup — a top-level import here would be circular.
+        from api import _enrich_pt_strategy_positions  # type: ignore
+        return {"status": "success", "strategy": _str_id(_enrich_pt_strategy_positions(doc))}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.put("/paper-trade/strategies/{strategy_id}/alert-config")
+async def pt_save_strategy_alert_config(strategy_id: str, body: PTStrategyAlertConfigIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Persists Stoploss/Target (per-leg + basket) directly onto this saved
+    strategy's own doc. A saved/virtual strategy has no broker_id/leg_id, so
+    this can't reuse simulator_triggers/simulator_portfolio_triggers
+    (those are keyed by real broker position identity) — same shape of data,
+    different home. Position identity here is array index into
+    `positions[]`; reordering/adding/removing positions after saving an
+    alert invalidates that position's saved risk — accepted, no drift-check,
+    same trade-off already made for simpler features earlier this session.
+    features/simulator_risk_monitor.py reads these same fields back to
+    check/fire (paper exit only — no real broker order, see its
+    `paper_leg`/`paper_basket` scope).
+    """
+    try:
+        doc = _simulator_strategy_col.find_one({"_id": ObjectId(strategy_id)})
+        if not doc:
+            return {"status": "error", "message": "Not found"}
+
+        positions = list(doc.get("positions") or [])
+        risk_by_index = {r.index: r for r in body.positions}
+        for i, pos in enumerate(positions):
+            risk = risk_by_index.get(i)
+            if risk:
+                pos["sl_mode"] = risk.sl_mode
+                pos["sl_value"] = risk.sl_value
+                pos["tp_mode"] = risk.tp_mode
+                pos["tp_value"] = risk.tp_value
+
+        now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        _simulator_strategy_col.update_one(
+            {"_id": ObjectId(strategy_id)},
+            {"$set": {
+                "positions": positions,
+                "alert_trading_mode": body.trading_mode,
+                "alert_stoploss": body.stoploss,
+                "alert_target": body.target,
+                "alert_trailing_stop": body.trailing_stop,
+                "alert_hedge_strike_type": body.hedge_strike_type,
+                "alert_hedge_time_control": body.hedge_time_control,
+                "alert_peak_mtm": 0.0,
+                "alert_status": "active",
+                "alert_updated_at": now_str,
+            }},
+        )
+        return {"status": "success"}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/paper-trade/strategies/{strategy_id}/manual-check")
+async def pt_manual_check_strategy(strategy_id: str, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    "Manual Trigger" button on the trade page — runs the SAME per-leg SL/TP,
+    basket adjustment band, and basket MTM SL/Target checks the background
+    risk monitor runs every tick, but once, on demand, for this one strategy.
+    A hit fires for real (real exit/adjustment + the real Telegram alert via
+    notify_user/notify_admin already inside those fire functions) — this is
+    for verifying those alerts actually work, not a dry-run preview.
+    """
+    try:
+        result = await simulator_risk_monitor.manual_check_paper_strategy(MongoData(), strategy_id)
+        return result
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@router.put("/paper-trade/strategies/{strategy_id}/sl-marker")
+async def pt_save_strategy_sl_marker(strategy_id: str, body: PTStrategySlMarkerIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Persists the payoff chart's upper/lower stoploss marker directly onto
+    this saved strategy's own doc. The live-broker counterpart
+    (savePortfolioTrigger -> POST /simulator/paper-trade/portfolio-triggers,
+    api.py) is keyed by (broker_id, underlying) — a saved/virtual strategy
+    has neither, so that POST's required broker_id field was silently
+    arriving empty/missing and 422'ing before this endpoint existed (the
+    save looked like it worked client-side since fetch() doesn't throw on a
+    non-2xx, but nothing ever reached Mongo). No legs_snapshot/drift-check
+    needed here either — same reasoning as pt_save_strategy_alert_config
+    above: this doc owns its own positions outright.
+    sl_marker_status is a separate field from alert_status (the MTM
+    Stoploss/Target feature above) even though both now live on the same
+    doc — same independence the live feature keeps between
+    simulator_portfolio_triggers' own `status` and `alert_status` fields,
+    since dragging this chart marker and saving the Position Configuration
+    panel are two independent user actions.
+    """
+    try:
+        now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        result = _simulator_strategy_col.update_one(
+            {"_id": ObjectId(strategy_id)},
+            {"$set": {
+                "sl_upper": body.sl_upper,
+                "sl_lower": body.sl_lower,
+                "sl_marker_status": "active",
+                "sl_marker_updated_at": now_str,
+            }},
+        )
+        if result.matched_count == 0:
+            return {"status": "error", "message": "Not found"}
+        return {"status": "success"}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
 
 
 @router.get("/paper-trade/spot-tokens")
-async def pt_spot_tokens(broker_id: str = Query(default="")) -> dict:
+async def pt_spot_tokens(broker_id: str = Query(default=""), current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
         resolved_broker_id = str(broker_id or _DEFAULT_PAPER_TRADE_SPOT_BROKER_ID).strip()
         return {
@@ -506,11 +812,11 @@ async def pt_spot_tokens(broker_id: str = Query(default="")) -> dict:
 
 
 @router.put("/paper-trade/strategies/{strategy_id}")
-async def pt_update_strategy(strategy_id: str, body: PTStrategyIn) -> dict:
+async def pt_update_strategy(strategy_id: str, body: PTStrategyIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
-        portfolio = _paper_trade_portfolio_col.find_one({"name": body.portfolio_name}, {"_id": 1})
+        portfolio = _simulator_portfolio_col.find_one({"name": body.portfolio_name}, {"_id": 1})
         if not portfolio:
-            result = _paper_trade_portfolio_col.insert_one({
+            result = _simulator_portfolio_col.insert_one({
                 "name": body.portfolio_name,
                 "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
             })
@@ -536,7 +842,7 @@ async def pt_update_strategy(strategy_id: str, body: PTStrategyIn) -> dict:
             "updated_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
         }
 
-        result = _paper_trade_strategy_col.update_one(
+        result = _simulator_strategy_col.update_one(
             {"_id": ObjectId(strategy_id)},
             {"$set": update},
         )
@@ -548,11 +854,11 @@ async def pt_update_strategy(strategy_id: str, body: PTStrategyIn) -> dict:
 
 
 @router.post("/paper-trade/strategies")
-async def pt_save_strategy(body: PTStrategyIn) -> dict:
+async def pt_save_strategy(body: PTStrategyIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
-        portfolio = _paper_trade_portfolio_col.find_one({"name": body.portfolio_name}, {"_id": 1})
+        portfolio = _simulator_portfolio_col.find_one({"name": body.portfolio_name}, {"_id": 1})
         if not portfolio:
-            result = _paper_trade_portfolio_col.insert_one({
+            result = _simulator_portfolio_col.insert_one({
                 "name": body.portfolio_name,
                 "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
             })
@@ -593,8 +899,9 @@ async def pt_save_strategy(body: PTStrategyIn) -> dict:
             "positions": positions,
             "saved_at": now_iso,
             "position_history": initial_pos_history,
+            "mode": body.mode or "live",
         }
-        result = _paper_trade_strategy_col.insert_one(doc)
+        result = _simulator_strategy_col.insert_one(doc)
         return {"status": "success", "id": str(result.inserted_id)}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}

@@ -14,7 +14,9 @@ from .service import (
     get_live_combained_portfolio,
     get_live_portfolio,
     get_combained_portfolio_detail,
+    get_index_historical_chart_bars,
     get_indexes,
+    get_scanner_portfolio_options,
     get_portfolio_settings,
     get_portfolio_detail,
     get_portfolio_summary,
@@ -26,7 +28,6 @@ from .service import (
     save_portfolio,
     backfill_stocks_list_kite_tokens,
     backfill_index_stocks_kite_tokens,
-    backfill_dhan_security_ids,
     get_scanner_historical_sync_status,
     get_previous_universe_stocks,
     remove_universe_field_from_stocks_list,
@@ -45,7 +46,6 @@ from .service import (
     sync_kite_universe_to_db,
     sync_all_kite_universes_to_db,
     sync_stocks_industry_from_nse,
-    get_equity_quotes,
 )
 
 router = APIRouter(prefix="/scanner", tags=["scanner"])
@@ -118,10 +118,50 @@ class SavePortfolioRequest(BaseModel):
 async def scanner_indexes() -> dict[str, Any]:
     return {"status": "success", "items": get_indexes()}
 
+@router.get("/quotes")
+async def scanner_quotes(tokens: str = "", broker_id: str = Query(default="")) -> dict[str, Any]:
+    requested_tokens = [
+        str(token).strip()
+        for token in str(tokens or "").split(",")
+        if str(token).strip()
+    ]
+    requested_token_set = set(requested_tokens)
+    try:
+        from api import simulator_pt_quotes as _simulator_pt_quotes
+    except Exception:
+        from backend.api import simulator_pt_quotes as _simulator_pt_quotes
+    payload = await _simulator_pt_quotes(tokens=tokens, broker_id=broker_id, include_index_defaults=False)
+    if not requested_token_set:
+        return payload
+    quotes = payload.get("quotes") if isinstance(payload, dict) else None
+    if isinstance(quotes, dict):
+        payload["quotes"] = {
+            token: value
+            for token, value in quotes.items()
+            if str(token).strip() in requested_token_set
+        }
+    return payload
+
+
 
 @router.get("/sectors")
 async def scanner_sectors() -> dict[str, Any]:
     return {"status": "success", "items": get_sectors()}
+
+
+@router.get("/index_historical_chart")
+async def scanner_index_historical_chart(
+    i_symbol: str = Query(..., description="Normalized index symbol, e.g. nifty_50"),
+    from_ts: Optional[int] = Query(default=None, alias="from"),
+    to_ts: Optional[int] = Query(default=None, alias="to"),
+    resolution: str = Query(default="1D", description="5/15/30/60/240/480 (minutes) or 1D"),
+) -> dict[str, Any]:
+    try:
+        return get_index_historical_chart_bars(i_symbol, from_ts=from_ts, to_ts=to_ts, resolution=resolution)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/sync_universe_stocks")
@@ -176,16 +216,6 @@ async def scanner_sync_all_universes_to_db() -> dict[str, Any]:
 async def scanner_sync_stocks_industry() -> dict[str, Any]:
     try:
         return sync_stocks_industry_from_nse()
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.get("/backfill_dhan_security_ids")
-async def scanner_backfill_dhan_security_ids() -> dict[str, Any]:
-    try:
-        return backfill_dhan_security_ids()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -369,9 +399,17 @@ async def scanner_delete_portfolio(portfolio_id: str) -> dict[str, Any]:
 
 
 @router.get("/portfolio_summary")
-async def scanner_portfolio_summary() -> list[dict[str, Any]]:
+async def scanner_portfolio_summary(portfolio_master_id: str = Query(default="")) -> list[dict[str, Any]]:
     try:
-        return get_portfolio_summary()
+        return get_portfolio_summary(portfolio_master_id=portfolio_master_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/get_portfolio")
+async def scanner_get_portfolio() -> list[dict[str, str]]:
+    try:
+        return get_scanner_portfolio_options()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -557,23 +595,5 @@ async def scanner_run_backtest_multi(body: dict[str, Any]) -> dict[str, Any]:
         return run_multi_backtest_from_payloads(strategies)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.get("/quotes")
-async def scanner_equity_quotes(tokens: str = Query(default="")) -> dict:
-    """
-    Fetch live LTP for NSE equity (spot) security IDs.
-    tokens: comma-separated Dhan NSE_EQ security IDs (or Kite instrument tokens).
-    Returns {status, quotes: {token: {token, ltp, source}}}.
-    """
-    import asyncio
-    token_list = [t.strip() for t in str(tokens or "").split(",") if t.strip()]
-    if not token_list:
-        return {"status": "success", "quotes": {}}
-    try:
-        quotes = await asyncio.to_thread(get_equity_quotes, token_list)
-        return {"status": "success", "quotes": quotes}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

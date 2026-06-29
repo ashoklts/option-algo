@@ -199,7 +199,8 @@ class MongoData:
                     created_new_client = True
                 self._client = cached_client
             self._db     = self._client[DB_NAME]
-            self._chain  = self._db["option_chain"]
+            self._chain  = self._db["option_chain_historical_data"]
+            self._spot   = self._db["option_chain_index_spot"]
             self._hols   = self._db["market_holidays"]
             self._uri    = uri
             self._initialized = True
@@ -258,6 +259,88 @@ class MongoData:
                 name="uniq_spot_token_by_broker_instrument",
                 comment=self._comment("ensure_index", collection="instrument_spot_token", index="uniq_spot_token_by_broker_instrument"),
             )
+            self._db["simulator_triggers"].create_index(
+                [("broker_id", ASCENDING), ("leg_id", ASCENDING)],
+                unique=True,
+                background=True,
+                name="uniq_trigger_by_broker_leg",
+                comment=self._comment("ensure_index", collection="simulator_triggers", index="uniq_trigger_by_broker_leg"),
+            )
+            self._db["simulator_portfolio_triggers"].create_index(
+                [("broker_id", ASCENDING), ("underlying", ASCENDING)],
+                unique=True,
+                background=True,
+                name="uniq_portfolio_trigger_by_broker_underlying",
+                comment=self._comment("ensure_index", collection="simulator_portfolio_triggers", index="uniq_portfolio_trigger_by_broker_underlying"),
+            )
+            # Backtest data tables — compound indexes for fast range queries
+            self._chain.create_index(
+                [("underlying", ASCENDING), ("timestamp", ASCENDING)],
+                background=True,
+                name="chain_underlying_timestamp",
+                comment=self._comment("ensure_index", collection="option_chain_historical_data", index="chain_underlying_timestamp"),
+            )
+            self._chain.create_index(
+                [("timestamp", ASCENDING), ("expiry", ASCENDING)],
+                background=True,
+                name="chain_timestamp_expiry",
+                comment=self._comment("ensure_index", collection="option_chain_historical_data", index="chain_timestamp_expiry"),
+            )
+            self._spot.create_index(
+                [("underlying", ASCENDING), ("timestamp", ASCENDING)],
+                background=True,
+                name="spot_underlying_timestamp",
+                comment=self._comment("ensure_index", collection="option_chain_index_spot", index="spot_underlying_timestamp"),
+            )
+            # One doc per (user_id, page_id, symbol) — re-declared here so
+            # it's self-healing on every boot instead of depending on
+            # whatever one-off manual step originally created it.
+            self._db["tv_chart_state"].create_index(
+                [("user_id", ASCENDING), ("page_id", ASCENDING), ("symbol", ASCENDING)],
+                unique=True,
+                background=True,
+                name="tv_chart_state_user_page_symbol_uq",
+                comment=self._comment("ensure_index", collection="tv_chart_state", index="tv_chart_state_user_page_symbol_uq"),
+            )
+            # Alerts used to live nested inside tv_chart_state's own
+            # "alerts" array (one chart_state doc per user+page+symbol,
+            # holding every alert for that chart) — moved to their own
+            # tv_alerts collection (one doc per alert) so creating a new
+            # alert is a genuinely new record instead of rewriting a
+            # shared array field. Old indexes on the array shape are no
+            # longer meaningful; drop if still present from before this
+            # migration.
+            existing_chart_state_indexes = {idx["name"] for idx in self._db["tv_chart_state"].list_indexes()}
+            if "chart_state_indicator_alert_lookup" in existing_chart_state_indexes:
+                self._db["tv_chart_state"].drop_index("chart_state_indicator_alert_lookup")
+
+            # Each alert's own client-generated id (e.g. "alert_<ts>_<rand>")
+            # is already globally unique by construction — this is the
+            # primary key callers upsert/delete by (see save_chart_alert/
+            # delete_chart_alert in simulator/api_server.py).
+            self._db["tv_alerts"].create_index(
+                [("id", ASCENDING)],
+                unique=True,
+                background=True,
+                name="tv_alerts_id_uq",
+                comment=self._comment("ensure_index", collection="tv_alerts", index="tv_alerts_id_uq"),
+            )
+            # Backs the chart's own "load my alerts for this symbol" query.
+            self._db["tv_alerts"].create_index(
+                [("user_id", ASCENDING), ("page_id", ASCENDING), ("symbol", ASCENDING)],
+                background=True,
+                name="tv_alerts_user_page_symbol",
+                comment=self._comment("ensure_index", collection="tv_alerts", index="tv_alerts_user_page_symbol"),
+            )
+            # Backs both alert_checker loops: the 2s price/trendline poll
+            # filters on active alone (this index serves that as a prefix
+            # scan), the bar-close indicator scheduler filters on both.
+            self._db["tv_alerts"].create_index(
+                [("active", ASCENDING), ("indicatorResolution", ASCENDING)],
+                background=True,
+                name="tv_alerts_active_indicator_resolution",
+                comment=self._comment("ensure_index", collection="tv_alerts", index="tv_alerts_active_indicator_resolution"),
+            )
         except Exception as exc:
             _log.warning("[DB INDEX WARN] db=%s target=%s error=%s", DB_NAME, self._target, exc)
 
@@ -308,16 +391,17 @@ class MongoData:
         One bulk query — fetch all candles for the date range.
         Returns list of raw dicts from MongoDB.
         NOTE: Use load_day() per day for large ranges to avoid RAM blowup.
+        Candles come from option_chain_historical_data; spot prices from option_chain_index_spot.
         """
         ts_start = f"{start_date}T00:00:00"
         ts_end   = f"{end_date}T23:59:59"
-        result = list(self._chain.find(
+        candles = list(self._chain.find(
             {
                 "underlying": underlying,
                 "timestamp": {"$gte": ts_start, "$lte": ts_end},
             },
             {"_id": 0, "timestamp": 1, "expiry": 1, "strike": 1,
-             "type": 1, "close": 1, "high": 1, "low": 1, "spot_price": 1},
+             "type": 1, "close": 1, "high": 1, "low": 1, "delta": 1},
             comment=self._comment(
                 "load_range",
                 underlying=underlying,
@@ -325,25 +409,59 @@ class MongoData:
                 end=end_date,
             ),
         ))
-        return result
+        spot_map = self._load_spot_map(ts_start, ts_end, underlying)
+        for c in candles:
+            c["spot_price"] = spot_map.get(c["timestamp"][:16], 0)
+        return candles
+
+    def has_data(self, start_date: str, end_date: str, underlying: str) -> bool:
+        """Return True if option_chain_historical_data has at least one candle for this range."""
+        doc = self._chain.find_one(
+            {
+                "underlying": underlying,
+                "timestamp": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59"},
+            },
+            {"_id": 1},
+            comment=self._comment("has_data", underlying=underlying, start=start_date, end=end_date),
+        )
+        return doc is not None
+
+    def _load_spot_map(self, ts_start: str, ts_end: str, underlying: str) -> dict:
+        """
+        Fetch spot prices from option_chain_index_spot for the given time range.
+        Returns {timestamp_minute → spot_price} e.g. {"2025-11-03T09:16" → 25710.8}
+        """
+        spot_docs = list(self._spot.find(
+            {
+                "underlying": underlying,
+                "timestamp": {"$gte": ts_start, "$lte": ts_end},
+            },
+            {"_id": 0, "timestamp": 1, "spot_price": 1},
+            comment=self._comment("load_spot_map", underlying=underlying),
+        ))
+        return {d["timestamp"][:16]: float(d["spot_price"]) for d in spot_docs if d.get("spot_price")}
 
     def load_day(self, date: str, underlying: str) -> list:
         """
         Load candles for a single trading day only.
         Use this in the backtest loop to keep RAM constant regardless of range.
+        Candles come from option_chain_historical_data; spot prices from option_chain_index_spot.
         """
         ts_start = f"{date}T00:00:00"
         ts_end   = f"{date}T23:59:59"
-        result = list(self._chain.find(
+        candles = list(self._chain.find(
             {
                 "underlying": underlying,
                 "timestamp": {"$gte": ts_start, "$lte": ts_end},
             },
             {"_id": 0, "timestamp": 1, "expiry": 1, "strike": 1,
-             "type": 1, "close": 1, "high": 1, "low": 1, "spot_price": 1},
+             "type": 1, "close": 1, "high": 1, "low": 1, "delta": 1},
             comment=self._comment("load_day", underlying=underlying, date=date),
         ))
-        return result
+        spot_map = self._load_spot_map(ts_start, ts_end, underlying)
+        for c in candles:
+            c["spot_price"] = spot_map.get(c["timestamp"][:16], 0)
+        return candles
 
     def close(self):
         # Shared client stays alive for connection pooling; avoid closing it per request.

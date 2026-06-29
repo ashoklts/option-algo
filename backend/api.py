@@ -38,15 +38,18 @@ from pathlib import Path
 from typing import Any, Optional
 
 from bson import ObjectId
-from fastapi import FastAPI, HTTPException, APIRouter, Query, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, APIRouter, Query, Request, UploadFile, File, Depends
+from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.routing import WebSocketRoute
 
 from features.backtest_engine import run_backtest
 from features.portfolio_worker import strategy_worker
 from features.mongo_data     import MongoData
 from features.expiry_config  import seed_expiry_config
+from features import auth as app_auth
 from features.broker_gateway import (
     broker_get_login_url            as get_login_url,
     broker_generate_session         as generate_session,
@@ -56,6 +59,7 @@ from features.broker_gateway import (
     broker_ticker_manager           as ticker_manager,
 )
 from features.mock_ticker import mock_ticker_manager
+from features.simulator_risk_monitor import simulator_risk_monitor
 from simulator.models import MiniStrangleRequest
 from simulator.monitor_service import get_simulator_monitor_service
 from simulator.monitor_ui import build_monitor_toggle_page
@@ -70,6 +74,8 @@ from simulator.streaming_controller import StreamingController
 from simulator.zerodha_broker import ZerodhaBroker as SimulatorZerodhaBroker
 from simulator.api_server import router as simulator_router
 from scanner.router import router as scanner_router
+from common.router import router as common_router
+from signal_builder.router import router as signal_router
 from features.broker_gateway import (
     load_broker_instruments         as _load_kite_instruments,
     BROKER_INDEX_TOKENS             as KITE_INDEX_TOKENS,
@@ -87,13 +93,20 @@ from features.execution_socket import (
     queue_execute_order_group_start,
     run_backtest_simulation_step,
     socket_router,
+    _fetch_dhan_broker_option_positions,
     _build_message,
     _extract_broker_configuration_label,
 )
 from features.live_fast_monitor import live_fast_monitor_supervisor
 from features.live_monitor_socket import live_monitor_loop
 from features import live_entry_monitor
+from features.broker_accounts import (
+    validate_broker_configuration_session as _validate_broker_configuration_session,
+    DEFAULT_APP_USER_ID,
+    get_broker_accounts_for_user,
+)
 from features.mock_kite_socket import mock_kite_socket_router
+from features.live_quote_socket import live_quote_socket_router
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -101,10 +114,18 @@ REQUEST_JSON_PATH = Path(__file__).parent / "current_backtest_request.json"
 SAMPLE_RESULT_PATH = Path(__file__).parent / "sample_backtest_result" / "new_portfolio_result.json"
 JOB_STATE_DIR = Path("/tmp/option_algo_backtest_jobs")
 CACHE_DIR = Path("/tmp/option_algo_backtest_cache")
+API_ROUTE_GROUP_PREFIXES = ("/algo", "/simulator", "/scanner")
+API_VERSION_PREFIXES = tuple(
+    f"/{segment}"
+    for segment in [
+        str(value).strip().strip("/")
+        for value in os.getenv("API_ROUTE_VERSIONS", "v1,v2").split(",")
+    ]
+    if segment
+)
 
 JOB_TTL_SECONDS = 3600       # auto-delete completed jobs older than 1 hour
 MAX_JOBS        = 10         # max jobs kept in memory at once
-DEFAULT_APP_USER_ID = "69dcf52711877c164638d2a7"
 
 # ─── Job store (in-memory) ────────────────────────────────────────────────────
 # job_id → { status, completed, total, percent, current_day, result, error, created_at }
@@ -115,49 +136,6 @@ _LIST_CACHE_TTL_SECONDS = 30.0
 _list_cache: dict[str, dict] = {}
 _list_cache_lock = threading.Lock()
 
-
-def _clear_broker_configuration_access_token(db_handle, broker_doc_id: str) -> None:
-    if not broker_doc_id:
-        return
-    db_handle["broker_configuration"].update_one(
-        {"_id": ObjectId(broker_doc_id)},
-        {"$set": {
-            "access_token": "",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }},
-    )
-
-
-def _validate_broker_configuration_session(item: dict, db_handle) -> tuple[bool, bool, str]:
-    access_token = str(item.get("access_token") or "").strip()
-    if not access_token:
-        return False, False, ""
-
-    broker_doc_id = str(item.get("_id") or "").strip()
-    broker_name = str(item.get("broker_name") or item.get("name") or "").strip().lower()
-    user_id = str(item.get("user_id") or "").strip()
-
-    try:
-        if "zerodha" in broker_name or "kite" in broker_name:
-            kite = get_kite_instance(access_token)
-            kite.profile()
-            return True, False, ""
-
-        if "flattrade" in broker_name:
-            from features.flattrade_broker import validate_session as validate_flattrade_session
-
-            ok, message = validate_flattrade_session(user_id=user_id, access_token=access_token)
-            if ok:
-                return True, False, ""
-            raise ValueError(message or "FlatTrade session invalid")
-
-        return True, False, ""
-    except Exception as exc:
-        try:
-            _clear_broker_configuration_access_token(db_handle, broker_doc_id)
-        except Exception:
-            pass
-        return False, True, str(exc)
 _ACTIVE_OPTION_CHAIN_CACHE: dict[str, dict[str, Any]] = {}
 _ACTIVE_OPTION_CHAIN_CACHE_LOCK = threading.Lock()
 _simulator_broker = SimulatorZerodhaBroker()
@@ -215,6 +193,69 @@ def _invalidate_list_cache(*keys: str) -> None:
             return
         for key in keys:
             _list_cache.pop(key, None)
+
+
+def _should_register_version_alias(path: str) -> bool:
+    normalized_path = str(path or "").strip()
+    if not normalized_path:
+        return False
+    return any(normalized_path.startswith(prefix) for prefix in API_ROUTE_GROUP_PREFIXES)
+
+
+def _register_versioned_route_aliases(app_instance: FastAPI) -> None:
+    if not API_VERSION_PREFIXES:
+        return
+
+    existing_paths = {getattr(route, "path", "") for route in app_instance.routes}
+    routes_snapshot = list(app_instance.routes)
+
+    for route in routes_snapshot:
+        path = getattr(route, "path", "")
+        if not _should_register_version_alias(path):
+            continue
+
+        for version_prefix in API_VERSION_PREFIXES:
+            alias_path = f"{version_prefix}{path}"
+            if alias_path in existing_paths:
+                continue
+
+            if isinstance(route, APIRoute):
+                app_instance.add_api_route(
+                    alias_path,
+                    route.endpoint,
+                    methods=list(route.methods or []),
+                    name=f"{route.name}{version_prefix}",
+                    include_in_schema=False,
+                    response_model=route.response_model,
+                    status_code=route.status_code,
+                    tags=list(route.tags),
+                    dependencies=list(route.dependencies),
+                    summary=route.summary,
+                    description=route.description,
+                    response_description=route.response_description,
+                    responses=dict(route.responses),
+                    deprecated=route.deprecated,
+                    operation_id=None,
+                    response_model_include=route.response_model_include,
+                    response_model_exclude=route.response_model_exclude,
+                    response_model_by_alias=route.response_model_by_alias,
+                    response_model_exclude_unset=route.response_model_exclude_unset,
+                    response_model_exclude_defaults=route.response_model_exclude_defaults,
+                    response_model_exclude_none=route.response_model_exclude_none,
+                    response_class=route.response_class,
+                    openapi_extra=route.openapi_extra,
+                    generate_unique_id_function=route.generate_unique_id_function,
+                )
+                existing_paths.add(alias_path)
+                continue
+
+            if isinstance(route, WebSocketRoute):
+                app_instance.add_api_websocket_route(
+                    alias_path,
+                    route.endpoint,
+                    name=f"{route.name}{version_prefix}",
+                )
+                existing_paths.add(alias_path)
 
 
 def _load_active_option_chain_cache() -> dict[str, dict[str, Any]]:
@@ -1331,6 +1372,20 @@ def _run_portfolio_job(job_id: str, request: dict):
 app    = FastAPI(title="Local Backtest API", version="2.0.0")
 router = APIRouter(prefix="/algo")
 sim_router = APIRouter()   # simulator routes live at /simulator/... (no extra prefix)
+trade_router = APIRouter(prefix="/trade")   # live order placement/management lives at /trade/...
+
+
+class RegisterIn(BaseModel):
+    mobile: str
+    name: str
+    email: str
+    password: str
+    referral_code: Optional[str] = None
+
+
+class LoginIn(BaseModel):
+    mobile: str
+    password: str
 
 
 class PTPortfolioIn(BaseModel):
@@ -1345,7 +1400,7 @@ class ZerodhaConfigRequest(BaseModel):
 class PTPositionIn(BaseModel):
     type: str
     option_type: str
-    strike: float
+    strike: float = 0.0  # 0.0 for a futures leg (option_type "FUT") — no strike on a future
     expiry: str
     token: Optional[str] = None
     entry_price: float
@@ -1367,6 +1422,151 @@ class PTStrategyIn(BaseModel):
     spot_price: Optional[float] = None
     config: Optional[dict[str, Any]] = None
     positions: Optional[list[PTPositionIn]] = []
+    # "backtest" for strategies saved from the historical-data builder
+    # (PaperTradeBacktest.tsx), "live" for everything saved from the
+    # live-broker/positions views — pure bookkeeping, doesn't gate the risk
+    # monitor (that's alert_status, set separately by the "Add Alert" toggle).
+    mode: Optional[str] = "live"
+
+
+class PTWebhookIn(BaseModel):
+    strategy_id: str
+    adjustment_id: str
+
+
+class PTTriggerIn(BaseModel):
+    broker_id: str
+    leg_id: str
+    underlying: Optional[str] = None
+    expiry: Optional[str] = None
+    strike: Optional[float] = None
+    option_type: Optional[str] = None
+    side: Optional[str] = None
+    sl_mode: str
+    sl_value: float
+    tp_mode: str
+    tp_value: float
+    entry_price: float
+    quantity: int
+    exited: Optional[bool] = False
+
+
+class PortfolioLegSnapshot(BaseModel):
+    leg_id: str
+    quantity: int
+
+
+class PTPortfolioTriggerIn(BaseModel):
+    broker_id: str
+    underlying: str
+    sl_upper: Optional[float] = None
+    sl_lower: Optional[float] = None
+    legs_snapshot: list[PortfolioLegSnapshot] = []
+
+
+class PTAlertConfigLegSnapshot(BaseModel):
+    leg_id: str
+    quantity: int
+    entry_price: float
+    side: str
+
+
+class PTAlertConfigToggle(BaseModel):
+    enabled: bool = False
+    unit: str = "points"
+    value: float = 0.0
+
+
+class PTAlertConfigTrailingStop(BaseModel):
+    enabled: bool = False
+    unit: str = "points"
+    x: float = 0.0
+    y: float = 0.0
+
+
+class PTAlertConfigHedgeStrikeType(BaseModel):
+    enabled: bool = False
+    mode: str = "delta"
+    value: float = 0.0
+    strike: str = "ATM"
+
+
+class PTAlertConfigHedgeTimeControl(BaseModel):
+    enabled: bool = False
+    entry_time: str = "09:15"
+    exit_time: str = "15:30"
+
+
+class PTAlertConfigIn(BaseModel):
+    broker_id: str
+    underlying: str
+    # "alert_only" -> a leg/basket SL-TP hit is logged + Telegrammed to the
+    # user (see simulator_risk_monitor.py's notify_user calls) but no real
+    # order is placed. "auto" -> today's existing behavior (fires for real,
+    # gated only by the global AUTO_FIRE_ENABLED kill-switch).
+    trading_mode: str = "auto"
+    stoploss: PTAlertConfigToggle
+    target: PTAlertConfigToggle
+    trailing_stop: PTAlertConfigTrailingStop
+    hedge_strike_type: PTAlertConfigHedgeStrikeType
+    hedge_time_control: PTAlertConfigHedgeTimeControl
+    legs_snapshot: list[PTAlertConfigLegSnapshot] = []
+
+
+class AdjustmentPositionIn(BaseModel):
+    side: str
+    lots: int
+    qty: int
+    strike: float
+    option_type: str
+    expiry: str
+    entry_price: float
+    tag: str  # "EXIT" | "NEW"
+
+
+class PTAdjustmentIn(BaseModel):
+    # Live-broker view keys by (broker_id, underlying); a saved/virtual
+    # strategy (no broker_id/leg_id) keys by strategy_id instead — exactly
+    # one of the two pairs is ever sent by the frontend depending on which
+    # view (PaperTradeNew.tsx's isSavedStrategyView) is open.
+    broker_id: Optional[str] = None
+    underlying: Optional[str] = None
+    strategy_id: Optional[str] = None
+    trigger_condition: Optional[str] = None
+    trigger_price: Optional[float] = None
+    positions: list[AdjustmentPositionIn] = []
+    # True while this is the live, armed config the risk monitor will act on; the
+    # monitor flips it to False (never deletes) once fired, so simulator_adjustments
+    # keeps a history of past adjustments instead of losing them.
+    status: bool = True
+
+
+class PTAdjustmentPatchIn(BaseModel):
+    positions: list[AdjustmentPositionIn] = []
+    trigger_price: Optional[float] = None
+    trigger_condition: Optional[str] = None
+
+
+class SimulatorBrokerPositionsRequest(BaseModel):
+    broker_id: Optional[str] = None
+
+
+class ManualOrderLeg(BaseModel):
+    underlying: str
+    expiry: str            # "YYYY-MM-DD"
+    strike: float = 0.0    # 0.0 for a futures leg (option_type "FUT")
+    option_type: str       # "CE" / "PE" / "FUT"
+    side: str               # "BUY" / "SELL"
+    quantity: int
+    order_type: str         # "MARKET" / "LIMIT" / "SL"
+    product: str             # "NRML" / "MIS"
+    price: float = 0.0
+    trigger_price: float = 0.0
+
+
+class ManualOrderRequest(BaseModel):
+    broker_id: str
+    orders: list[ManualOrderLeg]
 
 
 def _normalize_pt_option_type(option_type: str) -> str:
@@ -1386,13 +1586,50 @@ def _resolve_pt_position_token(position: dict, instrument: str = "") -> str:
     normalized_instrument = str(instrument or position.get("instrument") or "").strip().upper()
     normalized_expiry = str(position.get("expiry") or "").strip()[:10]
     normalized_option_type = _normalize_pt_option_type(str(position.get("option_type") or ""))
+    is_future = normalized_option_type == "FUT"
     try:
         strike_value = float(position.get("strike") or 0)
     except (TypeError, ValueError):
         strike_value = 0.0
 
-    if not normalized_instrument or not normalized_expiry or not normalized_option_type or strike_value <= 0:
+    if not normalized_instrument or not normalized_expiry or not normalized_option_type:
         return ""
+    if not is_future and strike_value <= 0:
+        return ""
+
+    # _enrich_pt_strategy_positions' own "cross_tokens" fallback (below) already
+    # does this exact broker-aware active_option_tokens lookup correctly — but
+    # only for positions that already have *some* stored token needing
+    # cross-broker resolution. A position with no stored token at all (this
+    # function's whole reason to exist) used to only ever try
+    # _load_kite_instruments(), a Kite-only instrument master — with Dhan as
+    # the active broker that's always empty/wrong, so current_ltp/MTM never
+    # got computed and the frontend never even subscribed the leg's token for
+    # live updates. Try the active broker's own token collection first.
+    try:
+        from features.broker_gateway import _active_broker
+        if _active_broker() == "dhan":
+            # A futures contract has no strike (always stored as 0.0 — see
+            # _sync_dhan_index_future_tokens), so the query must omit it entirely
+            # rather than matching strike: 0.0 literally against whatever this
+            # position happens to carry.
+            query = {
+                "instrument": normalized_instrument,
+                "expiry": {"$regex": f"^{normalized_expiry}"},
+                "option_type": normalized_option_type,
+                "broker": "dhan",
+            }
+            if not is_future:
+                query["strike"] = strike_value
+            doc = _shared_mongo._db["active_option_tokens"].find_one(
+                query,
+                {"token": 1, "tokens": 1, "_id": 0},
+            )
+            if doc:
+                return str(doc.get("token") or doc.get("tokens") or "").strip()
+            return ""
+    except Exception:
+        pass
 
     try:
         instrument_doc = (_load_kite_instruments() or {}).get(
@@ -1453,12 +1690,18 @@ def _enrich_pt_strategy_positions(strategy_doc: dict) -> dict:
                     expiry = str(pos.get("expiry") or "")[:10]
                     strike = pos.get("strike")
                     ot = _normalize_pt_option_type(str(pos.get("option_type") or ""))
-                    if not (instr and expiry and strike and ot):
+                    is_future = ot == "FUT"
+                    # A futures position's strike is always 0.0 (falsy) — only CE/PE
+                    # positions need a real strike to resolve, see PTPositionIn.
+                    if not (instr and expiry and ot) or (not is_future and not strike):
                         continue
                     try:
+                        cross_query = {"instrument": instr, "expiry": {"$regex": f"^{expiry}"},
+                                        "option_type": ot, "broker": active_broker}
+                        if not is_future:
+                            cross_query["strike"] = float(strike)
                         dhan_doc = _shared_mongo._db["active_option_tokens"].find_one(
-                            {"instrument": instr, "expiry": {"$regex": f"^{expiry}"},
-                             "strike": float(strike), "option_type": ot, "broker": active_broker},
+                            cross_query,
                             {"token": 1, "ws_segment": 1, "_id": 0},
                         )
                         if dhan_doc:
@@ -1522,7 +1765,7 @@ def _get_instrument_spot_token_docs(broker_id: str = "") -> list[dict]:
     return [_serialize_instrument_spot_token(doc) for doc in docs]
 
 
-def _get_paper_trade_default_quote_tokens(broker_id: str = "") -> list[str]:
+def _get_simulator_default_quote_tokens(broker_id: str = "") -> list[str]:
     return [
         str(item.get("token") or "").strip()
         for item in _get_instrument_spot_token_docs(broker_id)
@@ -1531,10 +1774,7 @@ def _get_paper_trade_default_quote_tokens(broker_id: str = "") -> list[str]:
 
 
 _DEFAULT_PAPER_TRADE_PORTFOLIOS = [
-    "Running Trades", "Exited Trades", "Archived Trades",
-    "Aditional Position Strategy", "Nifty Weekly Expiry BB Stra",
-    "Nifty Expiry Day BB Stra", "Banknifty Expiry Day BB Stra",
-    "Nifty Monthly Stra", "Week On Nct Mnth", "Small Strangle",
+    "Running Trades",  "Week On Nct Mnth"
 ]
 
 
@@ -1573,6 +1813,84 @@ async def _auto_start_ticker():
         except Exception:
             log.exception("[STARTUP] Broker ticker auto-start failed.")
     asyncio.create_task(_bg())
+
+
+_SCANNER_SNAPSHOT_IST = timezone(timedelta(hours=5, minutes=30))
+_SCANNER_SNAPSHOT_HOUR_IST = 15  # 15:45 IST — 15 min after NSE close, settlement tick has landed by then
+_SCANNER_SNAPSHOT_MINUTE_IST = 45
+
+
+@app.on_event("startup")
+async def _auto_daily_scanner_snapshot():
+    """
+    Was previously a manual-only endpoint (/scanner/sync_daily_market_snapshot) —
+    nobody hitting it for a few days silently leaves scanner_stock_historical_data's
+    previous-close stuck on whatever day it was last run, which makes every stock's
+    change_pct/change_points (see execution_socket._equity_previous_close, used by
+    /simulator/positions/all and /simulator/paper-trade/underlying-quotes) compare
+    against a stale multi-day-old close instead of yesterday's — silently wrong
+    instead of obviously wrong, unlike the index path's 0.00% when pre-market.
+    Runs once per trading day, shortly after NSE close, forever for the life of
+    this process; weekends/holidays are skipped via the same market_holidays
+    collection _previous_session_close() already checks.
+    """
+    import asyncio
+
+    async def _loop():
+        from scanner.service import sync_scanner_daily_market_snapshot
+        from features.mongo_data import MongoData
+
+        while True:
+            now = datetime.now(_SCANNER_SNAPSHOT_IST)
+            target = now.replace(hour=_SCANNER_SNAPSHOT_HOUR_IST, minute=_SCANNER_SNAPSHOT_MINUTE_IST, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+
+            db = MongoData()
+            try:
+                holidays_col = db._db['market_holidays']
+                while target.weekday() >= 5 or holidays_col.find_one({'date': target.strftime('%Y-%m-%d')}):
+                    target += timedelta(days=1)
+            except Exception:
+                log.exception("[SCANNER SNAPSHOT] holiday lookup failed — keeping originally computed run time")
+            finally:
+                db.close()
+
+            await asyncio.sleep(max(1.0, (target - datetime.now(_SCANNER_SNAPSHOT_IST)).total_seconds()))
+            try:
+                result = await asyncio.to_thread(sync_scanner_daily_market_snapshot)
+                log.info("[SCANNER SNAPSHOT] auto run completed: %s", result)
+            except Exception:
+                log.exception("[SCANNER SNAPSHOT] auto run failed")
+            # Past-due guard: a slow/failed run above shouldn't make the next
+            # target-time computation immediately re-fire for the same day.
+            await asyncio.sleep(60)
+
+    asyncio.create_task(_loop())
+
+
+@app.on_event("startup")
+async def _auto_start_alert_checker():
+    """Continuously evaluate chart price/trendline alerts (tv_chart_state)
+    against live spot price (option_chain_index_spot) and fire their
+    webhooks — runs for the life of this process regardless of whether any
+    browser tab with the chart open is still around. See
+    features/alert_checker.py for the actual crossing logic, ported from
+    algo-admin's Chart.tsx so server-side and client-side evaluation agree."""
+    import asyncio
+    from features.alert_checker import start_alert_checker_loop
+    asyncio.create_task(start_alert_checker_loop())
+
+
+
+# Indicator-condition alerts (Supertrend/MACD/MA Cross/RSI/Stochastic) are
+# deliberately NOT auto-started here, unlike the price/trendline loop above
+# — they're controlled on demand via the monitor page/endpoints at
+# /signal/indicator-alert-monitor/{start,stop,status} (signal_builder/
+# router.py), the same manual start/stop pattern simulator/api_server.py's
+# /monitor/{start,stop,status} already uses for the Simulator Monitor. See
+# features/alert_checker.py's start_indicator_alert_monitor/
+# stop_indicator_alert_monitor.
 
 
 @app.on_event("startup")
@@ -1641,6 +1959,37 @@ async def _redis_prewarm():
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ─── App user auth (mobile + password, JWT) ──────────────────────────────────
+
+@router.post("/auth/register")
+def auth_register(payload: RegisterIn):
+    db   = MongoData()
+    user = app_auth.register_user(db, payload.model_dump())
+    token = app_auth.create_access_token(str(user["_id"]), user["mobile"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": app_auth.public_user(user),
+    }
+
+
+@router.post("/auth/login")
+def auth_login(payload: LoginIn):
+    db   = MongoData()
+    user = app_auth.authenticate_user(db, payload.mobile, payload.password)
+    token = app_auth.create_access_token(str(user["_id"]), user["mobile"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": app_auth.public_user(user),
+    }
+
+
+@router.get("/auth/me")
+def auth_me(current_user: dict = Depends(app_auth.get_current_user)):
+    return app_auth.public_user(current_user)
 
 
 @router.post("/admin/seed-expiry-config")
@@ -1930,6 +2279,10 @@ async def strategy_save(payload: dict):
 
 @router.get("/strategy/list")
 async def strategy_list():
+    # NOTE: still unauthenticated — several legacy .html dashboards
+    # (portfolio-list.html, fast-forward.html, algo-backtest.html) call this
+    # with no Authorization header. Don't gate behind app_auth here until
+    # those callers are migrated too.
     """List all saved strategy names."""
     cached = _list_cache_get("strategy_list")
     if cached is not None:
@@ -1944,15 +2297,13 @@ async def strategy_list():
 
 
 @router.get("/portfolio/list")
-async def portfolio_list():
-    """List all saved portfolios."""
-    cached = _list_cache_get("portfolio_list")
-    if cached is not None:
-        return cached
+async def portfolio_list(current_user: dict = Depends(app_auth.require_current_user)):
+    """List portfolios owned by the authenticated user."""
+    user_id = str(current_user["_id"])
     db = MongoData()
     docs = list(
         db._db["saved_portfolios"]
-        .find({}, {"name": 1, "strategy_ids": 1, "created_at": 1})
+        .find({"user_id": user_id}, {"name": 1, "strategy_ids": 1, "created_at": 1})
         .sort("created_at", -1)
     )
     strategy_ids = []
@@ -1976,9 +2327,7 @@ async def portfolio_list():
             for strategy_id in resolved_ids
             if strategy_name_map.get(strategy_id)
         ]
-    response = {"portfolios": docs}
-    _list_cache_set("portfolio_list", response)
-    return response
+    return {"portfolios": docs}
 
 
 @router.get("/portfolio/{portfolio_id}")
@@ -1992,13 +2341,13 @@ async def portfolio_get(portfolio_id: str):
 
     portfolio = db._db["saved_portfolios"].find_one({"_id": oid})
     if not portfolio:
-        paper_trade_portfolio = db._db["paper_trade_portfolio"].find_one({"_id": oid})
-        if not paper_trade_portfolio:
+        simulator_portfolio = db._db["simulator_portfolio"].find_one({"_id": oid})
+        if not simulator_portfolio:
             raise HTTPException(status_code=404, detail="Portfolio not found")
 
-        portfolio_name = str(paper_trade_portfolio.get("name") or "").strip()
+        portfolio_name = str(simulator_portfolio.get("name") or "").strip()
         strategy_docs = list(
-            db._db["paper_trade_strategy"].find(
+            db._db["simulator_strategy"].find(
                 {"portfolio_id": str(oid)},
                 {
                     "_id": 1,
@@ -2031,14 +2380,14 @@ async def portfolio_get(portfolio_id: str):
             })
 
         return {
-            "_id": str(paper_trade_portfolio["_id"]),
+            "_id": str(simulator_portfolio["_id"]),
             "name": portfolio_name,
             "strategy_ids": [item["_id"] for item in ordered_strategies],
             "strategies": ordered_strategies,
             "qty_multiplier": 1,
             "is_weekdays": True,
-            "source": "paper_trade_portfolio",
-            "created_at": paper_trade_portfolio.get("created_at") or "",
+            "source": "simulator_portfolio",
+            "created_at": simulator_portfolio.get("created_at") or "",
         }
 
     strategy_ids = portfolio.get("strategy_ids", [])
@@ -2087,13 +2436,14 @@ async def portfolio_get(portfolio_id: str):
 
 
 @router.post("/portfolio/save")
-async def portfolio_save(payload: dict):
+async def portfolio_save(payload: dict, current_user: dict = Depends(app_auth.require_current_user)):
     """
-    Save a portfolio to MongoDB.
+    Save a portfolio to MongoDB, owned by the authenticated user.
     payload: { name, strategy_ids: [<saved_strategies _id>, ...] }
     """
     import datetime
 
+    user_id = str(current_user["_id"])
     name = (payload.get("name") or "").strip()
     portfolio_id = (payload.get("portfolio_id") or "").strip()
     strategy_ids = payload.get("strategy_ids") or []
@@ -2119,8 +2469,10 @@ async def portfolio_save(payload: dict):
             existing_doc = portfolio_col.find_one({"_id": ObjectId(portfolio_id)})
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid portfolio_id")
+        if existing_doc and existing_doc.get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="You do not have access to this portfolio")
 
-    name_query = {"name": name}
+    name_query = {"name": name, "user_id": user_id}
     if existing_doc:
         name_query["_id"] = {"$ne": existing_doc["_id"]}
     if portfolio_col.find_one(name_query, {"_id": 1}):
@@ -2170,6 +2522,7 @@ async def portfolio_save(payload: dict):
 
     portfolio_doc = {
         "name": name,
+        "user_id": user_id,
         "strategy_ids": ordered_strategy_ids,
         "strategies": ordered_strategy_meta,
         "qty_multiplier": int(portfolio_qty_multiplier or 1),
@@ -2185,7 +2538,6 @@ async def portfolio_save(payload: dict):
         result = portfolio_col.insert_one(portfolio_doc)
         result_id = result.inserted_id
 
-    _invalidate_list_cache("portfolio_list")
     return {
         "success": True,
         "id": str(result_id),
@@ -2195,6 +2547,27 @@ async def portfolio_save(payload: dict):
         "qty_multiplier": portfolio_doc["qty_multiplier"],
         "is_weekdays": portfolio_doc["is_weekdays"],
     }
+
+
+@router.delete("/portfolio/{portfolio_id}")
+async def portfolio_delete(portfolio_id: str, current_user: dict = Depends(app_auth.require_current_user)):
+    """Delete a portfolio owned by the authenticated user."""
+    user_id = str(current_user["_id"])
+    try:
+        oid = ObjectId(portfolio_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid portfolio_id")
+
+    db = MongoData()
+    portfolio_col = db._db["saved_portfolios"]
+    doc = portfolio_col.find_one({"_id": oid}, {"user_id": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    if doc.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="You do not have access to this portfolio")
+
+    portfolio_col.delete_one({"_id": oid})
+    return {"success": True}
 
 
 def _extract_indicator_minutes(node):
@@ -4134,9 +4507,14 @@ async def get_notifications(
 
 
 @router.get("/broker-configurations")
-async def list_broker_configurations(broker_type: str = ""):
+async def list_broker_configurations(broker_type: str = "", user_id: str = ""):
+    # user_id is opt-in: existing callers (portfolio-activation's backtest/fast-forward
+    # broker pickers) list every broker_configuration doc regardless of owner and must
+    # keep doing so. Only scope to one app user when a caller explicitly asks for it.
     normalized_broker_type = str(broker_type or "").strip()
-    query = {}
+    query: dict = {}
+    if str(user_id or "").strip():
+        query["app_user_id"] = _resolve_app_user_id(user_id)
     if normalized_broker_type:
         query["broker_type"] = normalized_broker_type
 
@@ -4160,6 +4538,11 @@ async def list_broker_configurations(broker_type: str = ""):
                 "access_token": 1,
                 "redirect_url": 1,
                 "postback_url": 1,
+                # _validate_broker_configuration_session() needs these to
+                # actually ping Kite/FlatTrade — without them every Kite row
+                # looks like "api_key missing" no matter how it's configured.
+                "api_key": 1,
+                "api_secret": 1,
             },
         )
         records = []
@@ -4207,7 +4590,7 @@ async def save_broker_configuration(payload: dict):
 
     Fields accepted:
       name, broker_name (flattrade|zerodha), broker_type (live|fast-forward|algo-backtest),
-      api_key, api_secret, redirect_url, broker_icon
+      api_key, api_secret, redirect_url, broker_icon, app_user_id
     """
     from bson import ObjectId
     from datetime import datetime, timezone
@@ -4217,10 +4600,20 @@ async def save_broker_configuration(payload: dict):
         doc_id  = str(payload.get("_id") or "").strip()
         allowed = {
             "name", "broker_name", "broker_type", "broker_icon",
-            "api_key", "api_secret", "redirect_url",
+            "api_key", "api_secret", "redirect_url", "app_user_id",
         }
         fields: dict = {k: str(v or "").strip() for k, v in payload.items() if k in allowed}
         fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        # app_user_id ("who owns this broker connection") defaults to the app's
+        # current user on create. On update, leave it untouched unless the
+        # caller explicitly passes a new value — otherwise resaving unrelated
+        # fields would silently wipe an already-assigned owner.
+        if not fields.get("app_user_id"):
+            if doc_id:
+                fields.pop("app_user_id", None)
+            else:
+                fields["app_user_id"] = _resolve_app_user_id()
 
         # Derive broker_icon from broker_name if not set
         if not fields.get("broker_icon"):
@@ -4340,6 +4733,9 @@ async def list_broker_orders(
 
 @router.post("/broker-stoploss-settings/save")
 async def save_broker_stoploss_settings(payload: dict):
+    # NOTE: still unauthenticated — legacy live/algo-backtest/fast-forward
+    # .html dashboards call this with no Authorization header. Don't gate
+    # behind app_auth here until those callers are migrated too.
     def _as_int(value, field_name: str) -> int:
         if value is None or str(value).strip() == "":
             raise HTTPException(status_code=400, detail=f"{field_name} is required")
@@ -4523,6 +4919,10 @@ async def save_broker_stoploss_settings(payload: dict):
 
 @router.get("/get_broker_stoploss_settings/{user_id}/{broker}/{activation_mode}")
 async def get_broker_stoploss_settings(user_id: str, broker: str, activation_mode: str):
+    # NOTE: still unauthenticated, still takes user_id in the path — legacy
+    # live/algo-backtest/fast-forward .html dashboards call this exact shape
+    # with no Authorization header. Don't change the route or gate it behind
+    # app_auth here until those callers are migrated too.
     normalized_user_id = str(user_id or "").strip()
     normalized_broker = str(broker or "").strip()
     normalized_activation_mode = str(activation_mode or "").strip() or "algo-backtest"
@@ -4581,6 +4981,9 @@ async def algo_backtest_simulator(
     autoload: bool = Query(True, description="Frontend autoload status for reference"),
     activation_mode: str = Query("algo-backtest", description="Activation mode: algo-backtest, fast-forward, or live"),
 ):
+    # NOTE: still unauthenticated — assets/js/algo-backtest-dashboard.js (the
+    # legacy dashboards) calls this with no Authorization header. Don't gate
+    # behind app_auth here until that caller is migrated too.
     normalized_timestamp = str(listen_timestamp or "").strip()
     if not normalized_timestamp:
         raise HTTPException(status_code=400, detail="listen_timestamp is required")
@@ -4691,8 +5094,8 @@ async def algo_backtest_simulator(
     }
 
 
-def _ensure_default_paper_trade_portfolios() -> None:
-    col = _shared_mongo._db["paper_trade_portfolio"]
+def _ensure_default_simulator_portfolios() -> None:
+    col = _shared_mongo._db["simulator_portfolio"]
     for portfolio_name in _DEFAULT_PAPER_TRADE_PORTFOLIOS:
         if not col.find_one({"name": portfolio_name}, {"_id": 1}):
             col.insert_one({
@@ -4792,7 +5195,7 @@ async def simulator_monitor_start(
             ))
         payload = await simulator_bridge_start(
             _simulator_broker.kite,
-            _shared_mongo._db["paper_trade_strategy"],
+            _shared_mongo._db["simulator_strategy"],
             _shared_mongo._db,
         )
         detail_parts = []
@@ -4837,7 +5240,7 @@ async def simulator_monitor_start_post(
             }
         payload = await simulator_bridge_start(
             _simulator_broker.kite,
-            _shared_mongo._db["paper_trade_strategy"],
+            _shared_mongo._db["simulator_strategy"],
             _shared_mongo._db,
         )
         if strategy_id or portfolio_name:
@@ -4854,7 +5257,7 @@ async def simulator_monitor_stop() -> HTMLResponse:
         _sync_simulator_broker_with_market_session()
         payload = await simulator_bridge_stop(
             getattr(_simulator_broker, "kite", None),
-            _shared_mongo._db["paper_trade_strategy"],
+            _shared_mongo._db["simulator_strategy"],
             _shared_mongo._db,
         )
         return HTMLResponse(content=build_monitor_toggle_page(
@@ -4884,7 +5287,7 @@ async def simulator_monitor_stop_post() -> dict:
         _sync_simulator_broker_with_market_session()
         return await simulator_bridge_stop(
             getattr(_simulator_broker, "kite", None),
-            _shared_mongo._db["paper_trade_strategy"],
+            _shared_mongo._db["simulator_strategy"],
             _shared_mongo._db,
         )
     except Exception as exc:
@@ -4896,7 +5299,7 @@ async def simulator_monitor_status() -> dict:
     _sync_simulator_broker_with_market_session()
     return await simulator_bridge_status(
         getattr(_simulator_broker, "kite", None),
-        _shared_mongo._db["paper_trade_strategy"],
+        _shared_mongo._db["simulator_strategy"],
         _shared_mongo._db,
     )
 
@@ -4906,9 +5309,58 @@ async def simulator_monitor_reentry_status() -> dict:
     _sync_simulator_broker_with_market_session()
     return await simulator_bridge_reentry_status(
         getattr(_simulator_broker, "kite", None),
-        _shared_mongo._db["paper_trade_strategy"],
+        _shared_mongo._db["simulator_strategy"],
         _shared_mongo._db,
     )
+
+
+# ── Simulator risk monitor (SL/Target/hedge auto-exit on simulator_triggers
+# / simulator_portfolio_triggers) — separate engine from the monitor above,
+# see features/simulator_risk_monitor.py. Same start/stop/status page pattern
+# as /simulator/monitor/* but its own toggle, since starting that one must
+# never implicitly arm this one (real broker exit orders) or vice versa.
+
+@sim_router.get("/simulator/risk-monitor/start")
+async def simulator_risk_monitor_start_page() -> HTMLResponse:
+    status = simulator_risk_monitor.start()
+    return HTMLResponse(content=build_monitor_toggle_page(
+        running=status["running"],
+        title="Simulator Risk Monitor",
+        status_text=f"Watching {status['legs_watched']} leg(s), {status['baskets_watched']} basket(s).",
+        detail_text="Auto-fires real broker exit orders on saved SL/Target hits. Click Stop to disarm.",
+        start_href="./start",
+        stop_href="./stop",
+        status_href="./status",
+    ))
+
+
+@sim_router.post("/simulator/risk-monitor/start")
+async def simulator_risk_monitor_start_post() -> dict:
+    return simulator_risk_monitor.start()
+
+
+@sim_router.get("/simulator/risk-monitor/stop")
+async def simulator_risk_monitor_stop_page() -> HTMLResponse:
+    status = simulator_risk_monitor.stop()
+    return HTMLResponse(content=build_monitor_toggle_page(
+        running=status["running"],
+        title="Simulator Risk Monitor",
+        status_text="Stopped — no further SL/Target checks or auto-exits until restarted.",
+        detail_text="Click Start to re-arm.",
+        start_href="./start",
+        stop_href="./stop",
+        status_href="./status",
+    ))
+
+
+@sim_router.post("/simulator/risk-monitor/stop")
+async def simulator_risk_monitor_stop_post() -> dict:
+    return simulator_risk_monitor.stop()
+
+
+@sim_router.get("/simulator/risk-monitor/status")
+async def simulator_risk_monitor_status() -> dict:
+    return simulator_risk_monitor.get_status()
 
 
 @sim_router.get("/simulator/health")
@@ -5062,7 +5514,7 @@ async def simulator_get_market_holidays() -> dict:
 @sim_router.get("/simulator/get-option-chain")
 async def simulator_get_option_chain(timestamp: str = Query(...)) -> dict:
     try:
-        data = list(_shared_mongo._db["option_chain"].find({"timestamp": timestamp}, {"_id": 0}))
+        data = list(_shared_mongo._db["option_chain_historical_data"].find({"timestamp": timestamp}, {"_id": 0}))
         return {"status": "success", "timestamp": timestamp, "count": len(data), "data": data}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
@@ -5075,15 +5527,15 @@ async def simulator_get_lot_size(instrument: str = "nifty") -> dict:
         symbol = str(instrument or "nifty").upper()
         doc = _shared_mongo._db["lot_sizes"].find_one(
             {
-                "instrument": symbol,
-                "effective_from": {"$lte": today},
+                "underlying": symbol,
+                "from_date": {"$lte": today},
                 "$or": [
-                    {"effective_to": None},
-                    {"effective_to": {"$exists": False}},
-                    {"effective_to": {"$gte": today}},
+                    {"to_date": None},
+                    {"to_date": {"$exists": False}},
+                    {"to_date": {"$gte": today}},
                 ],
             },
-            sort=[("effective_from", -1)],
+            sort=[("from_date", -1)],
         )
         if doc:
             return {"instrument": symbol, "lot_size": int(doc["lot_size"])}
@@ -5093,11 +5545,715 @@ async def simulator_get_lot_size(instrument: str = "nifty") -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@sim_router.get("/simulator/paper-trade/portfolios")
-async def simulator_pt_list_portfolios() -> dict:
+@sim_router.get("/simulator/positions/all")
+async def simulator_all_positions(current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Generic simulator positions endpoint.
+    Broker name is intentionally not exposed in the URL so the frontend can keep
+    using the same route even if the active broker changes later.
+    """
     try:
-        _ensure_default_paper_trade_portfolios()
-        docs = list(_shared_mongo._db["paper_trade_portfolio"].find({}, {"_id": 1, "name": 1}))
+        from features.broker_gateway import _active_broker as _get_active_broker_name
+
+        active_broker = str(_get_active_broker_name() or "").strip().lower()
+        if active_broker == "dhan":
+            payload = await asyncio.to_thread(_fetch_dhan_broker_option_positions, _shared_mongo, include_broker_status=False)
+            return {
+                "status": "success" if payload.get("ok") else "error",
+                "broker": active_broker or "unknown",
+                "positions": payload.get("open_positions") or [],
+                "underlyings": payload.get("underlyings") or {},
+                "token_market_data": payload.get("token_market_data") or [],
+                "detail": payload.get("detail") or "",
+            }
+
+        return {
+            "status": "error",
+            "broker": active_broker or "unknown",
+            "detail": f"Simulator positions endpoint is not implemented for broker '{active_broker or 'unknown'}' yet.",
+            "positions": [],
+            "token_market_data": [],
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc), "positions": [], "token_market_data": []}
+
+
+@sim_router.get("/simulator/positions/broker-status")
+async def simulator_positions_broker_status(current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    try:
+        payload = await asyncio.to_thread(_fetch_dhan_broker_option_positions, _shared_mongo, include_broker_status=True)
+        return {
+            "status": "success" if payload.get("ok") else "error",
+            "broker_status": payload.get("broker_status") or [],
+            "detail": payload.get("detail") or "",
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc), "broker_status": []}
+
+
+@sim_router.post("/simulator/positions/by-broker")
+async def simulator_positions_by_broker(body: SimulatorBrokerPositionsRequest, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    try:
+        broker_id = str(body.broker_id or "").strip()
+        payload = await asyncio.to_thread(
+            _fetch_dhan_broker_option_positions,
+            _shared_mongo,
+            selected_broker_id=broker_id or None,
+            include_broker_status=False,
+        )
+        return {
+            "status": "success" if payload.get("ok") else "error",
+            "broker_id": broker_id,
+            "positions": payload.get("open_positions") or [],
+            "underlyings": payload.get("underlyings") or {},
+            "token_market_data": payload.get("token_market_data") or [],
+            "detail": payload.get("detail") or "",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "broker_id": str(body.broker_id or "").strip(),
+            "message": str(exc),
+            "positions": [],
+            "token_market_data": [],
+        }
+
+
+_manual_order_kite_cache: dict[tuple, dict] = {}
+_manual_order_kite_cache_date: str = ""
+
+
+def _fetch_manual_order_kite_cache(raw_db, kite_doc: dict | None) -> dict[tuple, dict]:
+    """
+    Same shape/keying as spot_atm_utils._load_kite_instruments(), fetched directly with a
+    specific Kite account's own credentials instead of going through that shared helper —
+    which silently skips fetching (returns its empty cache) whenever Dhan is the active
+    market-data feed broker, a global/unrelated setting that has nothing to do with whether
+    a real Kite account is configured for placing this order.
+    """
+    global _manual_order_kite_cache, _manual_order_kite_cache_date
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _manual_order_kite_cache_date == today and _manual_order_kite_cache:
+        return _manual_order_kite_cache
+
+    doc = kite_doc
+    if doc is None:
+        for candidate in raw_db["broker_configuration"].find({"broker_type": "live"}):
+            name = str(candidate.get("broker_name") or candidate.get("name") or "").lower()
+            if ("kite" in name or "zerodha" in name) and candidate.get("api_key") and candidate.get("access_token"):
+                doc = candidate
+                break
+    if not doc:
+        return {}
+
+    try:
+        from kiteconnect import KiteConnect  # type: ignore
+
+        kite = KiteConnect(api_key=str(doc.get("api_key") or "").strip())
+        kite.set_access_token(str(doc.get("access_token") or "").strip())
+        new_cache: dict[tuple, dict] = {}
+        for segment in ("NFO", "BFO"):
+            for inst in kite.instruments(segment):
+                name = str(inst.get("name") or "").strip().upper()
+                inst_type = str(inst.get("instrument_type") or "").strip().upper()
+                exp = inst.get("expiry")
+                stk = inst.get("strike")
+                sym = str(inst.get("tradingsymbol") or "").strip()
+                if not (name and inst_type in ("CE", "PE") and exp and stk is not None and sym):
+                    continue
+                try:
+                    exp_str = exp.strftime("%Y-%m-%d")
+                except AttributeError:
+                    exp_str = str(exp)[:10]
+                new_cache[(name, exp_str, float(stk), inst_type)] = {
+                    "symbol": sym,
+                    "exchange": str(inst.get("exchange") or segment),
+                }
+        _manual_order_kite_cache = new_cache
+        _manual_order_kite_cache_date = today
+        return new_cache
+    except Exception as exc:
+        log.debug("manual order kite instrument fetch error: %s", exc)
+        return {}
+
+
+def _resolve_manual_order_symbol(leg: "ManualOrderLeg", raw_db, kite_doc: dict | None = None) -> tuple[str, str] | None:
+    """
+    Kite-native (underlying, expiry, strike, option_type) → (tradingsymbol, exchange).
+    Same instrument metadata _to_flattrade_symbol() already uses for the FlatTrade
+    conversion — account-agnostic, so it's safe to resolve this way regardless of
+    which broker_id is actually placing the order.
+    """
+    from features.spot_atm_utils import _load_kite_instruments
+
+    cache = _load_kite_instruments()
+    if not cache:
+        cache = _fetch_manual_order_kite_cache(raw_db, kite_doc)
+
+    key = (
+        leg.underlying.strip().upper(),
+        leg.expiry.strip()[:10],
+        float(leg.strike),
+        leg.option_type.strip().upper(),
+    )
+    inst = cache.get(key)
+    if not inst:
+        return None
+    return str(inst["symbol"]), str(inst["exchange"])
+
+
+def _resolve_dhan_security(leg: "ManualOrderLeg", raw_db) -> dict | None:
+    """
+    (underlying, expiry, strike, option_type) → Dhan's own securityId/symbol/exchangeSegment,
+    from the same active_option_tokens collection execution_socket.py already keys positions off
+    of. Dhan identifies instruments by numeric securityId, not a tradingsymbol string, so this
+    doesn't reuse _resolve_manual_order_symbol (that one resolves the Kite-style symbol).
+    """
+    doc = raw_db["active_option_tokens"].find_one({
+        "broker": "dhan",
+        "instrument": leg.underlying.strip().upper(),
+        "expiry": leg.expiry.strip()[:10],
+        "strike": float(leg.strike),
+        "option_type": leg.option_type.strip().upper(),
+    })
+    if not doc:
+        return None
+    security_id = str(doc.get("token") or "").strip()
+    if not security_id:
+        return None
+    return {
+        "security_id": security_id,
+        "symbol": str(doc.get("symbol") or "").strip(),
+        "exchange_segment": str(doc.get("ws_segment") or "").strip().upper() or "NSE_FNO",
+    }
+
+
+async def _fetch_dhan_quote_for_leg(leg: "ManualOrderLeg", raw_db) -> dict | None:
+    """
+    Resolves this leg's Dhan security_id and returns its live quote {"symbol","ltp","bid","ask"}.
+    Returns None if Dhan has no contract match for this leg at all.
+
+    Shared by _resolve_mpp_price and _resolve_ltp_price — every order's price, regardless of
+    which broker (FlatTrade/Kite/Dhan) actually executes it, is read from this one feed. Dhan
+    already streams/queries the full F&O chain, whereas Kite's own feed isn't even running
+    unless Kite is the active market-data broker (kite_market_config) — and the broker that
+    places the order has nothing to do with which one is the best price source.
+    """
+    resolved = await asyncio.to_thread(_resolve_dhan_security, leg, raw_db)
+    if not resolved:
+        return None
+    quote = (await asyncio.to_thread(
+        _fetch_dhan_market_data, resolved["exchange_segment"], [int(resolved["security_id"])], _shared_mongo,
+    )).get(resolved["security_id"], {})
+    return {
+        "symbol": resolved["symbol"],
+        "ltp": float(quote.get("ltp") or 0),
+        "bid": float(quote.get("bid") or 0),
+        "ask": float(quote.get("ask") or 0),
+    }
+
+
+async def _resolve_mpp_price(leg: "ManualOrderLeg", raw_db) -> float:
+    """
+    MPP's bid + protection% / ask - protection% formula, priced off Dhan's feed regardless of
+    the execution broker (see _fetch_dhan_quote_for_leg). The order itself still goes out
+    through whichever broker/symbol the caller resolved separately.
+
+    Falls back to leg.price (whatever the caller already had) if Dhan has no match or no
+    live depth for this contract yet — never raises, since a quote miss shouldn't block order
+    placement outright.
+    """
+    from features.live_order_manager import _mpp_protection_pct, _clamp_limit_price
+
+    quote = await _fetch_dhan_quote_for_leg(leg, raw_db)
+    if not quote:
+        print(f"[MPP PRICE] no Dhan contract match for leg={leg.model_dump()} — falling back to leg.price", flush=True)
+        return leg.price
+
+    ltp = quote["ltp"]
+    bid = quote["bid"] or ltp
+    ask = quote["ask"] or ltp
+    if not (bid or ask):
+        print(f"[MPP PRICE] no Dhan depth for symbol={quote['symbol']} — falling back to leg.price", flush=True)
+        return leg.price
+
+    is_buy = leg.side == "BUY"
+    # NSE's MPP protection band is sized differently for options vs futures (tighter for
+    # futures — see _mpp_protection_pct's docstring) — a futures leg must not get priced
+    # with the wider option band.
+    pct = _mpp_protection_pct(ltp, is_option=leg.option_type.strip().upper() != "FUT")
+    base_price = bid if is_buy else ask
+    raw_price = base_price * (1 + pct / 100) if is_buy else base_price * (1 - pct / 100)
+    price = _clamp_limit_price(raw_price, is_buy)
+    print(
+        f"[MPP PRICE][dhan-feed] symbol={quote['symbol']} ltp={ltp} bid={bid} ask={ask} "
+        f"pct={pct}% price={price} is_buy={is_buy}",
+        flush=True,
+    )
+    return price
+
+
+async def _resolve_ltp_price(leg: "ManualOrderLeg", raw_db) -> float:
+    """
+    "Execute At LTP" price source — same Dhan-feed-regardless-of-execution-broker principle as
+    _resolve_mpp_price, just without the protection-band markup: submits a plain LIMIT order at
+    Dhan's current ltp instead of trusting the order pad row's possibly-seconds-stale client-side
+    ltp. Falls back to leg.price if Dhan has no match/quote yet.
+    """
+    quote = await _fetch_dhan_quote_for_leg(leg, raw_db)
+    if not quote or quote["ltp"] <= 0:
+        print(f"[LTP PRICE] no Dhan quote for leg={leg.model_dump()} — falling back to leg.price", flush=True)
+        return leg.price
+    print(f"[LTP PRICE][dhan-feed] symbol={quote['symbol']} ltp={quote['ltp']}", flush=True)
+    return quote["ltp"]
+
+
+async def _simulator_place_manual_order_core(body: ManualOrderRequest) -> dict:
+    """
+    Places real orders with the broker — this is live money, not a simulation.
+    FlatTrade/Kite use their own place_order() already proven elsewhere in this
+    codebase. Dhan goes straight to https://api.dhan.co/v2/orders (same direct-
+    REST pattern already used for Dhan positions/quotes) — UNVERIFIED against a
+    live order, unlike the other two: dhanhq SDK isn't installed, and this is
+    adapted from an untested reference in the sibling option-algo repo. Test
+    with one small/throwaway order before relying on it for size.
+    """
+    broker_id = str(body.broker_id or "").strip()
+    print(f"[PLACE_ORDER] request broker_id={broker_id} legs={len(body.orders)} orders={[o.model_dump() for o in body.orders]}", flush=True)
+    try:
+        raw_db = _shared_mongo._db
+
+        dhan_cfg = raw_db["kite_market_config"].find_one({"broker": "dhan"}) or {}
+        if broker_id and broker_id == str(dhan_cfg.get("_id") or "").strip():
+            dhan_client_id = str(dhan_cfg.get("user_id") or dhan_cfg.get("dhan_client_id") or "").strip()
+            dhan_access_token = str(dhan_cfg.get("access_token") or "").strip()
+            if not dhan_access_token or not dhan_client_id:
+                print("[PLACE_ORDER][dhan] credentials not configured", flush=True)
+                return {"status": "error", "message": "Dhan credentials not configured.", "results": []}
+
+            from features.dhan_broker import get_dhan_instance
+            from features.order_execution import place_broker_order
+
+            dhan_order_type_map = {"LIMIT": "LIMIT", "MARKET": "MARKET", "SL": "SL"}
+            dhan_adapter = get_dhan_instance(_shared_mongo, dhan_client_id, dhan_access_token)
+
+            async def _place_one_dhan_leg(leg: "ManualOrderLeg") -> dict:
+                resolved = await asyncio.to_thread(_resolve_dhan_security, leg, raw_db)
+                if not resolved:
+                    print(f"[PLACE_ORDER][dhan] instrument not found for leg={leg.model_dump()}", flush=True)
+                    return {"leg": leg.model_dump(), "status": "error", "message": "Instrument not found."}
+
+                price = leg.price
+                requested_type = leg.order_type
+                if requested_type == "MPP":
+                    price = await _resolve_mpp_price(leg, raw_db)
+                    if price <= 0:
+                        print(f"[PLACE_ORDER][dhan] MPP price unresolved for leg={leg.model_dump()}", flush=True)
+                        return {"leg": leg.model_dump(), "status": "error", "message": "MPP price unavailable — no live quote for this contract."}
+                    requested_type = "LIMIT"
+                elif requested_type == "LTP":
+                    price = await _resolve_ltp_price(leg, raw_db)
+                    if price <= 0:
+                        print(f"[PLACE_ORDER][dhan] LTP price unresolved for leg={leg.model_dump()}", flush=True)
+                        return {"leg": leg.model_dump(), "status": "error", "message": "LTP price unavailable — no live quote for this contract."}
+                    requested_type = "LIMIT"
+
+                dhan_order_type = dhan_order_type_map.get(requested_type, "LIMIT")
+                result = await asyncio.to_thread(
+                    place_broker_order,
+                    dhan_adapter,
+                    tradingsymbol=resolved["symbol"],
+                    exchange="NFO",
+                    transaction_type="BUY" if leg.side == "BUY" else "SELL",
+                    quantity=leg.quantity,
+                    order_type=dhan_order_type,
+                    product=leg.product,
+                    price=price,
+                    trigger_price=leg.trigger_price or 0.0,
+                    context={"purpose": "manual_order_pad", "broker": "dhan", "symbol": resolved["symbol"]},
+                )
+                if result["status"] != "success":
+                    return {"leg": leg.model_dump(), "status": "error", "message": result["message"]}
+                return {"leg": leg.model_dump(), "status": "success", "order_id": result["order_id"]}
+
+            # Every leg in the basket fires at once instead of waiting on the previous leg's
+            # broker round-trip — for a multi-leg strategy that's the difference between the
+            # whole basket landing together vs. legs getting staggered fills at drifting prices.
+            dhan_results: list[dict] = await asyncio.gather(*(_place_one_dhan_leg(leg) for leg in body.orders))
+
+            any_ok = any(r["status"] == "success" for r in dhan_results)
+            all_ok = bool(dhan_results) and all(r["status"] == "success" for r in dhan_results)
+            overall_status = "success" if all_ok else ("partial" if any_ok else "error")
+            print(f"[PLACE_ORDER] done status={overall_status} results={dhan_results}", flush=True)
+            return {"status": overall_status, "results": dhan_results}
+
+        try:
+            doc = raw_db["broker_configuration"].find_one({"_id": ObjectId(broker_id)})
+        except Exception:
+            doc = None
+        if not doc:
+            print(f"[PLACE_ORDER] broker account not found for broker_id={broker_id}", flush=True)
+            return {"status": "error", "message": "Broker account not found.", "results": []}
+
+        broker_name = str(doc.get("broker_name") or doc.get("name") or "").strip().lower()
+        is_flattrade = "flattrade" in broker_name
+        is_kite = "zerodha" in broker_name or "kite" in broker_name
+        print(f"[PLACE_ORDER] resolved broker_name={broker_name} is_flattrade={is_flattrade} is_kite={is_kite}", flush=True)
+        if not is_flattrade and not is_kite:
+            print(f"[PLACE_ORDER] rejected — order placement not supported for broker_name={broker_name}", flush=True)
+            return {"status": "error", "message": "Order placement isn't available for this broker yet.", "results": []}
+
+        results: list[dict] = []
+
+        if is_flattrade:
+            from features.flattrade_broker import get_flattrade_instance
+
+            adapter = get_flattrade_instance(str(doc.get("user_id") or ""), str(doc.get("access_token") or ""))
+            if adapter is None:
+                print("[PLACE_ORDER][flattrade] session not available", flush=True)
+                return {"status": "error", "message": "FlatTrade session not available.", "results": []}
+
+            async def _place_one_flattrade_leg(leg: "ManualOrderLeg") -> dict:
+                resolved = await asyncio.to_thread(_resolve_manual_order_symbol, leg, raw_db)
+                if not resolved:
+                    print(f"[PLACE_ORDER][flattrade] instrument not found for leg={leg.model_dump()}", flush=True)
+                    return {"leg": leg.model_dump(), "status": "error", "message": "Instrument not found."}
+                symbol, exchange = resolved
+
+                price = leg.price
+                order_type = leg.order_type
+                if order_type == "MPP":
+                    # FlatTrade has no native MPP order type — "MPP" would silently fall back to
+                    # a plain LIMIT at price=0 (rejected by the exchange) if sent through as-is.
+                    # Price source is always Dhan's feed (see _resolve_mpp_price), independent of
+                    # FlatTrade being the execution broker here.
+                    price = await _resolve_mpp_price(leg, raw_db)
+                    if price <= 0:
+                        print(f"[PLACE_ORDER][flattrade] MPP price unresolved for leg={leg.model_dump()}", flush=True)
+                        return {"leg": leg.model_dump(), "status": "error", "message": "MPP price unavailable — no live quote for this contract."}
+                    order_type = "LIMIT"
+                elif order_type == "LTP":
+                    # Same Dhan-feed-regardless-of-execution-broker principle — submit at Dhan's
+                    # current ltp instead of trusting a possibly-stale client-side price.
+                    price = await _resolve_ltp_price(leg, raw_db)
+                    if price <= 0:
+                        print(f"[PLACE_ORDER][flattrade] LTP price unresolved for leg={leg.model_dump()}", flush=True)
+                        return {"leg": leg.model_dump(), "status": "error", "message": "LTP price unavailable — no live quote for this contract."}
+                    order_type = "LIMIT"
+
+                print(
+                    f"[PLACE_ORDER][flattrade] placing tradingsymbol={symbol} exchange={exchange} "
+                    f"transaction_type={leg.side} quantity={leg.quantity} order_type={order_type} "
+                    f"product={leg.product} price={price} trigger_price={leg.trigger_price}",
+                    flush=True,
+                )
+                from features.order_execution import place_broker_order
+                result = await asyncio.to_thread(
+                    place_broker_order,
+                    adapter,
+                    tradingsymbol=symbol,
+                    exchange=exchange,
+                    transaction_type=leg.side,
+                    quantity=leg.quantity,
+                    order_type=order_type,
+                    product=leg.product,
+                    price=price,
+                    trigger_price=leg.trigger_price,
+                    context={"purpose": "manual_order_pad", "broker": "flattrade", "symbol": symbol},
+                )
+                print(f"[PLACE_ORDER][flattrade] response={result}", flush=True)
+                if result["status"] != "success":
+                    return {"leg": leg.model_dump(), "status": "error", "message": result["message"]}
+                return {"leg": leg.model_dump(), "status": "success", "order_id": result["order_id"]}
+
+            # Whole basket fires together instead of one leg waiting on the previous leg's
+            # broker round-trip — same reasoning as the Dhan branch above.
+            results = await asyncio.gather(*(_place_one_flattrade_leg(leg) for leg in body.orders))
+        else:
+            from kiteconnect import KiteConnect  # type: ignore
+
+            api_key = str(doc.get("api_key") or "").strip()
+            access_token = str(doc.get("access_token") or "").strip()
+            if not api_key or not access_token:
+                print("[PLACE_ORDER][kite] session not available", flush=True)
+                return {"status": "error", "message": "Kite session not available.", "results": []}
+            kite = KiteConnect(api_key=api_key)
+            kite.set_access_token(access_token)
+
+            async def _place_one_kite_leg(leg: "ManualOrderLeg") -> dict:
+                # Resolve with this exact account's own token — instrument metadata fetched via
+                # Dhan's feed wouldn't reflect this Kite account's session, and the shared cache
+                # is empty whenever Dhan (not Kite) is the active market-data broker anyway.
+                resolved = await asyncio.to_thread(_resolve_manual_order_symbol, leg, raw_db, doc)
+                if not resolved:
+                    print(f"[PLACE_ORDER][kite] instrument not found for leg={leg.model_dump()}", flush=True)
+                    return {"leg": leg.model_dump(), "status": "error", "message": "Instrument not found."}
+                symbol, exchange = resolved
+
+                price = leg.price
+                order_type = leg.order_type
+                if order_type == "MPP":
+                    # Kite has no native MPP order type either — price source is always Dhan's
+                    # feed (see _resolve_mpp_price), independent of Kite being the execution
+                    # broker here.
+                    price = await _resolve_mpp_price(leg, raw_db)
+                    if price <= 0:
+                        print(f"[PLACE_ORDER][kite] MPP price unresolved for leg={leg.model_dump()}", flush=True)
+                        return {"leg": leg.model_dump(), "status": "error", "message": "MPP price unavailable — no live quote for this contract."}
+                    order_type = "LIMIT"
+                elif order_type == "LTP":
+                    # Same Dhan-feed-regardless-of-execution-broker principle — submit at Dhan's
+                    # current ltp instead of trusting a possibly-stale client-side price.
+                    price = await _resolve_ltp_price(leg, raw_db)
+                    if price <= 0:
+                        print(f"[PLACE_ORDER][kite] LTP price unresolved for leg={leg.model_dump()}", flush=True)
+                        return {"leg": leg.model_dump(), "status": "error", "message": "LTP price unavailable — no live quote for this contract."}
+                    order_type = "LIMIT"
+
+                print(
+                    f"[PLACE_ORDER][kite] placing tradingsymbol={symbol} exchange={exchange} "
+                    f"transaction_type={leg.side} quantity={leg.quantity} order_type={order_type} "
+                    f"product={leg.product} price={price} trigger_price={leg.trigger_price}",
+                    flush=True,
+                )
+                from features.order_execution import place_broker_order
+                result = await asyncio.to_thread(
+                    place_broker_order,
+                    kite,
+                    tradingsymbol=symbol,
+                    exchange=exchange,
+                    transaction_type=leg.side,
+                    quantity=leg.quantity,
+                    order_type=order_type,
+                    product=leg.product,
+                    price=price or 0.0,
+                    trigger_price=leg.trigger_price or 0.0,
+                    variety=kite.VARIETY_REGULAR,
+                    context={"purpose": "manual_order_pad", "broker": "kite", "symbol": symbol},
+                )
+                print(f"[PLACE_ORDER][kite] response={result}", flush=True)
+                if result["status"] != "success":
+                    return {"leg": leg.model_dump(), "status": "error", "message": result["message"]}
+                return {"leg": leg.model_dump(), "status": "success", "order_id": result["order_id"]}
+
+            # Whole basket fires together instead of one leg waiting on the previous leg's
+            # broker round-trip — same reasoning as the Dhan branch above.
+            results = await asyncio.gather(*(_place_one_kite_leg(leg) for leg in body.orders))
+
+        any_ok = any(r["status"] == "success" for r in results)
+        all_ok = bool(results) and all(r["status"] == "success" for r in results)
+        overall_status = "success" if all_ok else ("partial" if any_ok else "error")
+        print(f"[PLACE_ORDER] done status={overall_status} results={results}", flush=True)
+        return {
+            "status": overall_status,
+            "results": results,
+        }
+    except Exception as exc:
+        print(f"[PLACE_ORDER] unhandled error={exc}", flush=True)
+        return {"status": "error", "message": str(exc), "results": []}
+
+
+@trade_router.post("/positions/place-order")
+async def simulator_place_manual_order(body: ManualOrderRequest, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Thin wrapper around _simulator_place_manual_order_core so every order
+    placement — manual order-pad AND the risk monitor's auto-fire/hedge/
+    adjustment paths, all of which call this same function directly (see
+    features/simulator_risk_monitor.py) — gets one consistent Telegram
+    notification on the way out, success or failure, instead of each caller
+    having to remember to send its own.
+    """
+    result = await _simulator_place_manual_order_core(body)
+    try:
+        from features.telegram_notifier import notify_user
+
+        status = str(result.get("status") or "")
+        leg_summary = ", ".join(
+            f"{o.side} {o.underlying} {o.strike}{o.option_type} x{o.quantity}" for o in body.orders
+        )
+        if status == "success":
+            notify_user("PT_ORDER_PLACED", f"Order placed — {leg_summary}", {"broker": body.broker_id})
+        elif status in ("error", "partial"):
+            notify_user(
+                "PT_ORDER_FAILED" if status == "error" else "PT_ORDER_PARTIAL",
+                f"Order {status} — {leg_summary} — {result.get('message', '')}",
+                {"broker": body.broker_id},
+            )
+    except Exception as exc:
+        print(f"[PLACE_ORDER] telegram notify error={exc}", flush=True)
+    return result
+
+
+@sim_router.get("/simulator/positions/debug/kite")
+async def simulator_debug_kite_positions(broker_id: str = Query(default="")) -> dict:
+    """
+    Debug helper to inspect raw Kite/Zerodha positions and symbol parsing.
+    Use this when simulator positions page shows "No positions found" for Kite.
+    """
+    try:
+        from features.kite_broker_ws import parse_kite_tradingsymbol
+
+        requested_broker_id = str(broker_id or "").strip()
+        query: dict[str, Any] = {"broker_type": "live"}
+        if requested_broker_id:
+            try:
+                query["_id"] = ObjectId(requested_broker_id)
+            except Exception:
+                return {
+                    "status": "error",
+                    "requested_broker_id": requested_broker_id,
+                    "message": "Invalid broker_id",
+                    "accounts": [],
+                }
+
+        accounts: list[dict[str, Any]] = []
+        for doc in _shared_mongo._db["broker_configuration"].find(query):
+            broker_name = str(doc.get("broker_name") or doc.get("name") or "").strip()
+            if not any(name in broker_name.lower() for name in ("kite", "zerodha")):
+                continue
+            broker_doc_id = str(doc.get("_id") or "").strip()
+            raw_access_token = str(doc.get("access_token") or "").strip()
+            masked_access_token = ""
+            if raw_access_token:
+                if len(raw_access_token) <= 8:
+                    masked_access_token = raw_access_token
+                else:
+                    masked_access_token = f"{raw_access_token[:4]}...{raw_access_token[-4:]}"
+            print(
+                "[KITE DEBUG DOC]",
+                {
+                    "broker_doc_id": broker_doc_id,
+                    "broker_name": broker_name,
+                    "has_access_token": bool(raw_access_token),
+                    "access_token_len": len(raw_access_token),
+                    "has_api_key": bool(str(doc.get("api_key") or "").strip()),
+                },
+                flush=True,
+            )
+            is_logged_in, _expired, session_message = _validate_broker_configuration_session(doc, _shared_mongo._db)
+            accounts.append({
+                "_id": broker_doc_id,
+                "broker_name": broker_name,
+                "account_id": str(doc.get("user_id") or "").strip(),
+                "api_key": str(doc.get("api_key") or "").strip(),
+                "access_token": str(doc.get("access_token") or "").strip(),
+                "is_logged_in": is_logged_in,
+                "login_url": "" if is_logged_in else f"/broker/kite/login?broker_doc_id={broker_doc_id}",
+                "message": session_message,
+                "debug_has_access_token": bool(raw_access_token),
+                "debug_access_token_len": len(raw_access_token),
+                "debug_has_api_key": bool(str(doc.get("api_key") or "").strip()),
+                "debug_raw_doc_preview": {
+                    "_id": broker_doc_id,
+                    "name": str(doc.get("name") or "").strip(),
+                    "broker_name": broker_name,
+                    "broker_type": str(doc.get("broker_type") or "").strip(),
+                    "user_id": str(doc.get("user_id") or "").strip(),
+                    "user_name": str(doc.get("user_name") or "").strip(),
+                    "broker_user_id": str(doc.get("broker_user_id") or "").strip(),
+                    "has_access_token": bool(raw_access_token),
+                    "access_token_masked": masked_access_token,
+                    "access_token_len": len(raw_access_token),
+                    "has_api_key": bool(str(doc.get("api_key") or "").strip()),
+                    "api_key": str(doc.get("api_key") or "").strip(),
+                    "login_time": str(doc.get("login_time") or "").strip(),
+                    "updated_at": str(doc.get("updated_at") or "").strip(),
+                    "redirect_url": str(doc.get("redirect_url") or "").strip(),
+                    "postback_url": str(doc.get("postback_url") or "").strip(),
+                },
+            })
+
+        debug_accounts: list[dict[str, Any]] = []
+        for account in accounts:
+            account_id = str(account.get("_id") or "").strip()
+            broker_name = str(account.get("broker_name") or "").strip()
+            account_user_id = str(account.get("account_id") or "").strip()
+            access_token = str(account.get("access_token") or "").strip()
+            is_logged_in = bool(account.get("is_logged_in"))
+
+            account_debug: dict[str, Any] = {
+                "broker_id": account_id,
+                "broker_name": broker_name,
+                "account_id": account_user_id,
+                "api_key": str(account.get("api_key") or "").strip(),
+                "is_logged_in": is_logged_in,
+                "login_url": str(account.get("login_url") or "").strip(),
+                "message": str(account.get("message") or "").strip(),
+                "raw_count": 0,
+                "raw_positions": [],
+                "parsed_positions": [],
+                "unresolved_symbols": [],
+            }
+
+            if not is_logged_in or not access_token:
+                debug_accounts.append(account_debug)
+                continue
+
+            try:
+                from kiteconnect import KiteConnect  # type: ignore
+
+                api_key = str(account.get("api_key") or "").strip()
+                if not api_key or not access_token:
+                    account_debug["message"] = "Missing api_key or access_token in broker_configuration"
+                    debug_accounts.append(account_debug)
+                    continue
+                kite = KiteConnect(api_key=api_key)
+                kite.set_access_token(access_token)
+                raw_payload = kite.positions() if kite is not None else {}
+                raw_rows = raw_payload.get("net") if isinstance(raw_payload, dict) else []
+                raw_rows = raw_rows if isinstance(raw_rows, list) else []
+
+                parsed_positions: list[dict[str, Any]] = []
+                unresolved_symbols: list[dict[str, Any]] = []
+
+                for row in raw_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    quantity = int(row.get("quantity") or 0)
+                    tradingsymbol = str(row.get("tradingsymbol") or "").strip()
+                    parsed = parse_kite_tradingsymbol(tradingsymbol)
+                    row_debug = {
+                        "tradingsymbol": tradingsymbol,
+                        "quantity": quantity,
+                        "product": str(row.get("product") or "").strip(),
+                        "average_price": row.get("average_price"),
+                        "last_price": row.get("last_price"),
+                        "pnl": row.get("pnl"),
+                    }
+                    if parsed:
+                        parsed_positions.append({**row_debug, **parsed})
+                    else:
+                        unresolved_symbols.append(row_debug)
+
+                account_debug["raw_count"] = len(raw_rows)
+                account_debug["raw_positions"] = raw_rows
+                account_debug["parsed_positions"] = parsed_positions
+                account_debug["unresolved_symbols"] = unresolved_symbols
+            except Exception as exc:
+                account_debug["message"] = str(exc)
+
+            debug_accounts.append(account_debug)
+
+        return {
+            "status": "success",
+            "requested_broker_id": requested_broker_id,
+            "account_count": len(debug_accounts),
+            "accounts": debug_accounts,
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "requested_broker_id": str(broker_id or "").strip(),
+            "message": str(exc),
+            "accounts": [],
+        }
+
+
+@sim_router.get("/simulator/paper-trade/portfolios")
+async def simulator_pt_list_portfolios(current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    try:
+        _ensure_default_simulator_portfolios()
+        docs = list(_shared_mongo._db["simulator_portfolio"].find({}, {"_id": 1, "name": 1}))
         for doc in docs:
             doc["_id"] = str(doc["_id"])
         return {"status": "success", "portfolios": docs}
@@ -5106,9 +6262,9 @@ async def simulator_pt_list_portfolios() -> dict:
 
 
 @sim_router.post("/simulator/paper-trade/portfolios")
-async def simulator_pt_create_portfolio(body: PTPortfolioIn) -> dict:
+async def simulator_pt_create_portfolio(body: PTPortfolioIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
-        col = _shared_mongo._db["paper_trade_portfolio"]
+        col = _shared_mongo._db["simulator_portfolio"]
         existing = col.find_one({"name": body.name}, {"_id": 1})
         if existing:
             return {"status": "success", "id": str(existing["_id"]), "created": False}
@@ -5118,11 +6274,342 @@ async def simulator_pt_create_portfolio(body: PTPortfolioIn) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@sim_router.get("/simulator/paper-trade/strategies")
-async def simulator_pt_list_strategies(portfolio_name: Optional[str] = None) -> dict:
+@sim_router.post("/simulator/paper-trade/triggers")
+async def simulator_pt_save_trigger(body: PTTriggerIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Upserts the SL/Target a leg's "Add Alert"/"Update Alert" toggle was set to, keyed by
+    (broker_id, leg_id) — always overwrites rather than no-op'ing on an existing doc, since
+    re-saving must always take the latest values. entry_price/quantity are stored as the
+    snapshot _fetch_dhan_broker_option_positions() compares future polls against to decide
+    whether this trigger is still valid (see its drift-check block) — this endpoint itself
+    does no validation, it just records "these were the values when the user last confirmed."
+    """
     try:
-        filt = {"portfolio_name": portfolio_name} if portfolio_name else {}
-        docs = list(_shared_mongo._db["paper_trade_strategy"].find(filt).sort("saved_at", -1))
+        col = _shared_mongo._db["simulator_triggers"]
+        now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        col.update_one(
+            {"broker_id": body.broker_id, "leg_id": body.leg_id},
+            {
+                "$set": {
+                    "underlying": body.underlying, "expiry": body.expiry, "strike": body.strike,
+                    "option_type": body.option_type, "side": body.side,
+                    "sl_mode": body.sl_mode, "sl_value": body.sl_value,
+                    "tp_mode": body.tp_mode, "tp_value": body.tp_value,
+                    "entry_price_at_set": body.entry_price, "quantity_at_set": body.quantity,
+                    "exited_at_set": body.exited,
+                    "status": "active", "updated_at": now_str,
+                },
+                "$setOnInsert": {"created_at": now_str},
+            },
+            upsert=True,
+        )
+        return {"status": "success"}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@sim_router.post("/simulator/paper-trade/portfolio-triggers")
+async def simulator_pt_save_portfolio_trigger(body: PTPortfolioTriggerIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Upserts the payoff chart's upper/lower stoploss marker for a whole basket, keyed by
+    (broker_id, underlying) — basket-level, not per-leg, since the payoff curve it's drawn
+    against is the sum of every open leg for that underlying. legs_snapshot records which
+    legs (and at what quantity) made up that basket when this was saved; the drift-check in
+    _fetch_dhan_broker_option_positions() invalidates it the moment that set stops matching
+    (a leg added/removed/resized), since the saved price no longer means what it did when
+    the user looked at the chart and set it.
+    """
+    try:
+        col = _shared_mongo._db["simulator_portfolio_triggers"]
+        now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        snapshot = sorted(
+            ({"leg_id": s.leg_id, "quantity": s.quantity} for s in body.legs_snapshot if s.quantity > 0),
+            key=lambda s: s["leg_id"],
+        )
+        col.update_one(
+            {"broker_id": body.broker_id, "underlying": body.underlying},
+            {
+                "$set": {
+                    "sl_upper": body.sl_upper, "sl_lower": body.sl_lower,
+                    "legs_snapshot": snapshot,
+                    "status": "active", "updated_at": now_str,
+                },
+                "$setOnInsert": {"created_at": now_str},
+            },
+            upsert=True,
+        )
+        return {"status": "success"}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@sim_router.get("/simulator/paper-trade/alert-config")
+async def simulator_pt_get_alert_config(broker_id: str = Query(...), underlying: str = Query(...), current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Reads back what the POST endpoint above saves — without this, the
+    Position Configuration panel has no way to show what was last saved when
+    re-entering alert mode (or reloading the page); it always renders its
+    React defaults, looking exactly like the save silently failed even
+    though it didn't.
+    """
+    try:
+        doc = _shared_mongo._db["simulator_portfolio_triggers"].find_one(
+            {"broker_id": broker_id, "underlying": underlying},
+        ) or {}
+        return {
+            "status": "success",
+            "trading_mode": doc.get("alert_trading_mode") or "auto",
+            "stoploss": doc.get("alert_stoploss") or {},
+            "target": doc.get("alert_target") or {},
+            "trailing_stop": doc.get("alert_trailing_stop") or {},
+            "hedge_strike_type": doc.get("alert_hedge_strike_type") or {},
+            "hedge_time_control": doc.get("alert_hedge_time_control") or {},
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@sim_router.post("/simulator/paper-trade/alert-config")
+async def simulator_pt_save_alert_config(body: PTAlertConfigIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Upserts the "Position Configuration" panel's basket-level Stoploss/Target/
+    Trail SL/Hedge settings into the SAME doc as the payoff-chart sl_upper/
+    sl_lower marker (simulator_portfolio_triggers, keyed by broker_id+
+    underlying) — but under separately-namespaced alert_* fields, written by
+    this endpoint only, so this save and that one's $set never clobber each
+    other's fields. alert_peak_mtm resets to 0 on every save (new baseline for
+    Trail SL's "highest MTM seen since this was configured") — the live
+    ratcheting itself happens in features/simulator_risk_monitor.py, not here.
+    No drift-check against alert_legs_snapshot in this round, unlike
+    sl_upper/lower's legs_snapshot — not requested, kept out to match scope.
+    """
+    try:
+        col = _shared_mongo._db["simulator_portfolio_triggers"]
+        now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        snapshot = [s.model_dump() for s in body.legs_snapshot if s.quantity > 0]
+        col.update_one(
+            {"broker_id": body.broker_id, "underlying": body.underlying},
+            {
+                "$set": {
+                    "alert_trading_mode": body.trading_mode,
+                    "alert_stoploss": body.stoploss.model_dump(),
+                    "alert_target": body.target.model_dump(),
+                    "alert_trailing_stop": body.trailing_stop.model_dump(),
+                    "alert_hedge_strike_type": body.hedge_strike_type.model_dump(),
+                    "alert_hedge_time_control": body.hedge_time_control.model_dump(),
+                    "alert_legs_snapshot": snapshot,
+                    "alert_peak_mtm": 0.0,
+                    "alert_status": "active",
+                    "alert_updated_at": now_str,
+                },
+                "$setOnInsert": {"broker_id": body.broker_id, "underlying": body.underlying, "created_at": now_str},
+            },
+            upsert=True,
+        )
+        return {"status": "success"}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@sim_router.get("/simulator/paper-trade/adjustments")
+async def simulator_pt_list_adjustments(
+    broker_id: Optional[str] = Query(default=None),
+    underlying: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None),
+    current_user: dict = Depends(app_auth.get_current_user),
+) -> dict:
+    """
+    The "🔔 Alert" bottom-sheet's saved reverse-order preview — plain CRUD, no drift-check
+    (unlike the two trigger collections above): this is a record of "what to do if the alert
+    fires," not a value that gets auto-applied anywhere, so the same staleness risk doesn't
+    apply the same way. Keyed by (broker_id, underlying) for the live-broker view, or by
+    strategy_id for a saved/virtual strategy (no broker_id/leg_id there) — exactly one pair is
+    ever sent (see PTAdjustmentIn).
+    """
+    try:
+        query = {"strategy_id": strategy_id} if strategy_id else {"broker_id": broker_id, "underlying": underlying}
+        # Only the live, armed config — a fired/disabled doc is history, not something
+        # to restore into the "🔔 Alert" editor (see PTAdjustmentIn.status).
+        query["status"] = {"$ne": False}
+        docs = list(_shared_mongo._db["simulator_adjustments"].find(query).sort("updated_at", -1))
+        for d in docs:
+            d["_id"] = str(d["_id"])
+        return {"status": "success", "adjustments": docs}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc), "adjustments": []}
+
+
+@sim_router.post("/simulator/paper-trade/adjustments")
+async def simulator_pt_create_adjustment(body: PTAdjustmentIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    try:
+        now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")
+        doc = body.model_dump()
+        doc["created_at"] = now_str
+        doc["updated_at"] = now_str
+        result = _shared_mongo._db["simulator_adjustments"].insert_one(doc)
+        return {"status": "success", "id": str(result.inserted_id)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@sim_router.patch("/simulator/paper-trade/adjustments/{adjustment_id}")
+async def simulator_pt_update_adjustment(adjustment_id: str, body: PTAdjustmentPatchIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    try:
+        update: dict = {"updated_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")}
+        update["positions"] = [p.model_dump() for p in body.positions]
+        # Editing and re-saving re-arms it — same record gets updated in place rather
+        # than a new one created (see simulator_pt_create_adjustment/PTAdjustmentIn.status).
+        update["status"] = True
+        if body.trigger_price is not None:
+            update["trigger_price"] = body.trigger_price
+        if body.trigger_condition is not None:
+            update["trigger_condition"] = body.trigger_condition
+        _shared_mongo._db["simulator_adjustments"].update_one({"_id": ObjectId(adjustment_id)}, {"$set": update})
+        return {"status": "success"}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@sim_router.get("/simulator/risk-monitor/adjustment-orders")
+async def simulator_get_adjustment_orders(
+    broker_id: Optional[str] = Query(default=None),
+    underlying: Optional[str] = Query(default=None),
+    adjustment_doc_id: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+) -> dict:
+    """
+    Read simulator_adjustment_orders — order tracking for upper/lower adjustment
+    fires. Completely separate from broker_orders (algo_trades only).
+    Query by adjustment_doc_id for a specific fire, or by broker_id+underlying
+    for all orders for a basket.
+    """
+    try:
+        query: dict = {}
+        if adjustment_doc_id:
+            query['adjustment_doc_id'] = adjustment_doc_id
+        elif broker_id:
+            query['broker_id'] = broker_id
+            if underlying:
+                query['underlying'] = underlying
+        if status:
+            query['status'] = status.upper()
+        docs = list(
+            _shared_mongo._db['simulator_adjustment_orders']
+            .find(query)
+            .sort('placed_at', -1)
+            .limit(500)
+        )
+        for d in docs:
+            d['_id'] = str(d['_id'])
+        return {'status': 'success', 'orders': docs, 'count': len(docs)}
+    except Exception as exc:
+        return {'status': 'error', 'message': str(exc), 'orders': []}
+
+
+@sim_router.delete("/simulator/paper-trade/adjustments")
+async def simulator_pt_delete_adjustment(
+    trigger_condition: str = Query(...),
+    broker_id: Optional[str] = Query(default=None),
+    underlying: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None),
+    current_user: dict = Depends(app_auth.get_current_user),
+) -> dict:
+    """
+    Removing the payoff chart's Upper/Lower SL marker (removeStoploss, PaperTradeNew.tsx) must
+    also drop that side's saved "🔔 Alert" reverse-order basket — otherwise the marker's price
+    is gone but its adjustment positions silently linger in simulator_adjustments, and the next
+    time that side is set up again, opening the Alert panel restores the STALE basket (matched
+    by the same trigger_condition, see simulator_pt_list_adjustments's docstring) instead of
+    starting fresh. Keyed the same way the GET above is: strategy_id for a saved/virtual
+    strategy, or (broker_id, underlying) for the live-broker view.
+    """
+    try:
+        query: dict = {"trigger_condition": trigger_condition}
+        query.update({"strategy_id": strategy_id} if strategy_id else {"broker_id": broker_id, "underlying": underlying})
+        result = _shared_mongo._db["simulator_adjustments"].delete_many(query)
+        return {"status": "success", "deleted": result.deleted_count}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@sim_router.post("/simulator/paper-trade/webhooks")
+async def simulator_pt_create_webhook(body: PTWebhookIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    The STOPLOSS chip's webhook icon (PaperTradeBacktest.tsx) — one webhook per
+    (strategy_id, adjustment_id) pair. Idempotent: re-clicking the icon for the
+    same saved adjustment returns the same webhook id instead of creating a
+    duplicate row. See simulator_pt_webhook_trigger for what hitting the URL does.
+    """
+    try:
+        existing = _shared_mongo._db["simulator_webhooks"].find_one(
+            {"strategy_id": body.strategy_id, "adjustment_id": body.adjustment_id},
+        )
+        if existing:
+            return {"status": "success", "id": str(existing["_id"])}
+        doc = {
+            "strategy_id": body.strategy_id,
+            "adjustment_id": body.adjustment_id,
+            "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S"),
+            "status": 1,
+        }
+        result = _shared_mongo._db["simulator_webhooks"].insert_one(doc)
+        return {"status": "success", "id": str(result.inserted_id)}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+async def _simulator_pt_webhook_trigger(webhook_id: str) -> dict:
+    try:
+        webhook_doc = _shared_mongo._db["simulator_webhooks"].find_one({"_id": ObjectId(webhook_id)})
+    except Exception:
+        return {"status": "error", "message": "Invalid webhook id"}
+    if not webhook_doc:
+        return {"status": "error", "message": "Webhook not found"}
+    current_status = webhook_doc.get("status")
+    if current_status == 2:
+        return {"status": "noop", "message": "Already triggered"}
+    if current_status == 0:
+        return {"status": "noop", "message": "Webhook is inactive"}
+    result = await simulator_risk_monitor.force_fire_adjustment(
+        MongoData(), str(webhook_doc["strategy_id"]), str(webhook_doc["adjustment_id"]),
+    )
+    if result.get("status") == "success":
+        _shared_mongo._db["simulator_webhooks"].update_one({"_id": webhook_doc["_id"]}, {"$set": {"status": 2}})
+    return result
+
+
+@sim_router.get("/webhook/tv/alert/{webhook_id}")
+@sim_router.post("/webhook/tv/alert/{webhook_id}")
+async def simulator_pt_webhook_trigger(webhook_id: str) -> dict:
+    """
+    Public, unauthenticated on purpose — this is the URL a TradingView alert (or
+    curl, for manual testing) hits directly; it can't carry our app's JWT. The
+    unguessable Mongo id in the path is the credential, same as every other
+    "TradingView webhook URL" feature works. Force-fires the linked
+    simulator_adjustments basket via SimulatorRiskMonitor.force_fire_adjustment
+    regardless of current price — the alert itself is the trigger signal, not a
+    price band this still needs to re-check. Paper-only: see the
+    PAPER_AUTO_FIRE_ENABLED comment in simulator_risk_monitor.py — never calls a
+    broker, only writes to simulator_strategy/simulator_adjustments.
+    """
+    return await _simulator_pt_webhook_trigger(webhook_id)
+
+
+@sim_router.get("/simulator/paper-trade/strategies")
+async def simulator_pt_list_strategies(
+    portfolio_id: Optional[str] = None,
+    portfolio_name: Optional[str] = None,
+    current_user: dict = Depends(app_auth.get_current_user),
+) -> dict:
+    try:
+        filt = {}
+        normalized_portfolio_id = str(portfolio_id or "").strip()
+        normalized_portfolio_name = str(portfolio_name or "").strip()
+        if normalized_portfolio_id:
+            filt["portfolio_id"] = normalized_portfolio_id
+        elif normalized_portfolio_name:
+            filt["portfolio_name"] = normalized_portfolio_name
+        docs = list(_shared_mongo._db["simulator_strategy"].find(filt).sort("saved_at", -1))
         result = []
         for doc in docs:
             doc = _enrich_pt_strategy_positions(doc)
@@ -5159,9 +6646,9 @@ async def simulator_pt_list_strategies(portfolio_name: Optional[str] = None) -> 
 
 
 @sim_router.get("/simulator/paper-trade/strategies/{strategy_id}")
-async def simulator_pt_get_strategy(strategy_id: str) -> dict:
+async def simulator_pt_get_strategy(strategy_id: str, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
-        doc = _shared_mongo._db["paper_trade_strategy"].find_one({"_id": ObjectId(strategy_id)})
+        doc = _shared_mongo._db["simulator_strategy"].find_one({"_id": ObjectId(strategy_id)})
         if not doc:
             return {"status": "error", "message": "Not found"}
         return {"status": "success", "strategy": _str_id(_enrich_pt_strategy_positions(doc))}
@@ -5170,7 +6657,7 @@ async def simulator_pt_get_strategy(strategy_id: str) -> dict:
 
 
 @sim_router.get("/simulator/paper-trade/spot-tokens")
-async def simulator_pt_spot_tokens(broker_id: str = Query(default="")) -> dict:
+async def simulator_pt_spot_tokens(broker_id: str = Query(default=""), current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
         resolved_broker_id = str(broker_id or _DEFAULT_PAPER_TRADE_SPOT_BROKER_ID).strip()
         items = _get_instrument_spot_token_docs(resolved_broker_id)
@@ -5183,83 +6670,642 @@ async def simulator_pt_spot_tokens(broker_id: str = Query(default="")) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
-@sim_router.get("/simulator/paper-trade/quotes")
-async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="")) -> dict:
-    # Exclude algo index spot tokens — simulator only needs FNO option contract quotes.
-    _algo_index_token_ids: set[str] = {
-        str(v) for v in KITE_INDEX_TOKENS.values() if v
-    }
-    requested_tokens = [
-        str(token).strip()
-        for token in str(tokens or "").split(",")
-        if str(token).strip() and str(token).strip() not in _algo_index_token_ids
+@sim_router.get("/simulator/paper-trade/underlying-quotes")
+async def simulator_pt_underlying_quotes(instruments: str = "") -> dict:
+    """
+    Live {spot_price, change_pct, change_points, ...} per underlying, for
+    whatever instruments the *paper-trade strategies* hold — deliberately
+    independent of /simulator/positions/all's `underlyings` map, which is
+    derived from the real broker account's actual open positions and so
+    only ever covers underlyings that happen to exist there. A paper
+    strategy on a stock the real account never traded (e.g. BSE, TCS) would
+    never get a change_pct from that map no matter what, since it's simply
+    not a key in it — this endpoint asks for exactly the instruments the
+    caller names instead.
+    """
+    from features.execution_socket import _fetch_dhan_index_quotes
+    names = {n.strip().upper() for n in str(instruments or "").split(",") if n.strip()}
+    if not names:
+        return {"status": "success", "underlyings": {}}
+    db = MongoData()
+    try:
+        quotes = await asyncio.to_thread(_fetch_dhan_index_quotes, db, names)
+    except Exception as exc:
+        log.warning("paper trade underlying quote error instruments=%s: %s", ",".join(names), exc)
+        quotes = {}
+    finally:
+        db.close()
+    return {"status": "success", "underlyings": quotes}
+
+
+@sim_router.get("/simulator/paper-trade/futures-chain")
+async def simulator_pt_futures_chain(instrument: str = "", current_user: dict = Depends(app_auth.get_current_user)) -> dict:
+    """
+    Real NSE/BSE index futures (FUTIDX — current/next/far month) PLUS per-weekly-
+    expiry "Synthetic Futures" (ATM strike + call_ltp - put_ltp) for the paper-trade
+    builder's "Fut" tab — both in one call.
+
+    Earlier version of this endpoint only returned `futures`; the frontend then made
+    one *additional* full /live-greeks-chain fetch per weekly expiry to derive the
+    synthetic rows — each of those builds and prices the entire chain (every strike,
+    Black-Scholes IV/Greeks, OI) just to read one ATM row back out, ~5 HTTP round
+    trips and ~5 separate Dhan-bound IO chains for what's fundamentally 2 sec_ids per
+    weekly expiry. This instead resolves each expiry's ATM CE/PE token directly from
+    active_option_tokens (already populated by the existing option-chain sync — see
+    _sync_dhan_index_option_tokens) and prices everything in one go.
+
+    Pricing uses dhan_quote_post_blocking (waits for the shared Dhan rate-gate slot)
+    rather than get_broker_rest_quotes/dhan_quote_post — that pair's non-blocking call
+    silently returns nothing whenever some other caller in this process (the Opt tab's
+    own chain pricing, the live-quote socket's background refresh, ...) used the
+    ~1-per-1.05s shared gate within the same window, which on a page with several
+    concurrent Dhan callers is often, not rare. For a hot polling loop that's the
+    right trade (skip beats blocking the loop), but for this one-shot, user-triggered
+    fetch a skip just means stale data masquerading as live — confirmed live: repeated
+    calls a few seconds apart kept replaying an identical, minutes-stale snapshot
+    because every live attempt in between had been silently skipped. Blocking trades
+    a bounded (~1-2s) wait for an actual fresh attempt every call. _LAST_GOOD_FUTURES_TOKEN_QUOTE
+    (this endpoint's own, separate from get_broker_rest_quotes' _LAST_GOOD_QUOTE) is
+    still the fallback for genuine Dhan-side gaps (502s, empty pre-market bodies).
+    """
+    normalized = str(instrument or "").strip().upper()
+    if not normalized:
+        return {"status": "success", "instrument": "", "futures": [], "synthetic_futures": []}
+
+    try:
+        future_master = await asyncio.to_thread(_get_dhan_index_future_master)
+    except Exception as exc:
+        log.warning("futures master fetch error instrument=%s: %s", normalized, exc)
+        future_master = {}
+    future_contracts = future_master.get(normalized, [])
+    futures = [
+        {"expiry": c["expiry"], "symbol": c["symbol"], "lot_size": c["lot_size"], "token": str(c["sec_id"]), "ltp": 0.0}
+        for c in future_contracts
     ]
-    default_tokens = _get_paper_trade_default_quote_tokens(str(broker_id or "").strip())
-    unique_tokens = list(
-        dict.fromkeys(
-            requested_tokens + [token for token in default_tokens if token]
+
+    db = MongoData()
+    try:
+        raw_db = db._db
+        from features.execution_socket import _fetch_dhan_index_quotes
+        spot_price = 0.0
+        try:
+            spot_quotes = await asyncio.to_thread(_fetch_dhan_index_quotes, db, {normalized})
+            spot_price = _safe_float((spot_quotes.get(normalized) or {}).get("spot_price"))
+        except Exception as exc:
+            log.warning("futures-chain spot fetch error instrument=%s: %s", normalized, exc)
+
+        option_col = raw_db['active_option_tokens']
+        monthly_expiries = {c["expiry"] for c in future_contracts}
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        weekly_expiries = sorted(
+            e for e in option_col.distinct("expiry", {"instrument": normalized, "broker": "dhan"})
+            if e >= today_str and e not in monthly_expiries
+        )[:4]
+
+        synthetic_futures: list[dict] = []
+        atm_legs: dict[str, dict] = {}  # expiry -> {atm_strike, ce_token, pe_token, segment}
+        if spot_price > 0:
+            for expiry in weekly_expiries:
+                strikes = option_col.distinct("strike", {"instrument": normalized, "broker": "dhan", "expiry": expiry})
+                if not strikes:
+                    continue
+                atm_strike = min(strikes, key=lambda s: abs(s - spot_price))
+                rows = list(option_col.find(
+                    {"instrument": normalized, "broker": "dhan", "expiry": expiry, "strike": atm_strike, "option_type": {"$in": ["CE", "PE"]}},
+                    {"_id": 0, "option_type": 1, "token": 1, "tokens": 1, "ws_segment": 1, "lot_size": 1},
+                ))
+                ce_token = next((r.get("token") or r.get("tokens") for r in rows if r.get("option_type") == "CE"), None)
+                pe_token = next((r.get("token") or r.get("tokens") for r in rows if r.get("option_type") == "PE"), None)
+                segment = next((str(r.get("ws_segment") or "NSE_FNO").upper() for r in rows), "NSE_FNO")
+                lot_size = next((r.get("lot_size") for r in rows if r.get("lot_size")), None)
+                if ce_token and pe_token:
+                    atm_legs[expiry] = {"atm_strike": atm_strike, "ce_token": str(ce_token), "pe_token": str(pe_token), "segment": segment}
+                # ce_token/pe_token/lot_size let the frontend build the equivalent 2-leg
+                # option combo (buy ATM call + sell ATM put, or reverse) when the user clicks
+                # B/S on a Synthetic Futures row — a synthetic future isn't a tradable
+                # instrument on its own, so "trading" one means adding both real option legs.
+                synthetic_futures.append({
+                    "expiry": expiry,
+                    "atm_strike": atm_strike,
+                    "ltp": 0.0,
+                    "ce_token": str(ce_token) if ce_token else None,
+                    "pe_token": str(pe_token) if pe_token else None,
+                    "call_ltp": 0.0,
+                    "put_ltp": 0.0,
+                    "lot_size": lot_size,
+                })
+
+        token_ids: list[str] = []
+        ws_segments: dict[str, str] = {}
+        for c in future_contracts:
+            sec_id = str(c["sec_id"]).strip()
+            if not sec_id:
+                continue
+            token_ids.append(sec_id)
+            ws_segments[sec_id] = "BSE_FNO" if c["exchange"] == "BSE" else "NSE_FNO"
+        for leg in atm_legs.values():
+            for token in (leg["ce_token"], leg["pe_token"]):
+                token_ids.append(token)
+                ws_segments[token] = leg["segment"]
+
+        ltp_by_token: dict[str, float] = {}
+        if token_ids:
+            cfg = raw_db['kite_market_config'].find_one({'broker': 'dhan', 'enabled': True}) or {}
+            access_token = str(cfg.get('access_token') or '').strip()
+            client_id = str(cfg.get('user_id') or cfg.get('dhan_client_id') or '').strip()
+            if access_token and client_id:
+                by_segment: dict[str, list[int]] = {}
+                for token in token_ids:
+                    try:
+                        by_segment.setdefault(ws_segments[token], []).append(int(token))
+                    except (TypeError, ValueError):
+                        continue
+                try:
+                    from features.broker_gateway import dhan_quote_post_blocking
+                    response = await asyncio.to_thread(dhan_quote_post_blocking, by_segment, access_token, client_id, 5.0)
+                    payload = response.json() if response is not None and response.ok else {}
+                    data = payload.get('data') or payload or {}
+                    for segment in by_segment:
+                        segment_data = data.get(segment) or {}
+                        if isinstance(segment_data, dict):
+                            for sec_id, info in segment_data.items():
+                                if not isinstance(info, dict):
+                                    continue
+                                ltp = _safe_float(info.get('last_price') or info.get('ltp'))
+                                if ltp > 0:
+                                    ltp_by_token[str(sec_id)] = ltp
+                                    _LAST_GOOD_FUTURES_TOKEN_QUOTE[str(sec_id)] = ltp
+                except Exception as exc:
+                    log.warning("futures/synthetic quote fetch error instrument=%s: %s", normalized, exc)
+            # Dhan's /marketfeed/quote can come back empty for a never-before-priced
+            # token (just-subscribed, pre-market, transient 429/502) — reuse the last
+            # real price this token ever showed instead of a misleading 0.
+            for token in token_ids:
+                if token not in ltp_by_token and token in _LAST_GOOD_FUTURES_TOKEN_QUOTE:
+                    ltp_by_token[token] = _LAST_GOOD_FUTURES_TOKEN_QUOTE[token]
+
+        for item, contract in zip(futures, future_contracts):
+            item["ltp"] = ltp_by_token.get(str(contract["sec_id"]), 0.0)
+        for item in synthetic_futures:
+            leg = atm_legs.get(item["expiry"])
+            if not leg:
+                continue
+            call_ltp = ltp_by_token.get(leg["ce_token"], 0.0)
+            put_ltp = ltp_by_token.get(leg["pe_token"], 0.0)
+            item["call_ltp"] = call_ltp
+            item["put_ltp"] = put_ltp
+            if call_ltp > 0 and put_ltp > 0:
+                item["ltp"] = item["atm_strike"] + call_ltp - put_ltp
+    finally:
+        db.close()
+
+    return {"status": "success", "instrument": normalized, "futures": futures, "synthetic_futures": synthetic_futures}
+
+
+@sim_router.get("/simulator/paper-trade/historical-chain/{instrument}")
+async def simulator_pt_historical_chain(
+    instrument: str,
+    timestamp: str = Query(..., description="ISO timestamp, e.g. 2025-11-03T09:16:00"),
+    expiry: str = Query(default=""),
+) -> dict:
+    """
+    Historical twin of /live-greeks-chain/{instrument} for the paper-trade
+    backtest replay page — same response contract (instrument, expiry,
+    expiries, spot_price, pricing_spot, previous_close, change_pct,
+    change_points, atm_strike, strike_interval, india_vix, lot_size,
+    chain: {CE, PE}) but sourced from option_chain_historical_data /
+    option_chain_index_spot instead of a live broker. Greeks are read
+    straight off the stored doc (already pre-computed at backfill time)
+    rather than recalculated via Black-Scholes.
+    """
+    normalized = str(instrument or "").strip().upper()
+    norm_ts = str(timestamp or "").strip().replace(" ", "T").rstrip("Z")
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Instrument is required.")
+    if len(norm_ts) < 10:
+        raise HTTPException(status_code=400, detail="timestamp is required, e.g. 2025-11-03T09:16:00")
+
+    req_date = norm_ts[:10]
+    day_start = f"{req_date}T00:00:00"
+
+    db = MongoData()
+    try:
+        chain_col = db._db["option_chain_historical_data"]
+        spot_col = db._db["option_chain_index_spot"]
+
+        # Nearest minute-tick at or before the requested timestamp, same
+        # trading day only — mirrors /algo/option-chain-snapshot's pivot logic.
+        pivot = chain_col.find_one(
+            {"underlying": normalized, "timestamp": {"$lte": norm_ts, "$gte": day_start}},
+            {"_id": 0, "timestamp": 1},
+            sort=[("timestamp", -1)],
         )
+        # A day's first recorded tick is sometimes a minute or two after the
+        # literal 09:15 open — "SOD"/an early seek shouldn't error just because
+        # no tick exists yet at-or-before that instant; snap forward to the
+        # day's earliest tick instead. Only a genuinely data-less day errors.
+        if not pivot:
+            pivot = chain_col.find_one(
+                {"underlying": normalized, "timestamp": {"$gte": norm_ts, "$lte": day_start[:10] + "T23:59:59"}},
+                {"_id": 0, "timestamp": 1},
+                sort=[("timestamp", 1)],
+            )
+        pivot_ts = pivot["timestamp"] if pivot else None
+        if not pivot_ts:
+            return {"status": "error", "message": f"No historical data for {normalized} on {req_date}."}
+
+        expiries_sorted = sorted(set(
+            str(e)[:10] for e in chain_col.distinct("expiry", {"underlying": normalized, "timestamp": pivot_ts}) if e
+        ))
+        if not expiries_sorted:
+            return {"status": "error", "message": f"No option chain rows for {normalized} at {pivot_ts}."}
+
+        # Resolve to exactly ONE expiry — same precedence as /live-greeks-chain:
+        # explicit request if valid, else nearest expiry on/after the replay
+        # date, else the last available. Without this, leaving `expiry` blank
+        # would union every expiry's strikes into one CE/PE list.
+        req_expiry = str(expiry or "").strip()[:10]
+        if req_expiry and req_expiry in expiries_sorted:
+            live_expiry = req_expiry
+        else:
+            future = [e for e in expiries_sorted if e >= req_date]
+            live_expiry = future[0] if future else expiries_sorted[-1]
+
+        raw_rows = list(chain_col.find(
+            {"underlying": normalized, "timestamp": pivot_ts, "expiry": live_expiry},
+            {"_id": 0, "expiry": 1, "strike": 1, "type": 1, "token": 1, "close": 1,
+             "iv": 1, "delta": 1, "gamma": 1, "theta": 1, "vega": 1, "oi": 1},
+        ))
+        if not raw_rows:
+            return {"status": "error", "message": f"No option chain rows for {normalized} {live_expiry} at {pivot_ts}."}
+
+        # ── spot price + previous close ──────────────────────────────────────
+        spot_doc = spot_col.find_one(
+            {"underlying": normalized, "timestamp": {"$lte": pivot_ts, "$gte": day_start}},
+            {"_id": 0, "close": 1, "spot_price": 1},
+            sort=[("timestamp", -1)],
+        ) or {}
+        spot_price = float(spot_doc.get("spot_price") or spot_doc.get("close") or 0)
+
+        prev_doc = spot_col.find_one(
+            {"underlying": normalized, "timestamp": {"$lt": day_start}},
+            {"_id": 0, "close": 1, "spot_price": 1},
+            sort=[("timestamp", -1)],
+        ) or {}
+        previous_close = float(prev_doc.get("spot_price") or prev_doc.get("close") or 0)
+        change_pct = round((spot_price - previous_close) / previous_close * 100, 2) if previous_close else 0.0
+        change_points = round(spot_price - previous_close, 2) if previous_close else 0.0
+
+        # ── India VIX: "INDIAVIX"-tagged rows (current backfill) → legacy
+        # token-only NSE_00 rows (no "underlying" field, older data) ─────────
+        vix_doc = (
+            spot_col.find_one(
+                {"underlying": "INDIAVIX", "timestamp": {"$lte": pivot_ts}},
+                {"_id": 0, "close": 1, "spot_price": 1}, sort=[("timestamp", -1)],
+            )
+            or spot_col.find_one(
+                {"token": "NSE_00", "timestamp": {"$lte": pivot_ts}},
+                {"_id": 0, "close": 1, "spot_price": 1}, sort=[("timestamp", -1)],
+            )
+            or {}
+        )
+        india_vix = round(float(vix_doc.get("spot_price") or vix_doc.get("close") or 0), 2)
+
+        # ── lot size: same lookup + defaults as /live-greeks-chain ───────────
+        lot_size_defaults = {"NIFTY": 75, "BANKNIFTY": 15, "FINNIFTY": 40, "MIDCPNIFTY": 120, "SENSEX": 10, "BANKEX": 15}
+        expiry_date_str = str(live_expiry)[:10]
+        lot_doc = db._db["lot_sizes"].find_one({
+            "underlying": normalized,
+            "from_date": {"$lte": expiry_date_str},
+            "to_date": {"$gte": expiry_date_str},
+        })
+        lot_size = int(lot_doc["lot_size"]) if lot_doc else lot_size_defaults.get(normalized, 75)
+
+        # ── chain rows — Greeks already pre-computed at backfill time ───────
+        chain: dict[str, list[dict]] = {"CE": [], "PE": []}
+        for row in raw_rows:
+            opt_type = str(row.get("type") or "").upper()
+            if opt_type not in ("CE", "PE"):
+                continue
+            strike = float(row.get("strike") or 0)
+            row_expiry = str(row.get("expiry") or "")[:10]
+            strike_label = int(strike) if strike == int(strike) else strike
+            symbol = f"{normalized}{row_expiry.replace('-', '')}{strike_label}{opt_type}"
+            chain[opt_type].append({
+                "strike": strike_label,
+                "ltp": float(row.get("close") or 0),
+                "iv": round(float(row.get("iv") or 0) * 100, 2),
+                "delta": float(row.get("delta") or 0),
+                "gamma": float(row.get("gamma") or 0),
+                "theta": float(row.get("theta") or 0),
+                "vega": float(row.get("vega") or 0),
+                "oi": int(row.get("oi") or 0),
+                "token": str(row.get("token") or ""),
+                "symbol": symbol,
+            })
+        chain["CE"].sort(key=lambda x: float(x["strike"]))
+        chain["PE"].sort(key=lambda x: float(x["strike"]))
+
+        # ── strike interval + ATM: same logic as /live-greeks-chain ─────────
+        from collections import Counter as _Counter
+        all_strikes = sorted(set(float(r["strike"]) for r in raw_rows))
+        strike_interval = 0.0
+        if len(all_strikes) >= 2:
+            diffs = [all_strikes[i + 1] - all_strikes[i] for i in range(len(all_strikes) - 1)]
+            strike_interval = float(_Counter(diffs).most_common(1)[0][0])
+
+        atm_strike = 0.0
+        if all_strikes and spot_price > 0:
+            atm_strike = min(all_strikes, key=lambda s: abs(s - spot_price))
+        elif all_strikes:
+            atm_strike = all_strikes[len(all_strikes) // 2]
+
+        return {
+            "status": "success",
+            "instrument": normalized,
+            "expiry": live_expiry,
+            "expiries": expiries_sorted,
+            "spot_price": round(spot_price, 2),
+            "pricing_spot": round(spot_price, 2),
+            "previous_close": round(previous_close, 2),
+            "change_pct": change_pct,
+            "change_points": change_points,
+            "atm_strike": int(atm_strike) if atm_strike == int(atm_strike) else atm_strike,
+            "strike_interval": int(strike_interval) if strike_interval == int(strike_interval) else strike_interval,
+            "india_vix": india_vix,
+            "lot_size": lot_size,
+            "chain": chain,
+            "timestamp": pivot_ts,
+        }
+    finally:
+        db.close()
+
+
+@sim_router.get("/simulator/paper-trade/historical-chain-latest-date/{instrument}")
+async def simulator_pt_historical_chain_latest_date(instrument: str) -> dict:
+    """
+    Latest trading day with near-market-open data for this instrument, for the
+    backtest replay page's "open with real data" default. Backfill coverage is
+    patchy (some instruments/date-ranges have only a single intraday snapshot,
+    not a full day) — a naive "most recent timestamp" pick can land on one of
+    those, so this specifically looks for a 09:15-09:35 tick (every real
+    backfilled trading day has one) and lets the (underlying, timestamp) index
+    skip over any gap directly, rather than the frontend walking back one HTTP
+    call per calendar day.
+    """
+    normalized = str(instrument or "").strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Instrument is required.")
+
+    db = MongoData()
+    try:
+        doc = db._db["option_chain_historical_data"].find_one(
+            {"underlying": normalized, "timestamp": {"$regex": r"^\d{4}-\d{2}-\d{2}T09:(1[5-9]|2[0-9]|3[0-5])"}},
+            {"_id": 0, "timestamp": 1},
+            sort=[("timestamp", -1)],
+        )
+        if not doc:
+            return {"status": "error", "message": f"No historical data found for {normalized}."}
+        return {"status": "success", "date": doc["timestamp"][:10], "timestamp": doc["timestamp"]}
+    finally:
+        db.close()
+
+
+@sim_router.get("/simulator/paper-trade/quotes")
+async def simulator_pt_quotes(
+    tokens: str = "", broker_id: str = Query(default=""), include_index_defaults: bool = True,
+) -> dict:
+    """
+    Reuses the same canonical sources every other simulator page already
+    gets correct numbers from (see features/simulator_risk_monitor.py and
+    /live-greeks-chain for the same consolidation):
+      - index/spot tokens  -> Dhan's own index ids, same Dhan REST/WS path
+                              as the FNO legs below (features.broker_gateway.
+                              get_broker_rest_quotes, segment "IDX_I")
+      - FNO option tokens  -> features.broker_gateway.get_broker_rest_quotes
+    This endpoint used to exclude index tokens (assuming callers never sent
+    them) and queried option tokens via its own Dhan REST call. Both were
+    bugs: (1) the exclusion check compared against BROKER_INDEX_TOKENS, a
+    lazy dict that resolves to whichever broker is *currently* active (Dhan
+    IDs: NIFTY=13, SENSEX=51, ...) — a caller sending Kite-style index
+    tokens (NIFTY=256265, SENSEX=265, ...), as PaperTradeNew.tsx does, never
+    matched, so every index token fell through to the FNO path and always
+    came back "unavailable"; (2) the FNO path called Dhan's
+    /v2/marketfeed/ltp with ad-hoc segment handling instead of the existing,
+    already-correct get_broker_rest_quotes (WS-first, REST fallback, proper
+    NSE_FNO/BSE_FNO routing, 429 backoff) used elsewhere.
+    Index quotes used to go through features.execution_socket._fetch_dhan_index_quotes
+    instead, which is correct but pays a hardcoded 1.1s sleep + its own separate
+    Dhan REST call to dodge a 429 against the FNO call right next to it — that
+    alone pushed every load of this endpoint past 1s. Folding both into one
+    get_broker_rest_quotes() call (one Dhan REST round trip covering every
+    segment, or zero once WS has ticked) removes the sleep and the second
+    request entirely for the dhan-active case this app actually runs.
+    """
+    from features.broker_gateway import (
+        _KITE_INDEX_TOKENS, _DHAN_INDEX_TOKENS,
+        _active_broker as _get_active_broker_name,
+        get_broker_rest_quotes,
     )
+    from features.execution_socket import _fetch_dhan_index_quotes
+
+    # Recognize an index/spot token regardless of which broker's ID space it
+    # was sent in — a caller's token scheme doesn't necessarily match
+    # whichever broker happens to be active right now. Both dicts share the
+    # same underlying-name KEYS (NIFTY, SENSEX, ...) with different token
+    # VALUES, so merging the dicts themselves (`{**a, **b}`) would just have
+    # one broker's token silently overwrite the other's for every entry —
+    # has to be two separate token->underlying passes instead.
+    index_underlying_by_token: dict[str, str] = {}
+    for underlying, tok in _KITE_INDEX_TOKENS.items():
+        index_underlying_by_token[str(tok)] = underlying
+    for underlying, tok in _DHAN_INDEX_TOKENS.items():
+        index_underlying_by_token[str(tok)] = underlying
+
+    requested_tokens = [str(token).strip() for token in str(tokens or "").split(",") if str(token).strip()]
+    # The scanner's equity-holdings caller (see scanner/router.py::scanner_quotes)
+    # opts out of this — it filters these defaults back out of the response
+    # anyway (it only ever wants the tokens it asked for), so fetching them
+    # was a pure-waste Dhan REST call competing for the same ~1 req/sec
+    # account-wide budget every other quote on this same request needs.
+    default_tokens = _get_simulator_default_quote_tokens(str(broker_id or "").strip()) if include_index_defaults else []
+    unique_tokens = list(dict.fromkeys(requested_tokens + [token for token in default_tokens if token]))
     if not unique_tokens:
         return {"status": "success", "quotes": {}}
 
     quotes: dict[str, dict[str, float | str]] = {}
-    pending_tokens: list[str] = []
-
-    from features.broker_gateway import _active_broker as _get_active_broker_name
     active_broker = _get_active_broker_name()
+    db = MongoData()
+    try:
+        index_tokens = [t for t in unique_tokens if t in index_underlying_by_token]
+        fno_tokens = [t for t in unique_tokens if t not in index_underlying_by_token]
 
-    for token in unique_tokens:
-        if active_broker == "dhan":
-            from features.dhan_ticker import dhan_ticker_manager
-            live_ltp = float(dhan_ticker_manager.ltp_map.get(token) or 0.0)
+        if index_tokens and active_broker == "dhan":
+            # Translate each caller-facing index token (Kite or Dhan id space)
+            # to Dhan's own index id and fold it into the same batch as the
+            # FNO legs below — see get_broker_rest_quotes(combined_tokens, ...)
+            # a few lines down.
+            dhan_id_by_frontend_token: dict[str, str] = {}
+            for token in index_tokens:
+                underlying = index_underlying_by_token[token]
+                dhan_id = str(_DHAN_INDEX_TOKENS.get(underlying) or "").strip()
+                if dhan_id:
+                    dhan_id_by_frontend_token[token] = dhan_id
+            unresolved_index_tokens = [t for t in index_tokens if t not in dhan_id_by_frontend_token]
         else:
-            live_ltp = float(ticker_manager.get_ltp(token) or 0.0)
-        if live_ltp > 0:
-            quotes[token] = {"token": token, "ltp": round(live_ltp, 2), "source": "ws"}
-        else:
-            pending_tokens.append(token)
+            dhan_id_by_frontend_token = {}
+            unresolved_index_tokens = list(index_tokens)
 
-    if pending_tokens:
-        if active_broker == "dhan":
+        if unresolved_index_tokens:
+            # Broker isn't dhan, or an underlying has no known Dhan index id —
+            # fall back to the original (slower but broker-agnostic) path.
+            underlyings = {index_underlying_by_token[t] for t in unresolved_index_tokens}
             try:
-                import requests as _req
-                db = MongoData()
-                cfg = db._db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
-                dhan_access_token = str(cfg.get("access_token") or "").strip()
-                dhan_client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
-                db.close()
-                if dhan_access_token:
-                    int_tokens = [int(t) for t in pending_tokens if str(t).strip().lstrip("-").isdigit()]
-                    _headers = {
-                        "access-token": dhan_access_token,
-                        "client-id": dhan_client_id,
-                        "Content-Type": "application/json",
-                        "Accept": "application/json",
-                    }
-                    # Simulator tokens are always FNO option contracts → NSE_FNO segment.
-                    # Run in thread pool so the blocking HTTP call doesn't stall the event loop.
-                    def _dhan_ltp_call() -> dict:
-                        try:
-                            r = _req.post(
-                                "https://api.dhan.co/v2/marketfeed/ltp",
-                                headers=_headers,
-                                json={"NSE_FNO": int_tokens},
-                                timeout=3,
-                            )
-                            return r.json() if r.ok else {}
-                        except Exception:
-                            return {}
-                    raw = await asyncio.to_thread(_dhan_ltp_call)
-                    fno_data = (raw.get("data") or {}).get("NSE_FNO") or raw.get("NSE_FNO") or {}
-                    for sid, v in fno_data.items():
-                        tok = str(sid).strip()
-                        ltp = float(v.get("last_price") or v.get("ltp") or v.get("lastTradedPrice") or 0) if isinstance(v, dict) else float(v or 0)
-                        if ltp > 0:
-                            quotes[tok] = {"token": tok, "ltp": round(ltp, 2), "source": "dhan_rest"}
+                index_quotes = await asyncio.to_thread(_fetch_dhan_index_quotes, db, underlyings)
             except Exception as exc:
-                log.warning("paper trade dhan quote error tokens=%s: %s", ",".join(pending_tokens), exc)
-        else:
+                log.warning("paper trade index quote error underlyings=%s: %s", underlyings, exc)
+                index_quotes = {}
+            for token in unresolved_index_tokens:
+                underlying = index_underlying_by_token[token]
+                spot = float((index_quotes.get(underlying) or {}).get("spot_price") or 0.0)
+                if spot > 0:
+                    quotes[token] = {"token": token, "ltp": round(spot, 2), "source": "index_quote"}
+
+        # Scanner portfolio holdings send plain NSE equity tokens (Kite-space
+        # kite_token, same id scanner/service.py's historical sync already
+        # resolves a dhan_security_id for) mixed in with whatever real FNO
+        # option tokens this same endpoint also serves for the simulator.
+        # Without this carve-out every equity token fell through to the FNO
+        # lookup below (never matches active_option_tokens, defaults to
+        # segment NSE_FNO) and always came back "unavailable".
+        dhan_equity_id_by_frontend_token = (
+            _resolve_dhan_equity_ids_by_kite_tokens(fno_tokens, db._db) if fno_tokens and active_broker == "dhan" else {}
+        )
+        pure_fno_tokens = [t for t in fno_tokens if t not in dhan_equity_id_by_frontend_token]
+
+        # A handful of NSE equities' Dhan NSE_EQ security id happens to equal
+        # one of Dhan's 7 reserved index ids (e.g. ADANIENT's id 25 doubles as
+        # BANKNIFTY's IDX_I id — both broker token schemes derive straight
+        # from NSE's own per-segment token registry, so a collision is just
+        # an id reused across segments). dhan_ticker.py's live ltp_map is one
+        # flat {security_id: ltp} dict with no segment key — get_broker_rest_quotes'
+        # WS-first shortcut below would silently hand back BANKNIFTY's price
+        # for "25" instead of ADANIENT's. Route only these few colliding ids
+        # around that shortcut via their own forced REST call further down;
+        # every other equity id (no collision) still takes the normal,
+        # cheaper WS-or-REST batch path.
+        _dhan_reserved_index_ids = {str(v) for v in _DHAN_INDEX_TOKENS.values()}
+        colliding_equity_id_by_frontend_token = {
+            frontend_token: dhan_id
+            for frontend_token, dhan_id in dhan_equity_id_by_frontend_token.items()
+            if dhan_id in _dhan_reserved_index_ids
+        }
+        safe_equity_id_by_frontend_token = {
+            frontend_token: dhan_id
+            for frontend_token, dhan_id in dhan_equity_id_by_frontend_token.items()
+            if frontend_token not in colliding_equity_id_by_frontend_token
+        }
+
+        if (pure_fno_tokens or dhan_id_by_frontend_token or safe_equity_id_by_frontend_token) and active_broker == "dhan":
+            segment_by_token = {
+                str(row.get("token") or row.get("tokens") or "").strip(): str(row.get("ws_segment") or "NSE_FNO").strip().upper()
+                for row in db._db["active_option_tokens"].find(
+                    {"broker": "dhan", "token": {"$in": pure_fno_tokens}},
+                    {"_id": 0, "token": 1, "tokens": 1, "ws_segment": 1},
+                )
+            } if pure_fno_tokens else {}
+            for dhan_id in dhan_id_by_frontend_token.values():
+                segment_by_token[dhan_id] = "IDX_I"
+            for dhan_id in safe_equity_id_by_frontend_token.values():
+                segment_by_token[dhan_id] = "NSE_EQ"
+            combined_tokens = list(dict.fromkeys(
+                pure_fno_tokens + list(dhan_id_by_frontend_token.values()) + list(safe_equity_id_by_frontend_token.values())
+            ))
+            try:
+                # get_broker_rest_quotes wants the raw pymongo Database (db._db),
+                # same as every other call site (execution_socket.py,
+                # live_option_chain.py, api.py:1637) — passing the MongoData
+                # wrapper itself made `db["kite_market_config"]` inside it raise
+                # (MongoData isn't subscriptable), silently caught by that
+                # function's own try/except, so REST fallback always returned
+                # nothing — only the WS path (when a token happened to already
+                # have a fresh tick) ever worked. That's the "sometimes 0"
+                # intermittency: not random, just REST always failing.
+                rest_quotes = await asyncio.to_thread(get_broker_rest_quotes, combined_tokens, db._db, segment_by_token)
+            except Exception as exc:
+                log.warning("paper trade quote error tokens=%s: %s", ",".join(combined_tokens), exc)
+                rest_quotes = {}
+            for token, info in rest_quotes.items():
+                ltp = float((info or {}).get("ltp") or 0)
+                if ltp > 0 and token in unique_tokens:
+                    quotes[token] = {"token": token, "ltp": round(ltp, 2), "source": "ws_or_rest"}
+            # rest_quotes is keyed by Dhan's own index id (e.g. "13"), not the
+            # caller-facing token (e.g. "256265") — copy each resolved index
+            # quote back onto the token the frontend actually sent instead of
+            # leaking Dhan's internal id as an extra key in the response.
+            for frontend_token, dhan_id in dhan_id_by_frontend_token.items():
+                info = rest_quotes.get(dhan_id)
+                ltp = float((info or {}).get("ltp") or 0)
+                if ltp > 0:
+                    quotes[frontend_token] = {"token": frontend_token, "ltp": round(ltp, 2), "source": "index_quote"}
+            # Same copy-back as above, for the scanner equity tokens carved out
+            # of fno_tokens — rest_quotes is keyed by Dhan's security id, not
+            # the kite_token the scanner frontend actually sent.
+            for frontend_token, dhan_id in safe_equity_id_by_frontend_token.items():
+                info = rest_quotes.get(dhan_id)
+                ltp = float((info or {}).get("ltp") or 0)
+                if ltp > 0:
+                    quotes[frontend_token] = {"token": frontend_token, "ltp": round(ltp, 2), "source": "equity_quote"}
+
+        if colliding_equity_id_by_frontend_token and active_broker == "dhan":
+            # Bypasses get_broker_rest_quotes entirely — its WS-first check
+            # would read these ids straight out of the shared ltp_map, which
+            # is exactly the segment-blind shortcut that returns the wrong
+            # (index) price for them. A direct, explicitly NSE_EQ-scoped
+            # /marketfeed/quote call has no such ambiguity.
+            # Uses the *blocking* rate-gate wait (dhan_quote_post_blocking),
+            # not skip-on-miss dhan_quote_post — the get_broker_rest_quotes
+            # call for the other (non-colliding) equities a few lines above
+            # already claims the shared 1-req/sec Dhan slot microseconds
+            # earlier in this same request, so a skip-on-miss call here always
+            # lost that race and these tokens came back ltp=0 on every single
+            # poll, not just under real rate-limit contention (same failure
+            # mode dhan_quote_post_blocking's own docstring describes).
+            try:
+                cfg = db._db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
+                access_token = str(cfg.get("access_token") or "").strip()
+                client_id = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
+                if access_token and client_id:
+                    from features.broker_gateway import dhan_quote_post_blocking
+                    sec_ids = [int(dhan_id) for dhan_id in colliding_equity_id_by_frontend_token.values()]
+                    response = await asyncio.to_thread(
+                        dhan_quote_post_blocking, {"NSE_EQ": sec_ids}, access_token, client_id, 5.0,
+                    )
+                    payload = response.json() if response is not None and response.ok else {}
+                    eq_data = (payload.get("data") or {}).get("NSE_EQ") or payload.get("NSE_EQ") or {}
+                    for frontend_token, dhan_id in colliding_equity_id_by_frontend_token.items():
+                        info = eq_data.get(str(dhan_id)) if isinstance(eq_data, dict) else None
+                        ltp = float((info or {}).get("last_price") or 0) if isinstance(info, dict) else 0.0
+                        if ltp > 0:
+                            _LAST_GOOD_EQUITY_COLLISION_QUOTE[frontend_token] = ltp
+                            quotes[frontend_token] = {"token": frontend_token, "ltp": round(ltp, 2), "source": "equity_quote"}
+            except Exception as exc:
+                log.warning(
+                    "scanner equity index-id-collision quote error tokens=%s: %s",
+                    list(colliding_equity_id_by_frontend_token), exc,
+                )
+            # Dhan's REST quote is rate-limited to ~1 req/sec account-wide and
+            # this app has several independent periodic callers (live-quote
+            # hub's 3s refresh, this same endpoint's own poll, ...) — a 429
+            # here is common, not exceptional. Falling back to the last real
+            # price seen for these few tokens beats surfacing "unavailable"
+            # on every transient rate-limit hit.
+            for frontend_token in colliding_equity_id_by_frontend_token:
+                if frontend_token not in quotes or not quotes[frontend_token].get("ltp"):
+                    cached_ltp = _LAST_GOOD_EQUITY_COLLISION_QUOTE.get(frontend_token)
+                    if cached_ltp:
+                        quotes[frontend_token] = {"token": frontend_token, "ltp": round(cached_ltp, 2), "source": "equity_quote"}
+        if fno_tokens and active_broker != "dhan":
             try:
                 if is_configured():
                     api_key, access_token = get_common_credentials()
@@ -5267,7 +7313,7 @@ async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="
                         def _kite_quote_call() -> dict:
                             try:
                                 kite = get_kite_instance(access_token)
-                                return kite.quote([int(token) for token in pending_tokens]) or {}
+                                return kite.quote([int(token) for token in fno_tokens]) or {}
                             except Exception:
                                 return {}
                         quote_docs = await asyncio.to_thread(_kite_quote_call)
@@ -5284,13 +7330,16 @@ async def simulator_pt_quotes(tokens: str = "", broker_id: str = Query(default="
                                 or (quote_doc.get("ohlc") or {}).get("close")
                                 or 0.0
                             )
-                            quotes[resolved_token] = {
-                                "token": resolved_token,
-                                "ltp": round(quote_ltp, 2),
-                                "source": "quote",
-                            }
+                            if quote_ltp > 0:
+                                quotes[resolved_token] = {
+                                    "token": resolved_token,
+                                    "ltp": round(quote_ltp, 2),
+                                    "source": "quote",
+                                }
             except Exception as exc:
-                log.warning("paper trade quote batch error tokens=%s: %s", ",".join(pending_tokens), exc)
+                log.warning("paper trade quote batch error tokens=%s: %s", ",".join(fno_tokens), exc)
+    finally:
+        db.close()
 
     for token in unique_tokens:
         quotes.setdefault(token, {"token": token, "ltp": 0.0, "source": "unavailable"})
@@ -5557,10 +7606,10 @@ async def backfill_investment_portfolio_symbol_token_all(limit: int = Query(defa
 
 
 @sim_router.put("/simulator/paper-trade/strategies/{strategy_id}")
-async def simulator_pt_update_strategy(strategy_id: str, body: PTStrategyIn) -> dict:
+async def simulator_pt_update_strategy(strategy_id: str, body: PTStrategyIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
-        portfolio_col = _shared_mongo._db["paper_trade_portfolio"]
-        strategy_col = _shared_mongo._db["paper_trade_strategy"]
+        portfolio_col = _shared_mongo._db["simulator_portfolio"]
+        strategy_col = _shared_mongo._db["simulator_strategy"]
         portfolio = portfolio_col.find_one({"name": body.portfolio_name}, {"_id": 1})
         if not portfolio:
             result = portfolio_col.insert_one({"name": body.portfolio_name, "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")})
@@ -5594,10 +7643,10 @@ async def simulator_pt_update_strategy(strategy_id: str, body: PTStrategyIn) -> 
 
 
 @sim_router.post("/simulator/paper-trade/strategies")
-async def simulator_pt_save_strategy(body: PTStrategyIn) -> dict:
+async def simulator_pt_save_strategy(body: PTStrategyIn, current_user: dict = Depends(app_auth.get_current_user)) -> dict:
     try:
-        portfolio_col = _shared_mongo._db["paper_trade_portfolio"]
-        strategy_col = _shared_mongo._db["paper_trade_strategy"]
+        portfolio_col = _shared_mongo._db["simulator_portfolio"]
+        strategy_col = _shared_mongo._db["simulator_strategy"]
         portfolio = portfolio_col.find_one({"name": body.portfolio_name}, {"_id": 1})
         if not portfolio:
             result = portfolio_col.insert_one({"name": body.portfolio_name, "created_at": datetime.now(IST).strftime("%Y-%m-%dT%H:%M:%S")})
@@ -5631,6 +7680,7 @@ async def simulator_pt_save_strategy(body: PTStrategyIn) -> dict:
             "positions": positions,
             "saved_at": now_iso,
             "position_history": initial_pos_history,
+            "mode": body.mode or "live",
         })
         return {"status": "success", "id": str(result.inserted_id)}
     except Exception as exc:
@@ -5646,10 +7696,14 @@ async def _run_simulator_session(session_id: str, engine: StrategyEngine) -> Non
 
 app.include_router(router)
 app.include_router(sim_router)
+app.include_router(trade_router)
 app.include_router(socket_router)
 app.include_router(mock_kite_socket_router)
+app.include_router(live_quote_socket_router)
 app.include_router(simulator_router, prefix="/algo")
 app.include_router(scanner_router)
+app.include_router(common_router)
+app.include_router(signal_router)
 
 
 # ─── Kite Broker Endpoints ────────────────────────────────────────────────────
@@ -5685,6 +7739,7 @@ async def dhan_save_config(request: Request):
                 "enabled":      True,
                 "user_id":      client_id,
                 "access_token": access_token,
+                "app_user_id":  _resolve_app_user_id(),
             }},
             upsert=True,
         )
@@ -5942,6 +7997,7 @@ async def dhan_generate_consent(request: Request):
                 "api_secret":   api_secret,
                 "access_token": "",
                 "enabled":      True,
+                "app_user_id":  _resolve_app_user_id(),
             }},
             upsert=True,
         )
@@ -6027,6 +8083,7 @@ async def dhan_callback(request: Request):
             "access_token": access_token,
             "login_time":   datetime.now().isoformat(),
             "expiry_time":  expiry_time,
+            "app_user_id":  _resolve_app_user_id(),
         }},
     )
     _ddb2.close()
@@ -6076,7 +8133,12 @@ async def dhan_renew_token():
     _ddb2 = MongoData()
     _ddb2._db["kite_market_config"].update_one(
         {"broker": "dhan"},
-        {"$set": {"access_token": new_token, "login_time": datetime.now().isoformat(), "expiry_time": expiry_time}},
+        {"$set": {
+            "access_token": new_token,
+            "login_time": datetime.now().isoformat(),
+            "expiry_time": expiry_time,
+            "app_user_id": _resolve_app_user_id(),
+        }},
     )
     _ddb2.close()
     try:
@@ -6116,6 +8178,27 @@ _FNO_STOCKS_CACHE: dict = {}        # {"data": [...], "fetched_at": float}
 _FNO_MASTER_CACHE: dict = {}        # {"rows": {symbol: [contracts]}, "fetched_at": float}
 _FNO_CACHE_TTL = 3600               # refresh once per hour
 
+_DHAN_SCRIP_MASTER_CACHE: dict = {}  # {"rows": [csv_row_dict, ...], "date": "YYYY-MM-DD"}
+
+
+def _get_dhan_scrip_master_rows() -> list[dict]:
+    """
+    Raw Dhan scrip master CSV rows (~30MB file), downloaded once per calendar day
+    and shared by every Dhan contract sync — stocks, indices, anything else —
+    so the file is fetched at most once a day no matter how many instruments sync.
+    """
+    import io as _io, csv as _csv, requests as _req
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if _DHAN_SCRIP_MASTER_CACHE.get("rows") and _DHAN_SCRIP_MASTER_CACHE.get("date") == today_str:
+        return _DHAN_SCRIP_MASTER_CACHE["rows"]
+
+    resp = _req.get("https://images.dhan.co/api-data/api-scrip-master.csv", timeout=30)
+    resp.raise_for_status()
+    rows = list(_csv.DictReader(_io.StringIO(resp.text)))
+    _DHAN_SCRIP_MASTER_CACHE["rows"] = rows
+    _DHAN_SCRIP_MASTER_CACHE["date"] = today_str
+    return rows
+
 
 def _get_dhan_fno_master() -> dict[str, list[dict]]:
     """
@@ -6123,13 +8206,11 @@ def _get_dhan_fno_master() -> dict[str, list[dict]]:
     Dhan security master CSV.  Cached for 1 hour.
     Also populates _FNO_MASTER_CACHE["equity_ids"] = {symbol: sec_id} for spot lookup.
     """
-    import time as _t, io as _io, csv as _csv, requests as _req
+    import time as _t
     if _FNO_MASTER_CACHE.get("rows") and (_t.time() - _FNO_MASTER_CACHE.get("fetched_at", 0)) < _FNO_CACHE_TTL:
         return _FNO_MASTER_CACHE["rows"]
 
-    resp = _req.get("https://images.dhan.co/api-data/api-scrip-master.csv", timeout=20)
-    resp.raise_for_status()
-    reader = _csv.DictReader(_io.StringIO(resp.text))
+    reader = _get_dhan_scrip_master_rows()
     master: dict[str, list[dict]] = {}
     equity_ids: dict[str, str] = {}
     for row in reader:
@@ -6171,14 +8252,440 @@ def _get_dhan_fno_master() -> dict[str, list[dict]]:
     return master
 
 
+_LAST_GOOD_EQUITY_COLLISION_QUOTE: dict[str, float] = {}  # frontend (kite) token -> last real ltp
+
+
 def _get_dhan_equity_sec_id(symbol: str) -> str:
     """Return the NSE equity security ID for a stock symbol from Dhan CSV cache."""
     _get_dhan_fno_master()  # ensure cache is populated
     return str(_FNO_MASTER_CACHE.get("equity_ids", {}).get(symbol.strip().upper()) or "")
 
 
+def _resolve_dhan_equity_ids_by_kite_tokens(kite_tokens: list[str], db) -> dict[str, str]:
+    """
+    kite_token -> dhan_security_id for scanner equity holdings, via scanner_stocks_list
+    (same dhan_security_id field scanner/service.py's historical-data sync already
+    resolves per-row via _resolve_stock_dhan_security_id — this just batches that lookup
+    by token for the live quote endpoint). Lets a caller tell a scanner stock's Kite-space
+    token apart from a simulator FNO/option token before deciding which Dhan segment to
+    query — scanner holdings were always falling into the FNO-only lookup otherwise.
+    """
+    if not kite_tokens:
+        return {}
+    docs = db["scanner_stocks_list"].find(
+        {"kite_token": {"$in": kite_tokens}},
+        {"_id": 0, "kite_token": 1, "dhan_security_id": 1},
+    )
+    return {
+        str(doc["kite_token"]): str(doc["dhan_security_id"])
+        for doc in docs
+        if doc.get("kite_token") and doc.get("dhan_security_id")
+    }
+
+
+_DHAN_INDEX_OPTION_CACHE: dict = {}  # {"rows": {instrument: [contract, ...]}, "date": "YYYY-MM-DD"}
+
+
+def _get_dhan_index_option_master() -> dict[str, list[dict]]:
+    """
+    Returns {instrument: [{sec_id, symbol, strike, opt_type, expiry, exchange, lot_size}]}
+    for index (OPTIDX) contracts — NIFTY, SENSEX, BANKNIFTY, etc. — straight from Dhan's
+    scrip master CSV. The CSV is ~30MB, so it's downloaded once per calendar day and
+    reused for every call that day, same caching shape as _get_dhan_fno_master() above.
+    """
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if _DHAN_INDEX_OPTION_CACHE.get("rows") and _DHAN_INDEX_OPTION_CACHE.get("date") == today_str:
+        return _DHAN_INDEX_OPTION_CACHE["rows"]
+
+    reader = _get_dhan_scrip_master_rows()
+    master: dict[str, list[dict]] = {}
+    for row in reader:
+        if row.get("SEM_INSTRUMENT_NAME", "").strip() != "OPTIDX":
+            continue
+        ts = row.get("SEM_TRADING_SYMBOL", "").strip()
+        symbol = ts.split("-")[0].strip().upper() if "-" in ts else ""
+        if not symbol:
+            continue
+        expiry_raw = row.get("SEM_EXPIRY_DATE", "").strip()
+        expiry = expiry_raw[:10] if expiry_raw else ""
+        if not expiry:
+            continue
+        master.setdefault(symbol, []).append({
+            "sec_id":   row.get("SEM_SMST_SECURITY_ID", "").strip(),
+            "symbol":   ts,
+            "strike":   float(row.get("SEM_STRIKE_PRICE") or 0),
+            "opt_type": row.get("SEM_OPTION_TYPE", "").strip().upper(),
+            "expiry":   expiry,
+            "exchange": row.get("SEM_EXM_EXCH_ID", "").strip(),
+            "lot_size": int(float(row.get("SEM_LOT_UNITS") or 0)),
+        })
+
+    _DHAN_INDEX_OPTION_CACHE["rows"] = master
+    _DHAN_INDEX_OPTION_CACHE["date"] = today_str
+    return master
+
+
+_DHAN_INDEX_FUTURE_CACHE: dict = {}  # {"rows": {instrument: [contract, ...]}, "date": "YYYY-MM-DD"}
+
+# token -> last real nonzero LTP ever seen for it via /simulator/paper-trade/futures-chain.
+# Never evicted, same "a slightly stale real quote beats showing 0" reasoning as
+# execution_socket.py's _LAST_GOOD_UNDERLYING_QUOTE — futures/ATM-option tokens are
+# priced via dhan_quote_post_blocking (see simulator_pt_futures_chain), not the
+# shared get_broker_rest_quotes/_LAST_GOOD_QUOTE path, so this is this endpoint's own.
+_LAST_GOOD_FUTURES_TOKEN_QUOTE: dict[str, float] = {}
+
+
+def _get_dhan_index_future_master() -> dict[str, list[dict]]:
+    """
+    Returns {instrument: [{sec_id, symbol, expiry, exchange, lot_size}]} for index
+    (FUTIDX) futures contracts — NIFTY, SENSEX, BANKNIFTY, etc. — straight from Dhan's
+    scrip master CSV, same caching shape as _get_dhan_index_option_master() above.
+
+    These were never synced into active_option_tokens: _get_dhan_fno_master() and
+    _get_dhan_index_option_master() both explicitly skip every FUT* instrument type
+    (they only ever kept OPTSTK/OPTIDX), so there's no Mongo collection to query —
+    this reads the CSV directly instead, same as the option masters do.
+    """
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if _DHAN_INDEX_FUTURE_CACHE.get("rows") and _DHAN_INDEX_FUTURE_CACHE.get("date") == today_str:
+        return _DHAN_INDEX_FUTURE_CACHE["rows"]
+
+    reader = _get_dhan_scrip_master_rows()
+    master: dict[str, list[dict]] = {}
+    for row in reader:
+        if row.get("SEM_INSTRUMENT_NAME", "").strip() != "FUTIDX":
+            continue
+        ts = row.get("SEM_TRADING_SYMBOL", "").strip()
+        symbol = ts.split("-")[0].strip().upper() if "-" in ts else ""
+        if not symbol:
+            continue
+        expiry_raw = row.get("SEM_EXPIRY_DATE", "").strip()
+        expiry = expiry_raw[:10] if expiry_raw else ""
+        if not expiry:
+            continue
+        master.setdefault(symbol, []).append({
+            "sec_id":   row.get("SEM_SMST_SECURITY_ID", "").strip(),
+            "symbol":   ts,
+            "expiry":   expiry,
+            "exchange": row.get("SEM_EXM_EXCH_ID", "").strip(),
+            "lot_size": int(float(row.get("SEM_LOT_UNITS") or 0)),
+        })
+
+    for contracts in master.values():
+        contracts.sort(key=lambda c: c["expiry"])
+
+    _DHAN_INDEX_FUTURE_CACHE["rows"] = master
+    _DHAN_INDEX_FUTURE_CACHE["date"] = today_str
+    return master
+
+
+_ACTIVE_OPTION_TOKENS_INDEX_ENSURED = False
+
+
+def _ensure_active_option_tokens_index(col) -> None:
+    """
+    Create the compound index every Dhan contract upsert matches on, once per process.
+    Without it, each upsert inside a bulk_write does a full collection scan to check for
+    an existing match — that alone turned a multi-thousand-contract sync from under a
+    second into ~10s per instrument (measured: NIFTY's 4080 contracts 9.8s -> 0.28s).
+    """
+    global _ACTIVE_OPTION_TOKENS_INDEX_ENSURED
+    if _ACTIVE_OPTION_TOKENS_INDEX_ENSURED:
+        return
+    try:
+        col.create_index(
+            [("broker", 1), ("instrument", 1), ("expiry", 1), ("strike", 1), ("option_type", 1)],
+            name="idx_active_option_contract_v2",
+        )
+    except Exception:
+        pass
+    _ACTIVE_OPTION_TOKENS_INDEX_ENSURED = True
+
+
+def _sync_dhan_index_option_tokens(instrument: str) -> dict:
+    """
+    Refresh active_option_tokens for one index instrument from Dhan's scrip master
+    (see _get_dhan_index_option_master). Replaces the Kite-instrument-cache path for
+    indices when Dhan is the active broker — that path is skipped entirely for Dhan
+    and was only ever serving a stale, narrow strike range from whatever was already
+    in the DB.
+    """
+    normalized = str(instrument or "").strip().upper()
+    master = _get_dhan_index_option_master()
+    contracts = master.get(normalized, [])
+    if not contracts:
+        return {
+            "instrument": normalized,
+            "expiries": [],
+            "contracts_processed": 0,
+            "created": 0,
+            "updated": 0,
+            "message": f"No Dhan index option contracts found for {normalized} in the scrip master",
+        }
+
+    from pymongo import UpdateOne
+
+    db = MongoData()
+    try:
+        col = db._db["active_option_tokens"]
+        _ensure_active_option_tokens_index(col)
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        expiries: set[str] = set()
+        ops = []
+        for c in contracts:
+            expiries.add(c["expiry"])
+            opt_type = c["opt_type"]
+            if opt_type not in {"CE", "PE"}:
+                continue
+            sec_id = str(c.get("sec_id") or "").strip()
+            if not sec_id:
+                continue
+            exch = c.get("exchange") or ("BSE" if normalized in {"SENSEX", "BANKEX"} else "NSE")
+            key = {
+                "broker": "dhan",
+                "instrument": normalized,
+                "expiry": c["expiry"],
+                "strike": c["strike"],
+                "option_type": opt_type,
+            }
+            update_payload = {
+                **key,
+                "instrument_type": "index",
+                "exchange": exch,
+                "symbol": c.get("symbol") or f"{normalized}-{c['expiry']}-{c['strike']}-{opt_type}",
+                "token": sec_id,
+                "tokens": sec_id,
+                "ws_segment": "BSE_FNO" if exch == "BSE" else "NSE_FNO",
+                "lot_size": c.get("lot_size"),
+                "updated_at": now_ts,
+            }
+            ops.append(UpdateOne(
+                key, {"$set": update_payload, "$setOnInsert": {"created_at": now_ts}}, upsert=True,
+            ))
+
+        created = 0
+        updated = 0
+        if ops:
+            result = col.bulk_write(ops, ordered=False)
+            created = result.upserted_count
+            updated = result.matched_count
+
+        return {
+            "instrument": normalized,
+            "expiries": sorted(expiries),
+            "contracts_processed": len(contracts),
+            "created": created,
+            "updated": updated,
+            "message": "active_option_tokens sync completed from Dhan scrip master",
+        }
+    finally:
+        db.close()
+
+
+def _sync_dhan_index_future_tokens(instrument: str) -> dict:
+    """
+    Refresh active_option_tokens for one index's FUTIDX contracts (see
+    _get_dhan_index_future_master). Same `option_type: "FUT", strike: 0.0` shape
+    _sync_dhan_commodity_tokens already uses for MCX futures (FUTCOM) — that's
+    proof this collection's compound index and every downstream reader already
+    tolerate a strike-less contract; this just does the same thing for index
+    futures, which were never synced anywhere before (every other index-token
+    sync explicitly skips FUT* instrument types).
+    """
+    normalized = str(instrument or "").strip().upper()
+    master = _get_dhan_index_future_master()
+    contracts = master.get(normalized, [])
+    if not contracts:
+        return {
+            "instrument": normalized,
+            "expiries": [],
+            "contracts_processed": 0,
+            "created": 0,
+            "updated": 0,
+            "message": f"No Dhan index future contracts found for {normalized} in the scrip master",
+        }
+
+    from pymongo import UpdateOne
+
+    db = MongoData()
+    try:
+        col = db._db["active_option_tokens"]
+        _ensure_active_option_tokens_index(col)
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        expiries: set[str] = set()
+        ops = []
+        for c in contracts:
+            expiries.add(c["expiry"])
+            sec_id = str(c.get("sec_id") or "").strip()
+            if not sec_id:
+                continue
+            exch = c.get("exchange") or ("BSE" if normalized in {"SENSEX", "BANKEX"} else "NSE")
+            key = {
+                "broker": "dhan",
+                "instrument": normalized,
+                "expiry": c["expiry"],
+                "strike": 0.0,
+                "option_type": "FUT",
+            }
+            update_payload = {
+                **key,
+                "instrument_type": "future",
+                "exchange": exch,
+                "symbol": c.get("symbol") or f"{normalized}-{c['expiry']}-FUT",
+                "token": sec_id,
+                "tokens": sec_id,
+                "ws_segment": "BSE_FNO" if exch == "BSE" else "NSE_FNO",
+                "lot_size": c.get("lot_size"),
+                "updated_at": now_ts,
+            }
+            ops.append(UpdateOne(
+                key, {"$set": update_payload, "$setOnInsert": {"created_at": now_ts}}, upsert=True,
+            ))
+
+        created = 0
+        updated = 0
+        if ops:
+            result = col.bulk_write(ops, ordered=False)
+            created = result.upserted_count
+            updated = result.matched_count
+
+        return {
+            "instrument": normalized,
+            "expiries": sorted(expiries),
+            "contracts_processed": len(contracts),
+            "created": created,
+            "updated": updated,
+            "message": "active_option_tokens FUT sync completed from Dhan scrip master",
+        }
+    finally:
+        db.close()
+
+
+_DHAN_COMMODITY_MASTER_CACHE: dict = {}  # {"rows": {underlying: [contract, ...]}, "date": "YYYY-MM-DD"}
+
+
+def _get_dhan_commodity_master() -> dict[str, list[dict]]:
+    """
+    Returns {underlying: [{sec_id, symbol, strike, opt_type, expiry, exchange, lot_size}]}
+    for every MCX commodity — gold, silver, crude oil, copper, and everything else Dhan
+    lists on MCX — covering both futures (FUTCOM, opt_type "FUT", strike 0) and options
+    on futures (OPTFUT, opt_type CE/PE). Underlyings aren't a fixed list like the indices;
+    they're discovered straight from whatever Dhan's scrip master actually carries.
+    """
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if _DHAN_COMMODITY_MASTER_CACHE.get("rows") and _DHAN_COMMODITY_MASTER_CACHE.get("date") == today_str:
+        return _DHAN_COMMODITY_MASTER_CACHE["rows"]
+
+    rows = _get_dhan_scrip_master_rows()
+    master: dict[str, list[dict]] = {}
+    for row in rows:
+        if row.get("SEM_EXM_EXCH_ID", "").strip() != "MCX":
+            continue
+        inst = row.get("SEM_INSTRUMENT_NAME", "").strip()
+        if inst not in ("FUTCOM", "OPTFUT"):
+            continue
+        ts = row.get("SEM_TRADING_SYMBOL", "").strip()
+        symbol = ts.split("-")[0].strip().upper() if "-" in ts else ""
+        if not symbol:
+            continue
+        expiry_raw = row.get("SEM_EXPIRY_DATE", "").strip()
+        expiry = expiry_raw[:10] if expiry_raw else ""
+        if not expiry:
+            continue
+        if inst == "FUTCOM":
+            opt_type, strike = "FUT", 0.0
+        else:
+            opt_type = row.get("SEM_OPTION_TYPE", "").strip().upper()
+            strike = float(row.get("SEM_STRIKE_PRICE") or 0)
+        master.setdefault(symbol, []).append({
+            "sec_id":   row.get("SEM_SMST_SECURITY_ID", "").strip(),
+            "symbol":   ts,
+            "strike":   strike,
+            "opt_type": opt_type,
+            "expiry":   expiry,
+            "lot_size": int(float(row.get("SEM_LOT_UNITS") or 0)),
+        })
+
+    _DHAN_COMMODITY_MASTER_CACHE["rows"] = master
+    _DHAN_COMMODITY_MASTER_CACHE["date"] = today_str
+    return master
+
+
+def _sync_dhan_commodity_tokens(instrument: str) -> dict:
+    """Refresh active_option_tokens for one MCX commodity (futures + options) from Dhan's scrip master."""
+    normalized = str(instrument or "").strip().upper()
+    master = _get_dhan_commodity_master()
+    contracts = master.get(normalized, [])
+    if not contracts:
+        return {
+            "instrument": normalized,
+            "expiries": [],
+            "contracts_processed": 0,
+            "created": 0,
+            "updated": 0,
+            "message": f"No Dhan commodity contracts found for {normalized} in the scrip master",
+        }
+
+    from pymongo import UpdateOne
+
+    db = MongoData()
+    try:
+        col = db._db["active_option_tokens"]
+        _ensure_active_option_tokens_index(col)
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        expiries: set[str] = set()
+        ops = []
+        for c in contracts:
+            expiries.add(c["expiry"])
+            opt_type = c["opt_type"]
+            if opt_type not in {"CE", "PE", "FUT"}:
+                continue
+            sec_id = str(c.get("sec_id") or "").strip()
+            if not sec_id:
+                continue
+            key = {
+                "broker": "dhan",
+                "instrument": normalized,
+                "expiry": c["expiry"],
+                "strike": c["strike"],
+                "option_type": opt_type,
+            }
+            update_payload = {
+                **key,
+                "instrument_type": "commodity",
+                "exchange": "MCX",
+                "symbol": c.get("symbol") or f"{normalized}-{c['expiry']}-{c['strike']}-{opt_type}",
+                "token": sec_id,
+                "tokens": sec_id,
+                "ws_segment": "MCX_COMM",
+                "lot_size": c.get("lot_size"),
+                "updated_at": now_ts,
+            }
+            ops.append(UpdateOne(
+                key, {"$set": update_payload, "$setOnInsert": {"created_at": now_ts}}, upsert=True,
+            ))
+
+        created = 0
+        updated = 0
+        if ops:
+            result = col.bulk_write(ops, ordered=False)
+            created = result.upserted_count
+            updated = result.matched_count
+
+        return {
+            "instrument": normalized,
+            "expiries": sorted(expiries),
+            "contracts_processed": len(contracts),
+            "created": created,
+            "updated": updated,
+            "message": "active_option_tokens sync completed from Dhan scrip master (commodity)",
+        }
+    finally:
+        db.close()
+
+
 @app.get("/algo/dhan/fno-stocks")
-async def get_dhan_fno_stocks():
+async def get_dhan_fno_stocks(current_user: dict = Depends(app_auth.get_current_user)):
     """
     Returns NSE FNO stock list from active_option_tokens (broker=dhan).
     Cached for 1 hour. Each item: {symbol, lot_size}
@@ -6500,6 +9007,8 @@ async def kite_login(broker_doc_id: str = ""):
     _kite_pending[session_id] = broker_doc_id
 
     login_url = get_login_url()
+    if not login_url:
+        return JSONResponse({"status": "error", "message": "Kite api_key is not configured"}, status_code=400)
     redirect_to = f"{login_url}&state={session_id}"
     return RedirectResponse(url=redirect_to)
 
@@ -7829,20 +10338,35 @@ def _build_live_ltp_payload(active_contracts: list[dict], now_ts: str) -> list[d
 
 
 def _save_market_kite_session(session: dict) -> None:
+    api_key = session.get("api_key") or str(getattr(get_kite_instance(), "api_key", "") or "").strip()
+    access_token = session.get("access_token")
+    login_time = datetime.now().isoformat()
     update_fields = {
-        "api_key": session.get("api_key") or str(getattr(get_kite_instance(), "api_key", "") or "").strip(),
-        "access_token": session.get("access_token"),
-        "login_time": datetime.now().isoformat(),
+        "broker": "kite",
+        "api_key": api_key,
+        "access_token": access_token,
+        "login_time": login_time,
         "user_id": session.get("user_id"),
         "user_name": session.get("user_name"),
-        "enabled": True,
+        "app_user_id": _resolve_app_user_id(),
     }
     local_db = MongoData()
     try:
+        # Match by broker, not by whichever doc currently has enabled:True —
+        # that used to match Dhan's doc whenever Dhan was the active broker,
+        # overwriting its credentials with this Kite session. Each broker's
+        # own login should never be able to touch another broker's doc.
+        existing = local_db._db["kite_market_config"].find_one({"broker": "kite"}, {"api_secret": 1}) or {}
+        api_secret = str(existing.get("api_secret") or "").strip()
         local_db._db["kite_market_config"].update_one(
-            {"enabled": True},
+            {"broker": "kite"},
             {"$set": update_fields},
             upsert=True,
+        )
+        from features.kite_broker import sync_kite_access_token_by_credentials
+        sync_kite_access_token_by_credentials(
+            local_db._db, api_key, api_secret, access_token, login_time,
+            skip_collection="kite_market_config",
         )
     finally:
         local_db.close()
@@ -8729,25 +11253,31 @@ def _upsert_contracts_into_col(
     now_ts: str,
     broker: str = "",
 ) -> tuple[int, int]:
-    created = 0
-    updated = 0
+    if not contracts:
+        return 0, 0
+
+    from pymongo import UpdateOne
+
+    _idx_set = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+    instrument_type = "index" if stock_name.upper() in _idx_set else "stock"
+    ops = []
     for contract in contracts:
         expiry_val = str(contract.get("expiry") or "").strip()[:10]
         opt_type_val = str(contract.get("option_type") or contract.get("opt_type") or "").strip().upper()
+        strike_val = contract.get("strike")
         query: dict = {
             "instrument": stock_name,
             "expiry": expiry_val,
-            "strike": contract.get("strike"),
+            "strike": strike_val,
             "option_type": opt_type_val,
         }
         if broker:
             query["broker"] = broker
-        _idx_set = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
         update_payload: dict = {
             "instrument": stock_name,
-            "instrument_type": "index" if stock_name.upper() in _idx_set else "stock",
+            "instrument_type": instrument_type,
             "expiry": expiry_val,
-            "strike": query["strike"],
+            "strike": strike_val,
             "option_type": opt_type_val,
             "token": str(contract.get("token") or "").strip(),
             "tokens": str(contract.get("tokens") or contract.get("token") or "").strip(),
@@ -8757,15 +11287,18 @@ def _upsert_contracts_into_col(
         }
         if broker:
             update_payload["broker"] = broker
-        res = active_tokens_col.update_one(
+        ops.append(UpdateOne(
             query,
             {"$set": update_payload, "$setOnInsert": {"created_at": now_ts}},
             upsert=True,
-        )
-        if res.upserted_id is not None:
-            created += 1
-        elif res.matched_count:
-            updated += 1
+        ))
+
+    # Batched in one round-trip per call (ordered=False so one bad op can't stall the rest)
+    # instead of one update_one() per contract — this is what made syncing thousands of
+    # contracts take tens of seconds.
+    result = active_tokens_col.bulk_write(ops, ordered=False)
+    created = result.upserted_count
+    updated = result.matched_count
     return created, updated
 
 
@@ -9172,10 +11705,14 @@ async def get_option_chain(instrument: str):
 
 
 @app.get("/algo/option-chain-snapshot/{instrument}")
-async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")):
-    """Historical option chain at listen_timestamp for algo-backtest.
-    Returns the exact same shape as /algo/get-option-chain/{instrument} so the
-    frontend can consume both without any format differences."""
+async def get_option_chain_snapshot(
+    instrument: str,
+    ts: str = Query(default=""),
+    _activation_mode: str = Query(default="", alias="activation_mode"),
+):
+    """Historical option chain at listen_timestamp.
+    Returns the exact same shape as /algo/get-option-chain/{instrument}.
+    Falls back to Kite historical_data when DB data is more than 7 days stale."""
     normalized = str(instrument or "").strip().upper()
     norm_ts = str(ts or "").strip().replace(" ", "T").rstrip("Z")
     if not normalized:
@@ -9183,30 +11720,71 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
     if not norm_ts:
         return _build_full_option_chain_response(normalized)
 
+    req_date = norm_ts[:10]
+    day_start = f"{req_date}T00:00:00" if len(req_date) == 10 else ""
+    day_end = f"{req_date}T23:59:59" if len(req_date) == 10 else ""
+
     db = MongoData()
     try:
-        chain_col = db._db["option_chain"]
+        chain_col = db._db["option_chain_historical_data"]
 
-        # Step 1: find the exact minute-tick timestamp at or before norm_ts
+        # Step 1: find the nearest minute-tick timestamp at or before norm_ts
+        # within the requested trading day only, so replay never leaks into a
+        # previous day's snapshot when current-day rows are still loading.
+        pivot_query: dict[str, Any] = {
+            "underlying": normalized,
+            "timestamp": {"$lte": norm_ts},
+        }
+        if day_start and day_end:
+            pivot_query["timestamp"]["$gte"] = day_start
+
         pivot = chain_col.find_one(
-            {"underlying": normalized, "timestamp": {"$lte": norm_ts}},
+            pivot_query,
             {"_id": 0, "timestamp": 1},
             sort=[("timestamp", -1)],
         )
-        if not pivot:
-            return _build_full_option_chain_response(normalized)
-        pivot_ts = pivot["timestamp"]
+        pivot_ts = pivot["timestamp"] if pivot else None
 
-        # Step 2: all rows at that exact timestamp
+        # If same-day DB data is missing, try Kite fallback.
+        _stale = not pivot_ts
+        if pivot_ts and day_start and not (day_start <= pivot_ts <= day_end):
+            _stale = True
+
+        if _stale:
+            from features.option_chain_kite_snapshot import get_option_chain_kite_snapshot
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, lambda: get_option_chain_kite_snapshot(db, normalized, norm_ts)
+            )
+
+        # Step 2: all rows at that exact pivot timestamp
         raw_rows = list(chain_col.find(
             {"underlying": normalized, "timestamp": pivot_ts},
-            {"_id": 0, "expiry": 1, "strike": 1, "type": 1, "close": 1,
-             "iv": 1, "delta": 1, "oi": 1, "spot_price": 1, "timestamp": 1},
+            {"_id": 0, "expiry": 1, "strike": 1, "type": 1, "token": 1, "close": 1,
+             "iv": 1, "delta": 1, "oi": 1, "timestamp": 1},
         ))
         if not raw_rows:
-            raise HTTPException(status_code=404, detail="No rows at snapshot timestamp")
+            from features.option_chain_kite_snapshot import get_option_chain_kite_snapshot
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, lambda: get_option_chain_kite_snapshot(db, normalized, norm_ts)
+            )
 
-        spot = float((raw_rows[0].get("spot_price") or 0))
+        # Spot price: use $lte to always find nearest value
+        spot_query: dict[str, Any] = {
+            "underlying": normalized,
+            "timestamp": {"$lte": pivot_ts},
+        }
+        if day_start and day_end:
+            spot_query["timestamp"]["$gte"] = day_start
+
+        spot_doc = db._db["option_chain_index_spot"].find_one(
+            spot_query,
+            {"_id": 0, "close": 1, "spot_price": 1},
+            sort=[("timestamp", -1)],
+        )
+        _sd = spot_doc or {}
+        spot = float(_sd.get("close") or _sd.get("spot_price") or 0)
 
         # Step 3: build response in the SAME shape as _build_full_option_chain_response
         expiry_set: set[str] = set()
@@ -9226,6 +11804,7 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
                 "expiry": expiry,
                 "strike": float(strike),
                 "type": opt_type,
+                "token": str(row.get("token") or "").strip(),
                 "close": float(row.get("close") or 0),
                 "iv": float(row.get("iv") or 0) or None,
                 "delta": float(row.get("delta") or 0) or None,
@@ -9255,6 +11834,98 @@ async def get_option_chain_snapshot(instrument: str, ts: str = Query(default="")
         db.close()
 
 
+@app.delete("/algo/option-chain-kite-cache")
+async def clear_option_chain_kite_cache(
+    underlying: str = Query(default=""),
+    date: str = Query(default=""),
+):
+    """Clear the in-process Kite option-chain day-cache so the next snapshot
+    request fetches fresh data from Kite.
+    ?underlying=NIFTY&date=2026-05-26  → clear one entry
+    ?underlying=NIFTY                  → clear all dates for that underlying
+    (no params)                        → clear everything"""
+    from features.option_chain_kite_snapshot import clear_day_cache
+    clear_day_cache(underlying.upper() or None, date or None)
+    return {"cleared": True, "underlying": underlying or "all", "date": date or "all"}
+
+
+@app.post("/algo/option-chain/backfill-today/{instrument}")
+async def backfill_option_chain_today(
+    instrument: str,
+    atm_range: int = Query(default=1000),
+):
+    """Legacy POST backfill (ATM-range only, no Greeks).  Use GET version instead."""
+    ul = str(instrument or "").strip().upper()
+    if not ul:
+        raise HTTPException(status_code=400, detail="instrument required")
+
+    from features.option_chain_kite_snapshot import backfill_today_to_db
+    db = MongoData()
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: backfill_today_to_db(db, ul, atm_range=atm_range)
+        )
+    finally:
+        db.close()
+    return result
+
+
+@app.get("/algo/option-chain/backfill-today/{instrument}")
+async def backfill_option_chain_today_get(
+    instrument: str,
+    max_days_ahead: int = Query(default=0, description="Expiries up to N days ahead. 0 = all expiries."),
+    workers: int = Query(default=8, description="Parallel Kite fetch workers (safe max 8)."),
+    date: str = Query(default="", description="Date to backfill (YYYY-MM-DD). Defaults to today."),
+    expiry: str = Query(default="", description="Exact expiry to backfill (YYYY-MM-DD)."),
+    catchup: bool = Query(default=False, description="Sync only missing current-day minutes from last stored timestamp."),
+):
+    """
+    Backfill today's full option chain (spot + India VIX + all expiries + Greeks) to DB.
+
+    Runs in the background — returns immediately.  Track progress with:
+      GET /algo/option-chain/backfill-status
+
+    What gets written:
+      • option_chain_index_spot     — spot price per minute
+      • india_vix_historical        — India VIX per minute
+      • option_chain_historical_data — close + IV + delta/gamma/theta/vega per strike per minute
+
+    After this runs, bar-replay snapshot API reads from DB (24ms) instead of
+    hitting Kite on-demand (~20s cold start).
+    """
+    ul = str(instrument or "").strip().upper()
+    expiry_filter = str(expiry or "").strip()[:10]
+    if not ul:
+        raise HTTPException(status_code=400, detail="instrument required")
+    if expiry_filter and len(expiry_filter) != 10:
+        raise HTTPException(status_code=400, detail="expiry must be YYYY-MM-DD")
+
+    from features.option_chain_backfill import start_backfill
+    return start_backfill(
+        ul,
+        date_str=date.strip() or None,
+        max_days_ahead=max_days_ahead,
+        workers=workers,
+        expiry_filter=expiry_filter or None,
+        sync_from_last=bool(catchup),
+    )
+
+
+@app.get("/algo/option-chain/backfill-status")
+async def get_backfill_status():
+    """Check progress of a running or completed backfill."""
+    from features.option_chain_backfill import get_backfill_status
+    return get_backfill_status()
+
+
+@app.get("/algo/option-chain/backfill-stop")
+async def stop_option_chain_backfill():
+    """Request the running option-chain backfill thread to stop."""
+    from features.option_chain_backfill import stop_backfill
+    return stop_backfill()
+
+
 _INDEX_KITE_SYMBOLS: dict[str, str] = {
     "NIFTY":      "NSE:NIFTY 50",
     "BANKNIFTY":  "NSE:NIFTY BANK",
@@ -9277,6 +11948,10 @@ def _get_kite_rest_client():
 _nse_chain_cache: dict[str, tuple[float, dict]] = {}
 _nse_chain_cache_lock = threading.Lock()
 _NSE_CHAIN_CACHE_TTL = 60.0  # seconds
+
+# India VIX NSE-API fallback cache — see get_live_greeks_chain's VIX section.
+_india_vix_cache: dict[str, tuple[float, float]] = {}
+_INDIA_VIX_CACHE_TTL = 60.0  # seconds
 
 
 def _resolve_chain_reference_spot(
@@ -9408,11 +12083,27 @@ def _fetch_nse_oi_map(symbol: str, expiry_iso: str) -> dict[str, int]:
     return {k: v["oi"] for k, v in _fetch_nse_chain_data(symbol, expiry_iso).get("chain", {}).items()}
 
 
+# f"{segment}:{sec_id}" → last-seen-good market-data dict. Never evicted —
+# see the resilience note in _fetch_dhan_market_data()'s docstring below.
+_DHAN_MARKET_DATA_LAST_GOOD: dict[str, dict] = {}
+
+
 def _fetch_dhan_market_data(segment: str, sec_ids: list[int], db) -> dict[str, dict]:
     """
-    Fetch LTP + OI from Dhan /marketfeed/quote for a list of security IDs.
-    Returns {str(sec_id): {"ltp": float, "oi": int}}.
+    Fetch LTP + OI + best bid/ask from Dhan /marketfeed/quote for a list of security IDs.
+    Returns {str(sec_id): {"ltp": float, "oi": int, "bid": float, "ask": float, "prev_close": float}}.
     Dhan /quote supports up to 1000 per segment — send as few requests as possible.
+
+    WS-first + last-good fallback, same resilience as
+    features.broker_gateway.get_broker_rest_quotes: Dhan's REST quote
+    endpoint rate-limits to ~1 req/sec per account, and this function used
+    to retry a 429 with a blocking time.sleep(1s/2s/3s) per batch — on
+    /live-greeks-chain, which calls this 2+ times sequentially (equity
+    spot, then the whole NSE_FNO/BSE_FNO chain), that alone could add
+    several seconds to one page load. A WS ltp_map hit resolves a sec_id
+    with zero REST round trip; a 429/failed REST attempt now falls straight
+    back to the last real value seen for that sec_id instead of blocking
+    to retry.
     """
     if not sec_ids:
         return {}
@@ -9423,47 +12114,92 @@ def _fetch_dhan_market_data(segment: str, sec_ids: list[int], db) -> dict[str, d
     if not access_token or not client_id:
         return {}
 
-    import requests as _req
-
-    headers = {
-        "access-token": access_token,
-        "client-id": client_id,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-    _BATCH = 500  # Dhan /quote supports up to 1000 per segment
-
     result: dict[str, dict] = {}
-    batches = [sec_ids[i: i + _BATCH] for i in range(0, len(sec_ids), _BATCH)]
 
-    for batch in batches:
-        for _attempt in range(3):
-            try:
-                r = _req.post(
-                    "https://api.dhan.co/v2/marketfeed/quote",
-                    headers=headers, json={segment: batch}, timeout=15,
-                )
-                if r.status_code == 200:
-                    raw = r.json()
-                    data = (raw.get("data") or raw).get(segment) or {}
-                    for sid, info in data.items():
-                        if isinstance(info, dict):
-                            result[str(sid)] = {
+    # WS ltp_map/oi_map are keyed by bare numeric security id regardless of
+    # segment (index/equity/FNO ticks all land there — see dhan_ticker.py's
+    # binary parser), so a hit here is an in-memory read, no REST call at all.
+    try:
+        from features.dhan_ticker import dhan_ticker_manager as _dtm  # type: ignore
+        for sid in sec_ids:
+            sid_str = str(sid)
+            ws_ltp = float(_dtm.ltp_map.get(sid_str) or 0)
+            if ws_ltp > 0:
+                cached = _DHAN_MARKET_DATA_LAST_GOOD.get(f"{segment}:{sid_str}") or {}
+                result[sid_str] = {
+                    "ltp": ws_ltp,
+                    "oi": int(_dtm.oi_map.get(sid_str) or cached.get("oi", 0)),
+                    "bid": cached.get("bid", 0.0),
+                    "ask": cached.get("ask", 0.0),
+                    "prev_close": cached.get("prev_close", 0.0),
+                }
+    except Exception:
+        pass
+
+    missing = [sid for sid in sec_ids if str(sid) not in result]
+    if missing:
+        from features.broker_gateway import dhan_quote_post_blocking
+
+        _BATCH = 500  # Dhan /quote supports up to 1000 per segment
+        batches = [missing[i: i + _BATCH] for i in range(0, len(missing), _BATCH)]
+
+        for batch in batches:
+            # Up to 3 tries: a single transient 429/5xx from Dhan (real
+            # per-account rate limit, not just our internal gate — momentary
+            # under genuinely heavy concurrent demand from other features
+            # sharing this same gate) used to surface as a flat ltp=0 for the
+            # whole chain with no second chance. wait_for_dhan_slot() inside
+            # dhan_quote_post_blocking() already spaces retries >=1.05s apart.
+            for _attempt in range(3):
+                try:
+                    # Blocking, not skip-on-busy: this is usually called right
+                    # after a spot-price quote on the same rate gate (e.g.
+                    # get_live_greeks_chain fetches index spot, then the whole
+                    # chain, microseconds apart) — skip-on-busy made the second
+                    # call lose that race almost every time, rendering the
+                    # whole chain as ltp=0. See dhan_quote_post_blocking's docstring.
+                    r = dhan_quote_post_blocking({segment: batch}, access_token, client_id, timeout=15.0)
+                    if r is None:
+                        continue
+                    if r.status_code == 200:
+                        raw = r.json()
+                        data = (raw.get("data") or raw).get(segment) or {}
+                        for sid, info in data.items():
+                            if not isinstance(info, dict):
+                                continue
+                            depth = info.get("depth") or {}
+                            buy_levels = depth.get("buy") or []
+                            sell_levels = depth.get("sell") or []
+                            entry = {
                                 "ltp": float(info.get("last_price") or 0),
                                 "oi":  int(info.get("oi") or 0),
+                                # Best bid/ask (level 0) — 0 if that side of the book is empty.
+                                "bid": float((buy_levels[0] or {}).get("price") or 0) if buy_levels else 0.0,
+                                "ask": float((sell_levels[0] or {}).get("price") or 0) if sell_levels else 0.0,
+                                # Previous trading day's close — Dhan's own quote response
+                                # already carries this in ohlc.close, additive field so
+                                # nothing keying off just ['ltp']/['oi'] etc. is affected.
+                                "prev_close": float((info.get("ohlc") or {}).get("close") or 0),
                             }
-                    break
-                elif r.status_code == 429:
-                    time.sleep(1.0 * (_attempt + 1))
-                else:
-                    log.warning("[DHAN QUOTE] segment=%s status=%d body=%s",
-                                segment, r.status_code, r.text[:200])
-                    break
-            except Exception as _e:
-                log.warning("[DHAN QUOTE] attempt=%d error=%s", _attempt, _e)
-                if _attempt < 2:
-                    time.sleep(0.5)
+                            result[str(sid)] = entry
+                            if entry["ltp"] > 0:
+                                _DHAN_MARKET_DATA_LAST_GOOD[f"{segment}:{sid}"] = entry
+                        break
+                    else:
+                        # Most commonly a 429 — retry a couple times (spaced
+                        # by the shared gate) before giving up to the
+                        # last-good backfill below.
+                        log.warning("[DHAN QUOTE] segment=%s status=%d attempt=%d body=%s",
+                                    segment, r.status_code, _attempt, r.text[:200])
+                except Exception as _e:
+                    log.warning("[DHAN QUOTE] error=%s attempt=%d", _e, _attempt)
+
+    for sid in sec_ids:
+        sid_str = str(sid)
+        if sid_str not in result or not result[sid_str].get("ltp"):
+            cached = _DHAN_MARKET_DATA_LAST_GOOD.get(f"{segment}:{sid_str}")
+            if cached:
+                result[sid_str] = cached
 
     return result
 
@@ -9473,7 +12209,7 @@ def _fetch_dhan_ltp(segment: str, sec_ids: list[int], db) -> dict[str, float]:
     return {k: v["ltp"] for k, v in _fetch_dhan_market_data(segment, sec_ids, db).items()}
 
 
-@app.get("/algo/live-greeks-chain/{instrument}")
+@app.get("/live-greeks-chain/{instrument}")
 async def get_live_greeks_chain(
     instrument: str,
     expiry: str = Query(default=""),
@@ -9482,8 +12218,14 @@ async def get_live_greeks_chain(
     Live option chain with Black-Scholes Greeks (delta, IV, theta, vega, gamma).
     Priority: WS ltp_map → Kite REST quotes.
 
+    Deliberately not under /algo, /simulator, or /scanner — this is the one
+    shared market-data endpoint all three call, so it lives at a common path.
+
     Returns:
-        {instrument, expiry, expiries, spot_price, chain: {CE: [...], PE: [...]}}
+        {instrument, expiry, expiries, spot_price, pricing_spot, chain: {CE: [...], PE: [...]}}
+    spot_price is the real cash/index LTP (same across all expiries).
+    pricing_spot is the put-call-parity synthetic future used for that
+    expiry's IV/Greeks math, and legitimately differs expiry to expiry.
     Each row: {strike, ltp, iv, delta, gamma, theta, vega, oi, token, symbol}
     """
     normalized = str(instrument or "").strip().upper()
@@ -9512,24 +12254,83 @@ async def get_live_greeks_chain(
     ltp_map: dict = get_broker_ltp_map() or {}
     spot_price = 0.0
     _active_chain_broker = _chain_broker()
+    # Surfaced instead of letting an expired Kite access_token (expires daily
+    # per SEBI policy, every kite.quote() call below raises TokenException
+    # after that) silently fall through to ltp=0 for every strike — the
+    # frontend couldn't tell "session expired" from "no data", so it looked
+    # like a fresh bug each morning. See kite.quote() call sites below.
+    _broker_session_expired = False
+    _broker_session_message = ""
+
+    # Pre-flight: the enabled broker in kite_market_config may have no/expired
+    # access_token (e.g. Dhan tokens expire ~24h after login, per expiry_time).
+    # Without this check, every quote call below would just silently fail and
+    # the whole chain would render as ltp=0 — indistinguishable from "no data".
+    from features.broker_gateway import get_active_broker_token_status as _get_token_status  # type: ignore
+    _token_ok, _token_msg = _get_token_status()
+    if not _token_ok:
+        _broker_session_expired = True
+        _broker_session_message = _token_msg
+
+    # previous_close/change_pct/change_points — same "today's actual move",
+    # NOT pricing_spot (that's the put-call-parity synthetic future used only
+    # for IV/Greeks math, see this endpoint's docstring — comparing spot to
+    # it instead of yesterday's close made every leg's change% meaningless,
+    # the root cause behind the PaperTradeNew display being wrong).
+    previous_close = 0.0
+    change_pct = 0.0
+    change_points = 0.0
+    _quote_spot_price = 0.0  # set below for index instruments only; forced as the final spot_price
 
     _spot_db = MongoData()
     try:
         if is_index:
-            index_token_id = BROKER_INDEX_TOKENS.get(normalized, 0)
-            index_token = str(index_token_id)
-            spot_price = float(ltp_map.get(index_token, 0) or 0)
+            # ONE shared source for "current index spot + previous close" —
+            # features.execution_socket._fetch_dhan_index_quotes() — used
+            # here, by /simulator/positions (via
+            # _fetch_dhan_broker_option_positions), and by
+            # features.simulator_risk_monitor's hot loop (via that same
+            # position-fetch's cached leg data). Three call sites used to
+            # each derive spot_price their own way (this endpoint alone tried
+            # ltp_map, then _btm.get_spot, then a raw Dhan IDX_I REST call,
+            # picking whichever happened to return non-zero first) and
+            # disagreed with each other as a result — confirmed live: this
+            # endpoint showed 24168.00/0.00% (Thursday's close, stale) while
+            # /simulator/positions showed the correct 24,013.10/-0.64% for
+            # NIFTY at the same moment. Call the shared helper first; only
+            # fall back to the broker-specific paths below if it returns
+            # nothing at all (e.g. underlying not in its hardcoded index set).
+            try:
+                from features.execution_socket import _fetch_dhan_index_quotes as _idx_quotes
+                _quote = (_idx_quotes(_spot_db, {normalized}) or {}).get(normalized) or {}
+                previous_close = float(_quote.get("previous_close") or 0)
+                spot_price = float(_quote.get("spot_price") or 0)
+                # Remembered and re-applied right before Greeks/IV use
+                # spot_price (search "_quote_spot_price" below) — a further
+                # Kite-quote reassignment exists later in this function for
+                # the option chain's own LTP fetch, and must not be allowed
+                # to quietly win over the shared source once it's resolved.
+                _quote_spot_price = spot_price
+            except Exception as _cq_exc:
+                log.warning("[LIVE CHAIN] shared index quote lookup error underlying=%s: %s", normalized, _cq_exc)
+
             if not spot_price:
-                try:
-                    spot_price = float(_btm.get_spot(normalized) or 0)
-                except Exception:
-                    pass
-            # Dhan REST fallback for index spot (IDX_I segment)
-            if not spot_price and _active_chain_broker == "dhan" and index_token_id:
-                _d = _fetch_dhan_ltp("IDX_I", [int(index_token_id)], _spot_db)
-                spot_price = float(_d.get(str(index_token_id)) or 0)
+                index_token_id = BROKER_INDEX_TOKENS.get(normalized, 0)
+                index_token = str(index_token_id)
+                spot_price = float(ltp_map.get(index_token, 0) or 0)
+                if not spot_price:
+                    try:
+                        spot_price = float(_btm.get_spot(normalized) or 0)
+                    except Exception:
+                        pass
+                if not spot_price and _active_chain_broker == "dhan" and index_token_id:
+                    _d = _fetch_dhan_ltp("IDX_I", [int(index_token_id)], _spot_db)
+                    spot_price = float(_d.get(str(index_token_id)) or 0)
         else:
-            # Stock spot price: Dhan REST (NSE_EQ) or Kite REST
+            # Stock spot price: Dhan REST (NSE_EQ) only for now — Kite-stock
+            # spot was already not implemented here before this change (a
+            # pre-existing gap, separate from the change_pct fix); leaving it
+            # as-is rather than expanding scope.
             if _active_chain_broker == "dhan":
                 _sec_id = _get_dhan_equity_sec_id(normalized)
                 if not _sec_id:
@@ -9538,8 +12339,13 @@ async def get_live_greeks_chain(
                     ) or {}
                     _sec_id = str(_stock_doc.get("dhan_security_id") or "").strip()
                 if _sec_id:
-                    _d = _fetch_dhan_ltp("NSE_EQ", [int(_sec_id)], _spot_db)
-                    spot_price = float(_d.get(str(_sec_id)) or 0)
+                    _d = _fetch_dhan_market_data("NSE_EQ", [int(_sec_id)], _spot_db).get(str(_sec_id)) or {}
+                    spot_price = float(_d.get("ltp") or 0)
+                    # Not _d["prev_close"] (Dhan NSE_EQ ohlc.close) — that
+                    # mirrors the live price all day, same quirk as IDX_I;
+                    # see _equity_previous_close()'s docstring.
+                    from features.execution_socket import _equity_previous_close
+                    previous_close = _equity_previous_close(_spot_db._db, normalized)
     finally:
         _spot_db.close()
 
@@ -9595,11 +12401,20 @@ async def get_live_greeks_chain(
             db.close()
 
         if not contracts:
+            if _quote_spot_price > 0:
+                spot_price = _quote_spot_price
+            if previous_close > 0 and spot_price > 0:
+                change_pct = round((spot_price - previous_close) / previous_close * 100, 2)
+                change_points = round(spot_price - previous_close, 2)
             return {
                 "instrument": normalized,
                 "expiry": live_expiry,
                 "expiries": expiries_sorted,
                 "spot_price": spot_price,
+                "pricing_spot": spot_price,
+                "previous_close": round(previous_close, 2),
+                "change_pct": change_pct,
+                "change_points": change_points,
                 "chain": {"CE": [], "PE": []},
             }
 
@@ -9632,6 +12447,7 @@ async def get_live_greeks_chain(
                 _idx_ltp_db.close()
         else:
             # Kite: use REST quote (LTP + OI)
+            from kiteconnect.exceptions import TokenException as _KiteTokenException  # type: ignore
             kite = _get_kite_rest_client()
             if kite:
                 try:
@@ -9641,6 +12457,10 @@ async def get_live_greeks_chain(
                         rest_spot_price = float((idx_q.get(index_sym) or {}).get("last_price", 0) or 0)
                         if rest_spot_price > 0:
                             spot_price = rest_spot_price
+                except _KiteTokenException as _e:
+                    _broker_session_expired = True
+                    _broker_session_message = "Kite session expired — please re-login from Broker Login."
+                    log.warning("[LIVE CHAIN API] Kite token expired on spot fetch: %s", _e)
                 except Exception as _e:
                     log.warning("[LIVE CHAIN API] spot fetch error: %s", _e)
                 _kite_all = [int(str(t or 0)) for t in _all_tokens if t]
@@ -9651,6 +12471,11 @@ async def get_live_greeks_chain(
                             _tok = str(_q.get("instrument_token") or "").strip()
                             if _tok:
                                 _idx_market[_tok] = {"ltp": float(_q.get("last_price") or 0), "oi": int(_q.get("oi") or 0)}
+                    except _KiteTokenException as _e:
+                        _broker_session_expired = True
+                        _broker_session_message = "Kite session expired — please re-login from Broker Login."
+                        log.warning("[LIVE CHAIN API] Kite token expired on quote batch: %s", _e)
+                        break
                     except Exception as _e:
                         log.warning("[LIVE CHAIN API] quote batch error: %s", _e)
 
@@ -9799,12 +12624,17 @@ async def get_live_greeks_chain(
                 _ltp_db.close()
         else:
             # Kite REST quotes
+            from kiteconnect.exceptions import TokenException as _KiteTokenException  # type: ignore
             kite_rest_stk = _get_kite_rest_client()
             if kite_rest_stk:
                 if not spot_price:
                     try:
                         eq_q = kite_rest_stk.quote([f"NSE:{normalized}"]) or {}
                         spot_price = float((eq_q.get(f"NSE:{normalized}") or {}).get("last_price") or 0)
+                    except _KiteTokenException as _e:
+                        _broker_session_expired = True
+                        _broker_session_message = "Kite session expired — please re-login from Broker Login."
+                        log.warning("[LIVE CHAIN API] Kite token expired on stock spot fetch: %s", _e)
                     except Exception:
                         pass
                 _kite_all = [int(t) for t in _stk_all_tokens if t.lstrip("-").isdigit()]
@@ -9815,6 +12645,11 @@ async def get_live_greeks_chain(
                             _tok = str(_q.get("instrument_token") or "").strip()
                             if _tok:
                                 _stk_market[_tok] = {"ltp": float(_q.get("last_price") or 0), "oi": int(_q.get("oi") or 0)}
+                    except _KiteTokenException as _e:
+                        _broker_session_expired = True
+                        _broker_session_message = "Kite session expired — please re-login from Broker Login."
+                        log.warning("[LIVE CHAIN API] Kite token expired on stock quote batch: %s", _e)
+                        break
                     except Exception:
                         pass
 
@@ -9853,6 +12688,15 @@ async def get_live_greeks_chain(
             raw_rows.append(row)
             rows_by_side[opt_type][strike] = row
 
+    # Re-assert the shared-source spot_price (set above for index
+    # instruments) one last time before it feeds Greeks/IV — a Kite-quote
+    # reassignment earlier in this function (for the option chain's own
+    # LTP fetch, when Kite rather than Dhan is the active broker) would
+    # otherwise be free to win here despite the shared source already having
+    # resolved a good value, leaving the header price correct but every
+    # leg's delta/gamma/IV computed off a different number.
+    if _quote_spot_price > 0:
+        spot_price = _quote_spot_price
     ref_spot_price = _resolve_chain_reference_spot(rows_by_side, spot_price, T, r, q)
     pricing_spot = ref_spot_price if ref_spot_price > 0 else spot_price
 
@@ -9905,8 +12749,18 @@ async def get_live_greeks_chain(
         if common:
             atm_strike = min(common, key=lambda s: abs(ce_by_s[s] - pe_by_s[s]))
 
-    # ── India VIX: WS ltp_map → NSE API fallback ─────────────────────────────
+    # ── India VIX: WS ltp_map → NSE API fallback (cached) ────────────────────
+    # VIX isn't in the WS ltp_map (not subscribed), so this fallback fired on
+    # *every* index-chain request — two sequential nseindia.com requests
+    # (warm-up + the actual API call), each alone enough to push this
+    # endpoint past 1s. A 60s in-process cache (same TTL/shape as
+    # _nse_chain_cache above) means only one request per minute ever pays
+    # that cost; everything else in that window is an in-memory read.
     india_vix = round(float(ltp_map.get(str(BROKER_VIX_TOKEN), 0) or 0), 2)
+    if not india_vix:
+        _vix_cached = _india_vix_cache.get("value")
+        if _vix_cached and (time.monotonic() - _vix_cached[0]) < _INDIA_VIX_CACHE_TTL:
+            india_vix = _vix_cached[1]
     if not india_vix:
         try:
             import requests as _req
@@ -9927,19 +12781,42 @@ async def get_live_greeks_chain(
                     if "VIX" in str(_item.get("index", "")):
                         india_vix = round(float(_item.get("last") or 0), 2)
                         break
+                if india_vix:
+                    _india_vix_cache["value"] = (time.monotonic(), india_vix)
         except Exception as _ve:
             log.warning("[LIVE CHAIN] VIX NSE fallback error: %s", _ve)
+
+    # Force the same spot_price Positions.tsx uses for index instruments —
+    # see the comment where _quote_spot_price is set: this function reassigns
+    # spot_price more than once (a Kite-quote branch for the option chain's
+    # own LTPs refreshes it again above), and that race could otherwise leave
+    # the displayed price as a stale/wrong value (confirmed live: this
+    # endpoint showed Thursday's close as "current" while Positions.tsx
+    # showed the actual current price for the same underlying). change_pct
+    # is computed last, against this final spot_price, so it always agrees
+    # with the price actually being displayed.
+    if _quote_spot_price > 0:
+        spot_price = _quote_spot_price
+    if previous_close > 0 and spot_price > 0:
+        change_pct = round((spot_price - previous_close) / previous_close * 100, 2)
+        change_points = round(spot_price - previous_close, 2)
 
     return {
         "instrument": normalized,
         "expiry": live_expiry,
         "expiries": expiries_sorted,
-        "spot_price": round(pricing_spot or spot_price, 2),
+        "spot_price": round(spot_price, 2),
+        "pricing_spot": round(pricing_spot or spot_price, 2),
+        "previous_close": round(previous_close, 2),
+        "change_pct": change_pct,
+        "change_points": change_points,
         "atm_strike": int(atm_strike) if atm_strike == int(atm_strike) else atm_strike,
         "strike_interval": int(strike_interval) if strike_interval == int(strike_interval) else strike_interval,
         "india_vix": india_vix,
         "lot_size": lot_size,
         "chain": chain,
+        "session_expired": _broker_session_expired,
+        "session_message": _broker_session_message,
     }
 
 
@@ -9976,6 +12853,52 @@ async def mock_start(time: str = Query(default="")):
 
 @app.get("/algo/get_active_tokens/{instrument}")
 async def get_active_tokens(instrument: str):
+    normalized = str(instrument or "").strip().upper()
+    _INDEX_SET = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+
+    if normalized == "ALL":
+        from features.broker_gateway import _active_broker as _get_active_broker_for_sync
+        if _get_active_broker_for_sync() != "dhan":
+            return {"status": "error", "message": "Active broker is not dhan"}
+
+        # Indices (options + futures) + commodities only — no equity/stock F&O.
+        index_results = {idx: _sync_dhan_index_option_tokens(idx) for idx in sorted(_INDEX_SET)}
+        index_future_results = {idx: _sync_dhan_index_future_tokens(idx) for idx in sorted(_INDEX_SET)}
+        commodity_master = _get_dhan_commodity_master()
+        commodity_results = {sym: _sync_dhan_commodity_tokens(sym) for sym in sorted(commodity_master.keys())}
+        all_results = list(index_results.values()) + list(index_future_results.values()) + list(commodity_results.values())
+        return {
+            "status": "success",
+            "broker": "dhan",
+            "indices": index_results,
+            "index_futures": index_future_results,
+            "commodities": commodity_results,
+            "totals": {
+                "contracts_processed": sum(r.get("contracts_processed", 0) for r in all_results),
+                "created": sum(r.get("created", 0) for r in all_results),
+                "updated": sum(r.get("updated", 0) for r in all_results),
+            },
+        }
+
+    if normalized in _get_dhan_commodity_master():
+        from features.broker_gateway import _active_broker as _get_active_broker_for_sync
+        if _get_active_broker_for_sync() == "dhan":
+            return _sync_dhan_commodity_tokens(normalized)
+
+    if normalized in _INDEX_SET:
+        from features.broker_gateway import _active_broker as _get_active_broker_for_sync
+        if _get_active_broker_for_sync() == "dhan":
+            option_result = _sync_dhan_index_option_tokens(normalized)
+            future_result = _sync_dhan_index_future_tokens(normalized)
+            return {
+                "status": "success",
+                "instrument": normalized,
+                "options": option_result,
+                "futures": future_result,
+                "contracts_processed": option_result.get("contracts_processed", 0) + future_result.get("contracts_processed", 0),
+                "created": option_result.get("created", 0) + future_result.get("created", 0),
+                "updated": option_result.get("updated", 0) + future_result.get("updated", 0),
+            }
     return _sync_active_option_tokens(instrument)
 
 
@@ -10089,6 +13012,7 @@ async def mtm_historical_data(
     tokens: str = Query(default=""),
     candle: str = Query(default=""),
     activation_mode: str = Query(default=""),
+    current_user: dict = Depends(app_auth.require_current_user),
 ):
     """
     Return per-minute OHLCV candle data for the given active leg tokens.
@@ -10125,6 +13049,7 @@ async def spot_historical_data(
     underlying: str = Query(default=""),
     candle: str = Query(default=""),
     activation_mode: str = Query(default=""),
+    current_user: dict = Depends(app_auth.require_current_user),
 ):
     """
     Return per-minute spot price history for an underlying index (e.g. NIFTY)
@@ -10238,3 +13163,151 @@ async def system_status():
         "live_order_status_label": "REAL ORDERS" if live_order_enabled else "SIMULATED ORDERS",
         "env_LIVE_ORDER_STATUS": os.getenv("LIVE_ORDER_STATUS", "not set"),
     }
+
+
+# ─── Data Migration ───────────────────────────────────────────────────────────
+
+@app.get("/algo/admin/migrate-month")
+async def migrate_month(month: str = Query(..., description="YYYY-MM e.g. 2025-09")):
+    """
+    Migrate one month of option chain data from legacy `option_chain` collection
+    to the two new collections:
+      • option_chain_historical_data  — candle rows (no spot_price)
+      • option_chain_index_spot       — one spot-price row per minute per underlying
+
+    Safe to re-run: candles are upserted on (underlying, timestamp, expiry, strike, type).
+    Spot rows are upserted on (underlying, timestamp).
+
+    GET /algo/admin/migrate-month?month=2025-09
+    """
+    import re as _re
+    if not _re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM format, e.g. 2025-09")
+
+    from pymongo import UpdateOne, ASCENDING as _ASC
+    from features.mongo_data import MongoData
+
+    db   = MongoData()
+    src  = db._db["option_chain"]
+    dst  = db._db["option_chain_historical_data"]
+    spot = db._db["option_chain_index_spot"]
+
+    ts_start = f"{month}-01T00:00:00"
+    # Last day: works for any month length
+    import calendar as _cal
+    year_int, mon_int = int(month[:4]), int(month[5:7])
+    last_day = _cal.monthrange(year_int, mon_int)[1]
+    ts_end   = f"{month}-{last_day:02d}T23:59:59"
+
+    # ── Ensure indexes on dst and spot ───────────────────────────────────────
+    try:
+        dst.create_index(
+            [("underlying", _ASC), ("timestamp", _ASC), ("expiry", _ASC),
+             ("strike", _ASC), ("type", _ASC)],
+            name="chain_upsert_key", background=True,
+        )
+        spot.create_index(
+            [("underlying", _ASC), ("timestamp", _ASC)],
+            name="spot_upsert_key", background=True,
+        )
+    except Exception:
+        pass
+
+    # ── Stream source in batches ──────────────────────────────────────────────
+    BATCH = 5000
+    candle_ops: list = []
+    spot_seen:  set  = set()
+    spot_ops:   list = []
+
+    candles_upserted = 0
+    spot_upserted    = 0
+
+    cursor = src.find(
+        {"timestamp": {"$gte": ts_start, "$lte": ts_end}},
+        {"_id": 0, "timestamp": 1, "underlying": 1, "expiry": 1,
+         "strike": 1, "type": 1, "close": 1, "oi": 1,
+         "iv": 1, "delta": 1, "gamma": 1, "theta": 1, "vega": 1,
+         "rho": 1, "spot_price": 1},
+    ).batch_size(BATCH)
+
+    def _flush_candles():
+        nonlocal candles_upserted
+        if not candle_ops:
+            return
+        res = dst.bulk_write(candle_ops, ordered=False)
+        candles_upserted += res.upserted_count + res.modified_count
+        candle_ops.clear()
+
+    def _flush_spot():
+        nonlocal spot_upserted
+        if not spot_ops:
+            return
+        res = spot.bulk_write(spot_ops, ordered=False)
+        spot_upserted += res.upserted_count + res.modified_count
+        spot_ops.clear()
+
+    for doc in cursor:
+        ts         = doc.get("timestamp") or ""
+        underlying = doc.get("underlying") or ""
+        expiry     = doc.get("expiry") or ""
+        strike     = doc.get("strike")
+        otype      = doc.get("type") or ""
+        close      = doc.get("close")
+        sp         = doc.get("spot_price")
+
+        # ── Candle upsert ─────────────────────────────────────────────────
+        candle_doc = {
+            "timestamp":  ts,
+            "underlying": underlying,
+            "expiry":     expiry,
+            "strike":     strike,
+            "type":       otype,
+            "close":      close,
+            "oi":         doc.get("oi"),
+            "iv":         doc.get("iv"),
+            "delta":      doc.get("delta"),
+            "gamma":      doc.get("gamma"),
+            "theta":      doc.get("theta"),
+            "vega":       doc.get("vega"),
+            "rho":        doc.get("rho"),
+        }
+        candle_ops.append(UpdateOne(
+            {"underlying": underlying, "timestamp": ts,
+             "expiry": expiry, "strike": strike, "type": otype},
+            {"$setOnInsert": candle_doc},
+            upsert=True,
+        ))
+
+        # ── Spot upsert (one per minute per underlying) ───────────────────
+        minute_key = (underlying, ts[:16])   # "2025-09-01T09:16"
+        if sp is not None and minute_key not in spot_seen:
+            spot_seen.add(minute_key)
+            spot_ops.append(UpdateOne(
+                {"underlying": underlying, "timestamp": ts},
+                {"$setOnInsert": {
+                    "underlying": underlying,
+                    "timestamp":  ts,
+                    "spot_price": float(sp),
+                    "token":      "NSE_01",
+                }},
+                upsert=True,
+            ))
+
+        if len(candle_ops) >= BATCH:
+            _flush_candles()
+        if len(spot_ops) >= BATCH:
+            _flush_spot()
+
+    _flush_candles()
+    _flush_spot()
+
+    return {
+        "status":            "done",
+        "month":             month,
+        "candles_upserted":  candles_upserted,
+        "spot_upserted":     spot_upserted,
+        "ts_range":          f"{ts_start} → {ts_end}",
+    }
+
+
+_register_versioned_route_aliases(app)

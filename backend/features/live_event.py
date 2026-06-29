@@ -58,7 +58,9 @@ def _get_live_ltp_map() -> dict[str, float]:
     try:
         from features.broker_gateway import get_broker_ltp_map  # type: ignore
         return dict(get_broker_ltp_map() or {})
-    except Exception:
+    except Exception as exc:
+        from features.telegram_notifier import notify_admin
+        notify_admin('ltp_fetch_error', f'_get_live_ltp_map failed: {exc}')
         return {}
 
 

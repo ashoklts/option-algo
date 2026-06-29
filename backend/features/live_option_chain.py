@@ -540,7 +540,7 @@ def get_live_delta_for_strike(
 ) -> dict:
     """
     Fetch live delta for a single strike using WS ltp_map (primary) + Kite REST
-    (fallback) — same pricing source as the /algo/live-greeks-chain API.
+    (fallback) — same pricing source as the /live-greeks-chain API.
 
     Returns {'delta': float, 'ltp': float, 'iv': float} or {} on failure.
     """

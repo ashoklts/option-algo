@@ -113,15 +113,17 @@ class DataIndex:
         self.high_index:    dict = {}
         self.low_index:     dict = {}
         self.spot_index:    dict = {}
+        self.delta_index:   dict = {}
         self.expiry_index:  dict = defaultdict(set)
         self._time_map:     dict = defaultdict(list)
         self._all_times:    dict = defaultdict(set)
         self.strikes_index: dict = defaultdict(set)
-        
+
         c_i = self.candle_index
         h_i = self.high_index
         l_i = self.low_index
         s_i = self.spot_index
+        d_i = self.delta_index
         e_i = self.expiry_index
         t_m = self._time_map
         a_t = self._all_times
@@ -140,13 +142,16 @@ class DataIndex:
                 spot   = float(c.get("spot_price", 0))
                 high   = float(c.get("high", close))
                 low    = float(c.get("low",  close))
+                delta  = c.get("delta")
 
                 key = (date_str, time_str, expiry, strike, otype)
-                
+
                 c_i[key] = close
                 h_i[key] = high
                 l_i[key] = low
                 s_i[(date_str, time_str)] = spot
+                if delta is not None:
+                    d_i[key] = float(delta)
                 e_i[date_str].add(expiry)
                 t_m[(date_str, expiry, strike, otype)].append(time_str)
                 a_t[date_str].add(time_str)
@@ -162,6 +167,10 @@ class DataIndex:
     def get_close(self, date: str, time: str, expiry: str,
                   strike: int, otype: str) -> Optional[float]:
         return self.candle_index.get((date, time, expiry, strike, otype))
+
+    def get_delta(self, date: str, time: str, expiry: str,
+                  strike: int, otype: str) -> Optional[float]:
+        return self.delta_index.get((date, time, expiry, strike, otype))
 
     def get_spot(self, date: str, time: str) -> Optional[float]:
         return self.spot_index.get((date, time))
@@ -264,6 +273,38 @@ def _resolve_strike_by_premium(
             best_diff   = diff
             best_strike = s
     return best_strike
+
+
+def _resolve_strike_by_delta(
+    idx, day: str, time_str: str,
+    expiry: str, otype: str,
+    target_delta: float,
+) -> Optional[int]:
+    """
+    Delta-based strike resolution.
+    Scans all available strikes at the given time and returns the strike
+    whose absolute delta is closest to target_delta.
+    Falls back to ATM when no delta data is available (e.g. older data).
+    """
+    strikes = idx.strikes_index.get((day, time_str, expiry, otype), [])
+    if not strikes:
+        return None
+
+    best_strike = None
+    best_diff   = float("inf")
+    has_delta   = False
+
+    for s in strikes:
+        delta = idx.get_delta(day, time_str, expiry, s, otype)
+        if delta is None:
+            continue
+        has_delta = True
+        diff = abs(abs(delta) - target_delta)
+        if diff < best_diff:
+            best_diff   = diff
+            best_strike = s
+
+    return best_strike if has_delta else None
 
 
 _WEEKDAY_MAP = {
@@ -453,10 +494,8 @@ def _pick_strike(idx, day, time_str, expiry, otype, spot,
     EntryByStrikeType   : ATM/OTM/ITM offset from spot
     EntryByPremium      : find strike closest to target premium
     EntryByPremiumRange : use the mid-point of the premium band
-
-    Note:
-    The current candle cache does not expose option greeks, so delta-based
-    selectors are approximated using ATM instead of failing the whole run.
+    EntryByDelta        : find strike closest to target absolute delta
+    EntryByDeltaRange   : find strike closest to mid-point of delta range
     """
     if entry_type == "EntryType.EntryByPremium":
         target = float(strike_param)
@@ -468,8 +507,17 @@ def _pick_strike(idx, day, time_str, expiry, otype, spot,
         target = (lower + upper) / 2
         return _resolve_strike_by_premium(idx, day, time_str, expiry, otype, target)
 
-    if entry_type in ("EntryType.EntryByDelta", "EntryType.EntryByDeltaRange"):
-        return _resolve_strike(spot, "StrikeType.ATM", otype, step)
+    if entry_type == "EntryType.EntryByDelta":
+        target = abs(float(strike_param))
+        result = _resolve_strike_by_delta(idx, day, time_str, expiry, otype, target)
+        return result if result is not None else _resolve_strike(spot, "StrikeType.ATM", otype, step)
+
+    if entry_type == "EntryType.EntryByDeltaRange" and isinstance(strike_param, dict):
+        lower = abs(float(strike_param.get("LowerRange", 0) or 0))
+        upper = abs(float(strike_param.get("UpperRange", lower) or lower))
+        target = (lower + upper) / 2
+        result = _resolve_strike_by_delta(idx, day, time_str, expiry, otype, target)
+        return result if result is not None else _resolve_strike(spot, "StrikeType.ATM", otype, step)
 
     if entry_type == "EntryType.EntryByAtmMultiplier":
         try:
@@ -519,8 +567,8 @@ def _find_momentum_entry(idx, day: str, scan_start: str, exit_time: str,
                 if spot and spot >= target:
                     entry_price = idx.get_close(day, t, expiry, strike, otype)
                     if entry_price is not None:
-                        exec_px = target if LIMIT_ORDER_EXECUTION else entry_price
-                        return t, round(exec_px, 2)
+                        # Underlying trigger → trade is in the option; always use option close
+                        return t, round(entry_price, 2)
         else:
             for c in idx.get_candles_range(day, scan_start, exit_time, expiry, strike, otype):
                 if c["high"] >= target:
@@ -539,8 +587,8 @@ def _find_momentum_entry(idx, day: str, scan_start: str, exit_time: str,
                 if spot and spot <= target:
                     entry_price = idx.get_close(day, t, expiry, strike, otype)
                     if entry_price is not None:
-                        exec_px = target if LIMIT_ORDER_EXECUTION else entry_price
-                        return t, round(exec_px, 2)
+                        # Underlying trigger → trade is in the option; always use option close
+                        return t, round(entry_price, 2)
         else:
             for c in idx.get_candles_range(day, scan_start, exit_time, expiry, strike, otype):
                 if c["low"] <= target:
@@ -647,10 +695,16 @@ def _process_leg(idx, day, entry_time, exit_time,
         if forced_entry_price is not None:
             entry_price        = forced_entry_price
             forced_entry_price = None   # consume it
+        elif is_first and override_entry_px is not None:
+            # Momentum / ORB breakout: use limit-order execution price for first trade
+            entry_price = override_entry_px
         else:
             entry_price = idx.get_close(day, cur_time, expiry, cur_strike, otype)
         if entry_price is None:
             break
+        actual_entry_market_price = idx.get_close(day, cur_time, expiry, cur_strike, otype)
+        if actual_entry_market_price is None:
+            actual_entry_market_price = entry_price
 
         # Spot at entry — needed for Underlying SL/Target calculation
         entry_spot = idx.get_spot(day, cur_time) or 0.0
@@ -696,6 +750,9 @@ def _process_leg(idx, day, entry_time, exit_time,
 
         pnl        = _calc_pnl(cur_position, entry_price, exit_price, lots, lot_size)
         total_pnl += pnl
+        actual_exit_market_price = idx.get_close(day, exit_at, expiry, cur_strike, otype)
+        if actual_exit_market_price is None:
+            actual_exit_market_price = exit_price
 
         if is_first:
             re_type = "Initial"
@@ -709,6 +766,7 @@ def _process_leg(idx, day, entry_time, exit_time,
             "entry_time":          cur_time,
             "entry_action":        cur_position,
             "entry_price":         round(entry_price, 2),
+            "actual_entry_market_price": round(actual_entry_market_price, 2) if actual_entry_market_price is not None else None,
             "entry_spot":          round(entry_spot, 2),
             "sl_price":            round(sl_display,  2) if sl_display  is not None else None,
             "initial_sl_price":    round(sl_display,  2) if sl_display  is not None else None,
@@ -720,6 +778,7 @@ def _process_leg(idx, day, entry_time, exit_time,
             "exit_time":           exit_at,
             "exit_action":         _flip_position(cur_position),
             "exit_price":          round(exit_price, 2),
+            "actual_exit_market_price": round(actual_exit_market_price, 2) if actual_exit_market_price is not None else None,
             "exit_reason":         exit_reason,
             "reentry_type":        re_type,
             "reentry_number":      reentry_number,
@@ -880,74 +939,6 @@ def _compute_combined_mtm(day_trade: dict, idx, day: str) -> None:
     overall_tgt_time = day_trade.get("overall_tgt_exit_time", "")
     force_close_times = set(filter(None, [overall_sl_time, overall_tgt_time]))
 
-    def _mtm_at(t: str, treat_as_open_at: str = "") -> tuple:
-        """
-        Returns (combined_mtm, breakdown_dict) at time t.
-        treat_as_open_at: force-close time — legs exiting AT this time
-        are treated as open (unrealized) to show pre-SL MTM.
-        t is the candle time used for price lookup and is included in breakdown.
-        """
-        realized_items   = []
-        unrealized_items = []
-
-        for st in all_st:
-            entry_t   = st.get("entry_time", "")
-            exit_t    = st.get("exit_time", "")
-            lots      = st.get("_lots", 1)
-            lot_size  = st.get("_lot_size", 1)
-            expiry    = st.get("_expiry", "")
-            strike    = st.get("strike")
-            otype     = st.get("option_type", "")
-            lazy_id   = st.get("lazy_leg_id", "")
-            p_num     = st.get("parent_leg_num", "")
-            p_type    = st.get("parent_leg_type", "")
-            direction = -1 if st.get("entry_action", "SELL") == "SELL" else 1
-            leg_label = f"Lazy({lazy_id})" if lazy_id else f"Leg {p_num} ({p_type})"
-
-            is_force_closed    = treat_as_open_at and exit_t == treat_as_open_at
-            is_post_sl_reentry = treat_as_open_at and entry_t >= treat_as_open_at and st.get("overall_reentry_cycle")
-
-            if is_post_sl_reentry:
-                continue  # exclude — entered after SL triggered
-
-            elif exit_t and exit_t <= t and not is_force_closed:
-                pnl = st.get("pnl", 0)
-                realized_items.append({
-                    "leg":        leg_label,
-                    "exit_time":  exit_t,
-                    "exit_reason": st.get("exit_reason", ""),
-                    "pnl":        round(pnl, 2),
-                })
-
-            elif (entry_t and entry_t < t) or (entry_t and entry_t == t and not treat_as_open_at):
-                cur_price = idx.get_close(day, t, expiry, strike, otype)
-                if cur_price is not None:
-                    qty = lots * lot_size
-                    unr_pnl = round((cur_price - st.get("entry_price", 0)) * qty * direction, 2)
-                    unrealized_items.append({
-                        "leg":            leg_label,
-                        "entry_time":     entry_t,
-                        "entry_price":    st.get("entry_price", 0),
-                        "candle_time":    t,
-                        "cur_price":      round(cur_price, 2),
-                        "qty":            qty,
-                        "unrealized_pnl": unr_pnl,
-                    })
-
-        realized_total   = round(sum(x["pnl"] for x in realized_items), 2)
-        unrealized_total = round(sum(x["unrealized_pnl"] for x in unrealized_items), 2)
-        combined         = round(realized_total + unrealized_total, 2)
-
-        breakdown = {
-            "candle_time":     t,
-            "realized":        realized_items,
-            "realized_total":  realized_total,
-            "unrealized":      unrealized_items,
-            "unrealized_total": unrealized_total,
-            "combined_mtm":    combined,
-        }
-        return combined, breakdown
-
     # Compute at every unique entry and exit time
     all_times = sorted(set(
         t for st in all_st
@@ -960,9 +951,9 @@ def _compute_combined_mtm(day_trade: dict, idx, day: str) -> None:
         if t in force_close_times:
             # Use the force-close time's own close price for all open legs
             # (market order = exit at current close price at that candle)
-            mtm_cache[t] = _mtm_at(t, treat_as_open_at=t)
+            mtm_cache[t] = _build_combined_mtm_breakdown_at(day_trade, idx, day, t, treat_as_open_at=t)
         else:
-            mtm_cache[t] = _mtm_at(t)
+            mtm_cache[t] = _build_combined_mtm_breakdown_at(day_trade, idx, day, t)
 
     # Tag each sub_trade
     for st in all_st:
@@ -1097,6 +1088,12 @@ def _build_trail_change_events(day_trade: dict, idx, day: str) -> list:
             prev_steps = 0
             candles = idx.get_candles_range(day, _add_one_minute(entry_time), exit_time, expiry, strike, otype)
             for c in candles:
+                # Once the leg is closed, no SL/target/trail feature should continue.
+                # Skip trail-change explanation at the exact exit candle so we do not
+                # show a trail step after the position is already closed.
+                if exit_time and c["time"] >= exit_time:
+                    break
+
                 if position == "SELL":
                     favorable = entry_price - c["low"]
                     raw_new_sl = float(initial_sl) - int(max(favorable, 0) // trail_x_pts) * trail_y_pts
@@ -1108,6 +1105,14 @@ def _build_trail_change_events(day_trade: dict, idx, day: str) -> list:
 
                 new_steps = int(max(favorable, 0) // trail_x_pts) if favorable > 0 else 0
                 if round(new_sl, 2) != round(prev_sl, 2):
+                    combined_mtm, breakdown = _build_combined_mtm_breakdown_at(day_trade, idx, day, c["time"])
+                    open_legs = {str(item.get("leg") or "").strip() for item in (breakdown.get("unrealized") or [])}
+                    # Trail SL can move only while this exact leg is actively open.
+                    # If the leg is not present in unrealized positions at this candle
+                    # (for example lazy leg still waiting on momentum, or leg already closed),
+                    # suppress the trail event entirely.
+                    if str(leg_label).strip() not in open_legs:
+                        continue
                     events.append({
                         "event_type": "trail_update",
                         "parent_leg": parent_leg,
@@ -1119,6 +1124,8 @@ def _build_trail_change_events(day_trade: dict, idx, day: str) -> list:
                         "instrument_move_step": round(trail_x_pts, 2),
                         "stoploss_move_step": round(trail_y_pts, 2),
                         "steps_reached": new_steps,
+                        "combined_mtm": combined_mtm,
+                        "combined_mtm_breakdown": breakdown,
                     })
                     prev_sl = new_sl
                     prev_steps = new_steps
@@ -1159,6 +1166,34 @@ def _build_trade_explanation(day_trade: dict, idx, day: str) -> list:
             else:
                 leg_label = parent_leg
 
+            if st.get("momentum_type"):
+                listen_time = st.get("momentum_listen_time", "")
+                momentum_combined = None
+                momentum_breakdown = None
+                if listen_time:
+                    momentum_combined, momentum_breakdown = _build_combined_mtm_breakdown_at(day_trade, idx, day, listen_time)
+                events.append({
+                    "event_type": "momentum_watch",
+                    "parent_leg": parent_leg,
+                    "leg": leg_label,
+                    "time": listen_time or st.get("entry_time", ""),
+                    "date": st.get("entry_date", ""),
+                    "strike": strike,
+                    "option_type": option_type,
+                    "entry_price": st.get("entry_price", 0),
+                    "actual_entry_market_price": st.get("actual_entry_market_price"),
+                    "momentum_type": st.get("momentum_type", ""),
+                    "momentum_value": st.get("momentum_value", 0),
+                    "momentum_base_price": st.get("momentum_base_price", 0),
+                    "momentum_target_price": st.get("momentum_target_price", 0),
+                    "momentum_listen_time": listen_time,
+                    "spot_at_listen_time": st.get("spot_at_listen_time"),
+                    "atm_strike": st.get("atm_strike"),
+                    "atm_price_at_listen_time": st.get("atm_price_at_listen_time"),
+                    "combined_mtm": momentum_combined,
+                    "combined_mtm_breakdown": momentum_breakdown,
+                })
+
             entry_event = {
                 "event_type":         "entry",
                 "parent_leg":         parent_leg,
@@ -1169,6 +1204,7 @@ def _build_trade_explanation(day_trade: dict, idx, day: str) -> list:
                 "strike":             strike,
                 "option_type":        option_type,
                 "entry_price":        st.get("entry_price", 0),
+                "actual_entry_market_price": st.get("actual_entry_market_price"),
                 "entry_spot":         st.get("entry_spot", 0),
                 "sl_price":           st.get("sl_price", 0),
                 "initial_sl_price":   st.get("initial_sl_price", 0),
@@ -1194,6 +1230,7 @@ def _build_trade_explanation(day_trade: dict, idx, day: str) -> list:
                 "strike":               strike,
                 "option_type":          option_type,
                 "entry_price":          st.get("entry_price", 0),
+                "actual_entry_market_price": st.get("actual_entry_market_price"),
                 "entry_action":         st.get("entry_action", ""),
                 "initial_sl_price":     st.get("initial_sl_price", 0),
                 "exit_price":           st.get("exit_price", 0),
@@ -1210,9 +1247,140 @@ def _build_trade_explanation(day_trade: dict, idx, day: str) -> list:
 
     events.extend(_build_trail_change_events(day_trade, idx, day))
 
-    priority = {"trail_update": 0, "exit": 1, "entry": 2}
+    priority = {"trail_update": 0, "exit": 1, "momentum_watch": 2, "entry": 3}
     events.sort(key=lambda e: (e["time"] or "", priority.get(e["event_type"], 3)))
     return events
+
+
+def _build_combined_mtm_breakdown_at(day_trade: dict, idx, day: str, t: str, treat_as_open_at: str = "") -> tuple:
+    """
+    Returns (combined_mtm, breakdown_dict) at time t.
+    treat_as_open_at: force-close time — legs exiting AT this time are treated
+    as open (unrealized) to show pre-close MTM.
+    """
+    all_st = []
+    for leg in day_trade.get("legs", []):
+        for st in leg.get("sub_trades", []):
+            all_st.append(st)
+
+    realized_items = []
+    unrealized_items = []
+
+    for st in all_st:
+        entry_t = st.get("entry_time", "")
+        exit_t = st.get("exit_time", "")
+        lots = st.get("_lots", 1)
+        lot_size = st.get("_lot_size", 1)
+        expiry = st.get("_expiry", "")
+        strike = st.get("strike")
+        otype = st.get("option_type", "")
+        lazy_id = st.get("lazy_leg_id", "")
+        p_num = st.get("parent_leg_num", "")
+        p_type = st.get("parent_leg_type", "")
+        direction = -1 if st.get("entry_action", "SELL") == "SELL" else 1
+        leg_label = f"Lazy({lazy_id})" if lazy_id else f"Leg {p_num} ({p_type})"
+
+        is_force_closed = treat_as_open_at and exit_t == treat_as_open_at
+        is_post_sl_reentry = treat_as_open_at and entry_t >= treat_as_open_at and st.get("overall_reentry_cycle")
+
+        if is_post_sl_reentry:
+            continue
+
+        if exit_t and exit_t <= t and not is_force_closed:
+            pnl = st.get("pnl", 0)
+            realized_items.append({
+                "leg": leg_label,
+                "entry_time": entry_t,
+                "entry_price": round(st.get("entry_price", 0), 2),
+                "actual_entry_market_price": round(st.get("actual_entry_market_price", st.get("entry_price", 0)), 2),
+                "exit_time": exit_t,
+                "exit_price": round(st.get("exit_price", 0), 2),
+                "actual_exit_market_price": round(st.get("actual_exit_market_price", st.get("exit_price", 0)), 2),
+                "exit_reason": st.get("exit_reason", ""),
+                "qty": lots * lot_size,
+                "pnl": round(pnl, 2),
+                "lazy_leg_id": lazy_id or None,
+            })
+            continue
+
+        if not entry_t or entry_t > t:
+            continue
+
+        entry_price = float(st.get("entry_price", 0) or 0)
+        # If the position has just entered on this same candle, show the actual
+        # entry fill price as the current price. Using candle close here makes the
+        # UI look inconsistent because entry time == current time but price differs.
+        if entry_t == t and entry_price > 0:
+            cur_price = entry_price
+        else:
+            cur_price = idx.get_close(day, t, expiry, strike, otype)
+            if cur_price is None:
+                continue
+        qty = lots * lot_size
+        unr_pnl = round((cur_price - entry_price) * qty * direction, 2)
+        initial_sl_price = float(st.get("initial_sl_price", 0) or 0)
+        current_sl_price = st.get("sl_price")
+        trail_type = str(st.get("trail_type", "None") or "None")
+        trail_x = float(st.get("trail_x", 0) or 0)
+        trail_y = float(st.get("trail_y", 0) or 0)
+
+        if (
+            trail_type != "None"
+            and trail_x > 0
+            and trail_y > 0
+            and initial_sl_price > 0
+            and entry_t < t
+        ):
+            candles = idx.get_candles_range(day, _add_one_minute(entry_t), t, expiry, strike, otype)
+            if candles:
+                if "Percentage" in trail_type:
+                    trail_x_pts = entry_price * trail_x / 100
+                    trail_y_pts = entry_price * trail_y / 100
+                else:
+                    trail_x_pts = trail_x
+                    trail_y_pts = trail_y
+
+                if trail_x_pts > 0 and trail_y_pts > 0:
+                    if st.get("entry_action", "SELL") == "SELL":
+                        favorable = max(entry_price - min(c["low"] for c in candles), 0)
+                        raw_new_sl = initial_sl_price - int(favorable // trail_x_pts) * trail_y_pts
+                        current_sl_price = min(initial_sl_price, raw_new_sl)
+                    else:
+                        favorable = max(max(c["high"] for c in candles) - entry_price, 0)
+                        raw_new_sl = initial_sl_price + int(favorable // trail_x_pts) * trail_y_pts
+                        current_sl_price = max(initial_sl_price, raw_new_sl)
+                    current_sl_price = round(float(current_sl_price), 2)
+
+        unrealized_items.append({
+            "leg": leg_label,
+            "entry_time": entry_t,
+            "entry_price": round(st.get("entry_price", 0), 2),
+            "actual_entry_market_price": round(st.get("actual_entry_market_price", st.get("entry_price", 0)), 2),
+            "candle_time": t,
+            "cur_price": round(cur_price, 2),
+            "qty": qty,
+            "unrealized_pnl": unr_pnl,
+            "lazy_leg_id": lazy_id or None,
+            "initial_sl_price": round(initial_sl_price, 2) if initial_sl_price > 0 else None,
+            "current_sl_price": round(float(current_sl_price), 2) if current_sl_price not in (None, "") else None,
+            "target_price": round(float(st.get("tgt_price", 0)), 2) if float(st.get("tgt_price", 0) or 0) > 0 else None,
+            "trail_type": trail_type,
+            "trail_x": trail_x,
+            "trail_y": trail_y,
+        })
+
+    realized_total = round(sum(x["pnl"] for x in realized_items), 2)
+    unrealized_total = round(sum(x["unrealized_pnl"] for x in unrealized_items), 2)
+    combined = round(realized_total + unrealized_total, 2)
+    breakdown = {
+        "candle_time": t,
+        "realized": realized_items,
+        "realized_total": realized_total,
+        "unrealized": unrealized_items,
+        "unrealized_total": unrealized_total,
+        "combined_mtm": combined,
+    }
+    return combined, breakdown
 
 
 def _build_trade_explanation_content(
@@ -1343,6 +1511,47 @@ def _build_trade_explanation_content(
                 "leg": leg,
                 "kind": "Trailing SL changing",
                 "description": desc,
+                "combined_mtm": ev.get("combined_mtm"),
+                "combined_mtm_breakdown": ev.get("combined_mtm_breakdown"),
+            }
+            if active_sl_threshold:
+                step_obj["overall_sl_limit"] = active_sl_threshold
+            if active_tgt_threshold:
+                step_obj["overall_target_limit"] = active_tgt_threshold
+            steps.append(step_obj)
+        elif ev_type == "momentum_watch":
+            mom_type = str(ev.get("momentum_type", "")).replace("MomentumType.", "")
+            strike = ev.get("strike", "")
+            option_type = ev.get("option_type", "")
+            base_price = ev.get("momentum_base_price", 0)
+            target_price = ev.get("momentum_target_price", 0)
+            listen_time = ev.get("momentum_listen_time", "")
+            atm_strike = ev.get("atm_strike", "")
+            atm_price = ev.get("atm_price_at_listen_time", 0)
+            spot_listen = ev.get("spot_at_listen_time", 0)
+            desc = (
+                f"Simple momentum check started at {listen_time or time} for {strike} {option_type}. "
+                f"Base price ₹{base_price}, target trigger ₹{target_price}, type {mom_type} {ev.get('momentum_value', 0)}. "
+                f"Spot at check time {spot_listen}, ATM strike {atm_strike}, ATM price ₹{atm_price}."
+            )
+            step_obj = {
+                "step": step_num,
+                "time": time,
+                "event_type": "momentum_watch",
+                "parent_leg": parent_leg,
+                "leg": leg,
+                "kind": "Simple momentum checking",
+                "description": desc,
+                "combined_mtm": ev.get("combined_mtm"),
+                "combined_mtm_breakdown": ev.get("combined_mtm_breakdown"),
+                "momentum_type": mom_type,
+                "momentum_value": ev.get("momentum_value", 0),
+                "momentum_base_price": base_price,
+                "momentum_target_price": target_price,
+                "momentum_listen_time": listen_time,
+                "atm_strike": atm_strike,
+                "atm_price_at_listen_time": atm_price,
+                "spot_at_listen_time": spot_listen,
             }
             if active_sl_threshold:
                 step_obj["overall_sl_limit"] = active_sl_threshold
@@ -1683,7 +1892,7 @@ def _summary(trades: list) -> dict:
     rr = round(avg_win / abs(avg_loss), 4) if avg_loss != 0 else 0
 
     # AlgoTest: Overall Profit / Max Drawdown (no year division)
-    romd = round(overall / max_dd, 4) if max_dd != 0 else "nan"
+    romd = round(overall / max_dd, 4) if max_dd != 0 else 0.0
 
     # AlgoTest Expectancy = (win% × avgWin) − (loss% × |avgLoss|)
     expectancy_val = round((win_rate * avg_win) - (loss_rate * abs(avg_loss)), 2)
@@ -1791,6 +2000,7 @@ def _build_index_from_raw(raw: list) -> "DataIndex":
     idx.high_index    = {}
     idx.low_index     = {}
     idx.spot_index    = {}
+    idx.delta_index   = {}
     _ei = defaultdict(set)
     _at = defaultdict(set)
     _tm = defaultdict(list)
@@ -1807,11 +2017,14 @@ def _build_index_from_raw(raw: list) -> "DataIndex":
             spot     = float(c.get("spot_price", 0))
             high     = float(c.get("high", close))
             low      = float(c.get("low",  close))
+            delta    = c.get("delta")
             key = (date_str, time_str, expiry, strike, otype)
             idx.candle_index[key] = close
             idx.high_index[key]   = high
             idx.low_index[key]    = low
             idx.spot_index[(date_str, time_str)] = spot
+            if delta is not None:
+                idx.delta_index[key] = float(delta)
             _ei[date_str].add(expiry)
             _at[date_str].add(time_str)
             _tm[(date_str, expiry, strike, otype)].append(time_str)
@@ -1833,8 +2046,8 @@ def _build_index_from_raw(raw: list) -> "DataIndex":
 
 def _save_pkl5(idx: "DataIndex", path: pathlib.Path):
     """Save full DataIndex as a single pickle5 file (~4.5MB, loads in ~40ms)."""
-    # Detect whether high/low are real data or aliases of candle_index
     has_hl = idx.high_index is not idx.candle_index
+    delta_index = getattr(idx, 'delta_index', {})
     data = {
         'candle_index':  idx.candle_index,
         'spot_index':    idx.spot_index,
@@ -1843,6 +2056,7 @@ def _save_pkl5(idx: "DataIndex", path: pathlib.Path):
         '_time_map':     idx._time_map,
         'strikes_index': idx.strikes_index,
         'has_hl':        has_hl,
+        'delta_index':   delta_index,
     }
     if has_hl:
         data['high_index'] = idx.high_index
@@ -1855,6 +2069,10 @@ def _load_pkl5(path: pathlib.Path) -> "DataIndex":
     """Load DataIndex from .pkl5 file in ~40ms."""
     with open(path, 'rb') as f:
         d = _pickle.load(f)
+    # Cache files saved before delta support was added lack 'delta_index'.
+    # Raise so the caller invalidates the file and falls through to MongoDB rebuild.
+    if 'delta_index' not in d:
+        raise KeyError("stale cache: missing delta_index")
     idx = DataIndex.__new__(DataIndex)
     idx.candle_index  = d['candle_index']
     idx.spot_index    = d['spot_index']
@@ -1862,6 +2080,7 @@ def _load_pkl5(path: pathlib.Path) -> "DataIndex":
     idx._all_times    = d['_all_times']
     idx._time_map     = d['_time_map']
     idx.strikes_index = d['strikes_index']
+    idx.delta_index   = d['delta_index']
     if d.get('has_hl'):
         idx.high_index = d['high_index']
         idx.low_index  = d['low_index']
@@ -1908,6 +2127,7 @@ def _load_index_cached(db, underlying: str, date: str) -> "Optional[DataIndex]":
                 idx._all_times    = d['_all_times']
                 idx._time_map     = d['_time_map']
                 idx.strikes_index = d['strikes_index']
+                idx.delta_index   = d.get('delta_index', {})
                 if d.get('has_hl'):
                     idx.high_index = d['high_index']
                     idx.low_index  = d['low_index']
@@ -1931,6 +2151,7 @@ def _load_index_cached(db, underlying: str, date: str) -> "Optional[DataIndex]":
                 idx._all_times    = d['_all_times']
                 idx._time_map     = d['_time_map']
                 idx.strikes_index = d['strikes_index']
+                idx.delta_index   = d.get('delta_index', {})
                 if d.get('has_hl'):
                     idx.high_index = d['high_index']
                     idx.low_index  = d['low_index']
@@ -1958,6 +2179,7 @@ def _load_index_cached(db, underlying: str, date: str) -> "Optional[DataIndex]":
                 'expiry_index': idx.expiry_index, '_all_times': idx._all_times,
                 '_time_map': idx._time_map, 'strikes_index': idx.strikes_index,
                 'has_hl': idx.high_index is not idx.candle_index,
+                'delta_index': idx.delta_index,
             }
             r.set(key, _pkl.dumps(d, protocol=5))
         except Exception:
@@ -1990,6 +2212,7 @@ def _load_index_cached(db, underlying: str, date: str) -> "Optional[DataIndex]":
             keys  = list(zip(date_strs, time_strs, expiries, strikes, types))
             idx   = DataIndex.__new__(DataIndex)
             idx.candle_index = dict(zip(keys, closes))
+            idx.delta_index  = {}   # parquet format predates delta — no delta data
             if highs is closes:
                 idx.high_index = idx.candle_index
                 idx.low_index  = idx.candle_index
@@ -2074,6 +2297,13 @@ def run_backtest(request: dict, on_progress=None) -> dict:
     holidays      = db.get_holidays()
     lot_size      = db.get_lot_size(start_date, underlying)
     trading_days  = _get_trading_days(start_date, end_date, holidays)
+
+    # Preflight: fail fast if no historical data exists for this range
+    if not db.has_data(start_date, end_date, underlying):
+        raise ValueError(
+            f"No data available for {underlying} between {start_date} and {end_date}. "
+            f"Please check that data has been loaded into option_chain_historical_data."
+        )
     expiry_rules  = db.get_expiry_rules(underlying)   # loaded once from DB
     total_days   = len(trading_days)
 

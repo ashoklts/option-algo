@@ -55,13 +55,15 @@ def _parse_candle(candle: str) -> tuple[str, str]:
     return date_part, candle_ts
 
 
-def _to_series(docs: list, price_field: str = "spot_price") -> dict:
+def _to_series(docs: list) -> dict:
     timestamps, closes = [], []
     for doc in docs:
         ts = str(doc.get("timestamp") or "").strip()
         if ts:
             timestamps.append(ts)
-            closes.append(float(doc.get(price_field) or 0.0))
+            # prefer new 'close' field; fall back to legacy 'spot_price'
+            price = doc.get("close") or doc.get("spot_price") or 0.0
+            closes.append(float(price))
     return {"timestamp": timestamps, "close": closes}
 
 
@@ -161,7 +163,7 @@ def get_spot_historical_data(
     spot_docs = list(
         col.find(
             {**time_q, "underlying": ul, "token": {"$ne": VIX_TOKEN}},
-            {"_id": 0, "timestamp": 1, "spot_price": 1, "token": 1},
+            {"_id": 0, "timestamp": 1, "close": 1, "spot_price": 1, "token": 1},
         ).sort("timestamp", 1)
     )
     has_spot = bool(spot_docs)
@@ -176,7 +178,7 @@ def get_spot_historical_data(
     vix_docs = list(
         col.find(
             {**time_q, "token": VIX_TOKEN},
-            {"_id": 0, "timestamp": 1, "spot_price": 1},
+            {"_id": 0, "timestamp": 1, "close": 1, "spot_price": 1},
         ).sort("timestamp", 1)
     )
     has_vix = bool(vix_docs)

@@ -44,17 +44,62 @@ def generate_session(request_token: str) -> dict:
     return session
 
 
+def sync_kite_access_token_by_credentials(
+    db, api_key: str, api_secret: str, access_token: str, login_time: str,
+    *, skip_collection: str = "",
+) -> None:
+    """
+    Mirror a freshly-issued Kite access_token into every OTHER store that
+    holds this same (api_key, api_secret) pair.
+
+    `broker_configuration` (trade execution, used by the Positions page /
+    live order placement) and `kite_market_config` (market-data feed) each
+    keep their own independent copy of a Kite login. When both happen to be
+    registered with the same Zerodha api_key+api_secret, they describe the
+    same account — without this, logging in through only one flow leaves the
+    other one's access_token silently stale until its own next login.
+    `skip_collection` is the collection the caller already wrote directly,
+    so it's not redundantly re-matched against itself.
+    """
+    api_key = str(api_key or "").strip()
+    api_secret = str(api_secret or "").strip()
+    if not api_key or not api_secret or not access_token:
+        return
+    set_fields = {"access_token": access_token, "login_time": login_time}
+    if skip_collection != "broker_configuration":
+        db["broker_configuration"].update_many(
+            {"api_key": api_key, "api_secret": api_secret},
+            {"$set": set_fields},
+        )
+    if skip_collection != "kite_market_config":
+        db["kite_market_config"].update_many(
+            {"broker": "kite", "api_key": api_key, "api_secret": api_secret},
+            {"$set": set_fields},
+        )
+
+
 def save_kite_session(db, broker_doc_id: str, session: dict):
-    """Persist access_token and login time into broker_configuration."""
+    """Persist access_token and login time into broker_configuration, and
+    mirror it to kite_market_config when they share the same api_key/api_secret
+    (see sync_kite_access_token_by_credentials)."""
     from bson import ObjectId
+    access_token = session.get("access_token")
+    login_time = datetime.now(timezone.utc).isoformat()
+    doc = db["broker_configuration"].find_one(
+        {"_id": ObjectId(broker_doc_id)}, {"api_key": 1, "api_secret": 1},
+    ) or {}
     db["broker_configuration"].update_one(
         {"_id": ObjectId(broker_doc_id)},
         {"$set": {
-            "access_token":  session.get("access_token"),
-            "login_time":    datetime.now(timezone.utc).isoformat(),
+            "access_token":  access_token,
+            "login_time":    login_time,
             "user_id":       session.get("user_id"),
             "user_name":     session.get("user_name"),
         }},
+    )
+    sync_kite_access_token_by_credentials(
+        db, doc.get("api_key"), doc.get("api_secret"), access_token, login_time,
+        skip_collection="broker_configuration",
     )
 
 

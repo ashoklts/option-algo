@@ -32,11 +32,22 @@ from features.runtime_mode_registry import runtime_mode_registry
 logger = logging.getLogger(__name__)
 
 SPOT_TOKEN_BY_UNDERLYING = {
-    "NIFTY": "256265",
-    "BANKNIFTY": "260105",
-    "FINNIFTY": "257801",
-    "SENSEX": "265",
+    "NIFTY":      "256265",
+    "BANKNIFTY":  "260105",
+    "FINNIFTY":   "257801",
+    "SENSEX":     "265",
     "MIDCPNIFTY": "288009",
+}
+
+# Standardised token key stored in option_chain_index_spot (matches frontend NSE_0x keys)
+NSE_TOKEN_BY_UNDERLYING = {
+    "NIFTY":      "NSE_01",
+    "INDIAVIX":   "NSE_00",
+    "SENSEX":     "NSE_02",
+    "BANKNIFTY":  "NSE_03",
+    "BANKEX":     "NSE_04",
+    "FINNIFTY":   "NSE_05",
+    "MIDCPNIFTY": "NSE_06",
 }
 
 
@@ -97,14 +108,24 @@ def _persist_spot_ticks(db: MongoData, spot_ticks_received: list[tuple[str, floa
     try:
         spot_col = db._db["option_chain_index_spot"]
         for underlying, spot_price, ts in spot_ticks_received:
+            ul = str(underlying or "").upper()
+            kite_tok = SPOT_TOKEN_BY_UNDERLYING.get(ul, "")
+            nse_tok  = NSE_TOKEN_BY_UNDERLYING.get(ul, kite_tok)
             spot_col.update_one(
-                {"underlying": underlying, "timestamp": ts},
+                {"underlying": ul, "timestamp": ts},
                 {"$set": {
-                    "underlying": underlying,
-                    "spot_price": float(spot_price),
-                    "timestamp": ts,
-                    "token": SPOT_TOKEN_BY_UNDERLYING.get(str(underlying or "").upper(), ""),
-                    "source": source,
+                    "underlying":  ul,
+                    "timestamp":   ts,
+                    "token":       nse_tok,
+                    "kite_token":  kite_tok,
+                    "close":       float(spot_price),
+                    "spot_price":  float(spot_price),  # kept for backward compat
+                    "open":        0.0,
+                    "high":        0.0,
+                    "low":         0.0,
+                    "volume":      0,
+                    "oi":          0,
+                    "source":      source,
                 }},
                 upsert=True,
             )

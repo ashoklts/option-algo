@@ -522,7 +522,7 @@ def record_sl_hit(
     meta     = _trade_meta(trade)
     trade_id = str(trade.get('_id') or '')
     entry_price = _safe_float((leg.get('entry_trade') or {}).get('price'))
-    quantity    = int(leg.get('quantity') or 0)
+    quantity    = int(leg.get('quantity') or 0) * max(1, int(leg.get('lot_size') or 1))
     is_sell     = 'sell' in str(leg.get('position') or '').lower()
     pnl = (entry_price - exit_price) * quantity if is_sell else (exit_price - entry_price) * quantity
 
@@ -554,7 +554,7 @@ def record_target_hit(
     meta     = _trade_meta(trade)
     trade_id = str(trade.get('_id') or '')
     entry_price = _safe_float((leg.get('entry_trade') or {}).get('price'))
-    quantity    = int(leg.get('quantity') or 0)
+    quantity    = int(leg.get('quantity') or 0) * max(1, int(leg.get('lot_size') or 1))
     is_sell     = 'sell' in str(leg.get('position') or '').lower()
     pnl = (entry_price - exit_price) * quantity if is_sell else (exit_price - entry_price) * quantity
 
@@ -801,7 +801,7 @@ def record_force_exit(
     meta     = _trade_meta(trade)
     trade_id = str(trade.get('_id') or '')
     entry_price = _safe_float((leg.get('entry_trade') or {}).get('price'))
-    quantity    = int(leg.get('quantity') or 0)
+    quantity    = int(leg.get('quantity') or 0) * max(1, int(leg.get('lot_size') or 1))
     is_sell     = 'sell' in str(leg.get('position') or '').lower()
     pnl = (entry_price - exit_price) * quantity if is_sell else (exit_price - entry_price) * quantity
 

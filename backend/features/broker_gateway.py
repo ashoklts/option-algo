@@ -17,6 +17,7 @@ Current supported brokers: kite (Zerodha), dhan (DhanHQ)
 from __future__ import annotations
 
 import threading
+import time
 
 # ── Active broker detection ───────────────────────────────────────────────────
 # Cached after first call. One broker per server session (restart to switch).
@@ -44,6 +45,47 @@ def _active_broker() -> str:
             name = 'kite'
         _broker_cache.append(name)
         return name
+
+
+def get_active_broker_token_status() -> tuple[bool, str]:
+    """
+    (is_valid, message) for the kite_market_config record currently marked
+    enabled=True. Checks token presence and, where the broker stores one
+    (Dhan's expiry_time — tokens expire ~24h after login), whether it has
+    already expired. Kite has no stored expiry — its session is verified
+    live by the TokenException handling at each kite.quote() call site
+    instead, so this is presence-only for kite.
+
+    Without this, a missing/expired token just makes every downstream quote
+    call fail silently and the option chain renders as ltp=0 for every
+    strike — indistinguishable from "broker has no data right now".
+    """
+    from features.mongo_data import MongoData  # type: ignore
+    from datetime import datetime as _dt
+
+    broker = _active_broker()
+    _db = MongoData()
+    try:
+        cfg = _db._db['kite_market_config'].find_one({'broker': broker, 'enabled': True}) or {}
+    finally:
+        _db.close()
+
+    if not cfg:
+        return False, f"No {broker.capitalize()} broker is enabled in kite_market_config — please login from Broker Login."
+
+    access_token = str(cfg.get('access_token') or '').strip()
+    if not access_token:
+        return False, f"{broker.capitalize()} is not logged in — please login from Broker Login."
+
+    expiry_time = str(cfg.get('expiry_time') or '').strip()
+    if expiry_time:
+        try:
+            if _dt.fromisoformat(expiry_time) <= _dt.now():
+                return False, f"{broker.capitalize()} session expired — please re-login from Broker Login."
+        except ValueError:
+            pass
+
+    return True, ""
 
 
 def reset_broker_cache() -> None:
@@ -119,6 +161,103 @@ def get_broker_ltp_map() -> dict[str, float]:
 _REST_QUOTE_CACHE: dict[str, tuple[float, dict]] = {}  # token → (epoch, result)
 _REST_QUOTE_CACHE_TTL = 3.0  # seconds — avoid 429 rate limit
 
+# token → last-seen-good {"ltp", "oi"}. Dhan's REST quote endpoint is rate
+# limited to ~1 req/sec per account; any concurrent caller (other open tabs/
+# pages polling the same broker) can push a burst over that limit and Dhan
+# returns 429. Previously that silently fell through to ltp=0 ("unavailable"),
+# which the UI showed as a literal 0.00 LTP. Never evict this — a stale-but-
+# real price is always a better fallback than 0.
+_LAST_GOOD_QUOTE: dict[str, dict] = {}
+
+# ── Global Dhan /marketfeed/quote rate gate ───────────────────────────────────
+# This app has *several* independent callers of Dhan's quote endpoint —
+# get_broker_rest_quotes() below, api.py's _fetch_dhan_market_data() (option
+# chain + stock spot), execution_socket.py's _fetch_dhan_index_quotes()
+# (index spot/change%), and live_quote_socket.py's background 3s REST-refresh
+# loop. Each one used to call Dhan directly with no idea any of the others
+# existed, so any two firing within Dhan's ~1 req/sec-per-account window
+# would 429 each other — confirmed live: an isolated test script calling the
+# exact same endpoint with the exact same tokens got real data every time,
+# while the same call made *through* the running server (competing with the
+# live-quote WS's background refresh loop) got 429'd consistently. Every
+# caller now funnels through dhan_quote_post() so the whole app shares one
+# clock instead of each call site guessing with its own ad-hoc sleep.
+_DHAN_QUOTE_LOCK = threading.Lock()
+_dhan_quote_last_call_at = 0.0
+_DHAN_QUOTE_MIN_INTERVAL = 1.05  # seconds
+
+
+def wait_for_dhan_slot(min_interval: float = _DHAN_QUOTE_MIN_INTERVAL) -> None:
+    """
+    Block until the shared Dhan rate-gate clock has a free slot, then claim it.
+
+    Same lock/clock as dhan_quote_post() above, but blocking instead of
+    skip-on-miss — for callers that need the call to eventually succeed
+    (e.g. historical-data backfills) rather than callers that are fine
+    falling back to a cached value (live quote polling). Use this so
+    non-quote Dhan REST calls line up on the *same* clock as the quote
+    pollers instead of running their own independent sleep() and 429-ing
+    each other, which is the exact failure mode this lock was built for.
+    """
+    global _dhan_quote_last_call_at
+    while True:
+        with _DHAN_QUOTE_LOCK:
+            now = time.monotonic()
+            remaining = min_interval - (now - _dhan_quote_last_call_at)
+            if remaining <= 0:
+                _dhan_quote_last_call_at = now
+                return
+        time.sleep(remaining)
+
+
+def _dhan_quote_http(req_body: dict, access_token: str, client_id: str, timeout: float):
+    import requests as _req
+    return _req.post(
+        "https://api.dhan.co/v2/marketfeed/quote",
+        headers={
+            "access-token": access_token,
+            "client-id": client_id,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        json=req_body,
+        timeout=timeout,
+    )
+
+
+def dhan_quote_post(req_body: dict, access_token: str, client_id: str, timeout: float = 15.0):
+    """
+    POST to Dhan's /v2/marketfeed/quote, globally throttled across every
+    caller in this process. Returns None (never raises, never blocks) if
+    called too soon after the last call anywhere in the app — callers
+    already fall back to their own last-good cache for that case, which
+    costs nothing and is strictly better than burning the shared rate-limit
+    budget on a call likely to 429 anyway.
+    """
+    global _dhan_quote_last_call_at
+    with _DHAN_QUOTE_LOCK:
+        now = time.monotonic()
+        if now - _dhan_quote_last_call_at < _DHAN_QUOTE_MIN_INTERVAL:
+            return None
+        _dhan_quote_last_call_at = now
+
+    return _dhan_quote_http(req_body, access_token, client_id, timeout)
+
+
+def dhan_quote_post_blocking(req_body: dict, access_token: str, client_id: str, timeout: float = 15.0):
+    """
+    Same call as dhan_quote_post(), but waits for the shared rate-gate slot
+    instead of skipping when busy — for callers where a skip means "this
+    request just lost its data", not "fall back to a cache". A request that
+    fetches the index spot then immediately fetches the whole option chain
+    (see api.py's get_live_greeks_chain) makes two dhan_quote_post() calls
+    within the same handler, microseconds apart — far under the 1.05s gate —
+    so the second one always lost the race and the entire chain rendered as
+    ltp=0 on every single load, not just under real rate-limit contention.
+    """
+    wait_for_dhan_slot()
+    return _dhan_quote_http(req_body, access_token, client_id, timeout)
+
 
 def get_broker_rest_quotes(
     token_ids: list[str],
@@ -137,6 +276,18 @@ def get_broker_rest_quotes(
     from features.dhan_ticker import dhan_ticker_manager as _dtm  # type: ignore
 
     result: dict[str, dict] = {}
+
+    def _fill_last_good(res: dict[str, dict]) -> dict[str, dict]:
+        # Last resort for any token this call couldn't price (most often a
+        # 429 burst, see _LAST_GOOD_QUOTE doc above): reuse the last real
+        # price we ever saw for it instead of surfacing ltp=0 ("unavailable").
+        for t in token_ids:
+            if t not in res or not res[t].get("ltp"):
+                cached = _LAST_GOOD_QUOTE.get(t)
+                if cached:
+                    res[t] = cached
+        return res
+
     ws_ltp = _dtm.ltp_map
     ws_oi  = _dtm.oi_map
     ws_ts  = _dtm.ltp_ts_map
@@ -165,6 +316,8 @@ def get_broker_rest_quotes(
         print(f'[REST_QUOTES_DEBUG] token={t} ws_ltp={raw_ltp} ws_ts={ts_str} tick_age={tick_age_sec} using_ws_ltp={ltp}')
         if ltp > 0 or oi > 0:
             result[t] = {"ltp": ltp, "oi": oi}
+            if ltp > 0:
+                _LAST_GOOD_QUOTE[t] = {"ltp": ltp, "oi": oi}
 
     # REST fallback for tokens missing LTP (BSE_FNO never gets WS ticks after hours)
     missing = [t for t in token_ids if t not in result or result[t]["ltp"] == 0]
@@ -175,10 +328,27 @@ def get_broker_rest_quotes(
         f'  |  requested={list(token_ids)}  subscribed_count={len(_subscribed)}'
         f'  |  not_in_subscribed={_not_subscribed}'
     )
-    if not missing:
-        return result
 
     _segs = ws_segments or {}
+
+    # Subscribe any never-seen tokens to the WS so the *next* poll resolves
+    # straight from ltp_map (in-memory, no network round trip, no rate limit)
+    # instead of hitting Dhan's REST endpoint again. This is fire-and-forget —
+    # ticks arrive asynchronously, so it can't help resolve THIS call, but it's
+    # what makes repeated polling for the same legs converge to near-zero
+    # latency instead of one REST call every poll forever.
+    if _not_subscribed:
+        try:
+            new_by_segment: dict[str, list[str]] = {}
+            for t in _not_subscribed:
+                new_by_segment.setdefault(_segs.get(t, "NSE_FNO").upper(), []).append(t)
+            for segment, tokens in new_by_segment.items():
+                _dtm.subscribe_tokens(tokens, segment)
+        except Exception as exc:
+            print(f'[REST_QUOTES_DEBUG] WS subscribe error: {exc}')
+
+    if not missing:
+        return _fill_last_good(result)
 
     # Serve from REST cache to avoid 429 rate limit
     import time as _tc
@@ -193,10 +363,16 @@ def get_broker_rest_quotes(
     missing = still_missing
 
     if not missing:
-        return result
+        return _fill_last_good(result)
 
-    nse_missing = [t for t in missing if _segs.get(t, "NSE_FNO").upper() != "BSE_FNO"]
-    bse_missing = [t for t in missing if _segs.get(t, "").upper() == "BSE_FNO"]
+    # Group by segment dynamically (not just NSE_FNO/BSE_FNO) so a caller can
+    # fold IDX_I (index/spot) tokens into this same batch — one Dhan REST call
+    # covering every leg + the underlying's spot price, instead of a separate
+    # sequential call per segment (which is what previously forced a blind
+    # sleep between them to dodge back-to-back 429s).
+    missing_by_segment: dict[str, list[str]] = {}
+    for t in missing:
+        missing_by_segment.setdefault(_segs.get(t, "NSE_FNO").upper(), []).append(t)
 
     try:
         cfg = db["kite_market_config"].find_one({"broker": "dhan", "enabled": True}) or {}
@@ -204,7 +380,7 @@ def get_broker_rest_quotes(
         client_id    = str(cfg.get("user_id") or cfg.get("dhan_client_id") or "").strip()
         if not access_token:
             print(f'[REST_QUOTES_DEBUG] no access_token in db — REST skipped')
-            return result
+            return _fill_last_good(result)
 
         def _to_int(tok: str) -> int | None:
             """Strip exchange prefix and convert to int: 'NSE_54808' → 54808."""
@@ -214,59 +390,93 @@ def get_broker_rest_quotes(
             except (ValueError, TypeError):
                 return None
 
-        import requests as _req
-        req_body: dict = {}
-        if nse_missing:
-            req_body["NSE_FNO"] = [v for t in nse_missing if t and (v := _to_int(t)) is not None]
-        if bse_missing:
-            req_body["BSE_FNO"] = [v for t in bse_missing if t and (v := _to_int(t)) is not None]
-        if not req_body:
-            print(f'[REST_QUOTES_DEBUG] req_body empty (token format issue?) — REST skipped')
-            return result
-
-        print(f'[REST_QUOTES_DEBUG] calling Dhan REST req_body={req_body}')
-        resp = _req.post(
-            "https://api.dhan.co/v2/marketfeed/quote",
-            headers={
-                "access-token": access_token,
-                "client-id": client_id,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            json=req_body,
-            timeout=10,
-        )
-        print(f'[REST_QUOTES_DEBUG] REST status={resp.status_code} response={resp.text[:500]}')
         # Build reverse map: numeric_str → original prefixed token (e.g. "54808" → "NSE_54808")
         _numeric_to_original: dict[str, str] = {}
         for t in missing:
             n = t.split("_", 1)[-1] if "_" in t else t
             _numeric_to_original.setdefault(n, t)
 
-        if resp.status_code == 200:
-            raw = resp.json()
-            data = raw.get("data") or raw
-            _rest_epoch = _tc.time()
-            for exch in ("NSE_FNO", "BSE_FNO"):
-                for tok, v in (data.get(exch) or {}).items():
-                    if not isinstance(v, dict):
-                        continue
-                    ltp = float(v.get("last_price") or 0)
-                    oi  = int(v.get("oi") or 0)
-                    tok_str = str(tok)
-                    for _key in (tok_str, _numeric_to_original.get(tok_str, tok_str)):
-                        existing = result.get(_key, {"ltp": 0, "oi": 0})
-                        entry = {
-                            "ltp": ltp if ltp > 0 else existing["ltp"],
-                            "oi":  oi  if oi  > 0 else existing["oi"],
-                        }
-                        result[_key] = entry
-                        _REST_QUOTE_CACHE[_key] = (_rest_epoch, entry)
+        # Dhan caps /marketfeed/quote at ~1000 ids per segment per request.
+        # A caller pooling tokens across many sessions/strategies (see
+        # live_quote_socket.py's hub-wide union) can realistically exceed
+        # that, and one oversized request body either gets rejected outright
+        # or silently truncated — chunk every segment to _BATCH and issue one
+        # request per chunk-index, packing all segments for that index into
+        # the same request (Dhan's cap is per-segment, not per-request, so
+        # this still covers every segment in as few round trips as possible).
+        _BATCH = 500
+        _max_len = max((len(ids) for ids in missing_by_segment.values()), default=0)
+        _num_batches = (_max_len + _BATCH - 1) // _BATCH if _max_len else 0
+
+        for _batch_idx in range(_num_batches):
+            req_body: dict = {
+                segment: [
+                    v for t in ids[_batch_idx * _BATCH:(_batch_idx + 1) * _BATCH]
+                    if t and (v := _to_int(t)) is not None
+                ]
+                for segment, ids in missing_by_segment.items()
+            }
+            req_body = {segment: ids for segment, ids in req_body.items() if ids}
+            if not req_body:
+                continue
+
+            print(f'[REST_QUOTES_DEBUG] calling Dhan REST batch={_batch_idx} req_body={req_body}')
+            resp = dhan_quote_post(req_body, access_token, client_id, timeout=10.0)
+            if resp is None:
+                # Globally throttled — some other caller in this process hit
+                # Dhan within the last ~1.05s. Remaining batches (if any)
+                # would hit the same gate immediately, so stop here rather
+                # than spin through them for nothing — they, and this one,
+                # fall back to last-good below; a later refresh cycle picks
+                # up wherever this one left off.
+                print('[REST_QUOTES_DEBUG] skipped — global Dhan quote rate gate')
+                break
+            print(f'[REST_QUOTES_DEBUG] REST status={resp.status_code} response={resp.text[:500]}')
+
+            if resp.status_code == 200:
+                raw = resp.json()
+                data = raw.get("data") or raw
+                _rest_epoch = _tc.time()
+                for exch in req_body.keys():
+                    for tok, v in (data.get(exch) or {}).items():
+                        if not isinstance(v, dict):
+                            continue
+                        ltp = float(v.get("last_price") or 0)
+                        oi  = int(v.get("oi") or 0)
+                        tok_str = str(tok)
+                        for _key in (tok_str, _numeric_to_original.get(tok_str, tok_str)):
+                            existing = result.get(_key, {"ltp": 0, "oi": 0})
+                            entry = {
+                                "ltp": ltp if ltp > 0 else existing["ltp"],
+                                "oi":  oi  if oi  > 0 else existing["oi"],
+                            }
+                            result[_key] = entry
+                            _REST_QUOTE_CACHE[_key] = (_rest_epoch, entry)
+                            if entry["ltp"] > 0:
+                                _LAST_GOOD_QUOTE[_key] = entry
+            else:
+                # Most commonly a 429 — Dhan rate-limits /marketfeed/quote to
+                # roughly 1 req/sec per account, and any other open page/tab
+                # polling the same broker can burn that allowance. Don't let a
+                # rate-limited response wipe out tokens we've already priced —
+                # fall through to the _LAST_GOOD_QUOTE backfill below instead.
+                print(f'[REST_QUOTES_DEBUG] REST non-200 status={resp.status_code} — falling back to last-good cache')
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("[BROKER REST QUOTES] %s", exc)
         print(f'[REST_QUOTES_DEBUG] REST exception: {exc}')
+        from features.telegram_notifier import notify_admin
+        notify_admin('ltp_fetch_error', f'get_broker_rest_quotes Dhan REST call failed: {exc}')
 
+    result = _fill_last_good(result)
+    still_unpriced = [t for t in token_ids if not result.get(t, {}).get("ltp")]
+    if still_unpriced:
+        from features.telegram_notifier import notify_admin
+        notify_admin(
+            'ltp_fetch_error',
+            f'{len(still_unpriced)} token(s) have no LTP after REST fallback and no cached last-good price',
+            {'tokens': ','.join(still_unpriced[:10])},
+        )
     print(f'[REST_QUOTES_DEBUG] final_result={result}')
     return result
 
@@ -457,24 +667,23 @@ def get_broker_rest_client_with_token(access_token: str):
 
 
 def broker_get_login_url() -> str:
-    if _active_broker() == 'dhan':
-        return ''
+    # No Dhan-active gate here: Dhan doesn't use this OAuth redirect flow at
+    # all (it has its own consent-link flow), so these three functions are
+    # only ever exercised for Kite — gating them on "is Dhan the globally
+    # active market-data broker" only broke a user's ability to log into
+    # their own Kite account whenever Dhan happened to be active elsewhere.
     from features.kite_broker import get_login_url  # type: ignore
     return get_login_url()
 
 
-def broker_generate_session(request_token: str, api_secret: str = ''):
-    if _active_broker() == 'dhan':
-        return {}
+def broker_generate_session(request_token: str):
     from features.kite_broker import generate_session  # type: ignore
-    return generate_session(request_token, api_secret)
+    return generate_session(request_token)
 
 
-def save_broker_session(db, session: dict) -> None:
-    if _active_broker() == 'dhan':
-        return
+def save_broker_session(db, broker_doc_id: str, session: dict) -> None:
     from features.kite_broker import save_kite_session  # type: ignore
-    save_kite_session(db, session)
+    save_kite_session(db, broker_doc_id, session)
 
 
 def get_stored_broker_access_token(db) -> str:

@@ -49,6 +49,9 @@ from typing import Any
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
+from features.order_execution import place_broker_order
+from features.telegram_notifier import notify_admin, notify_user
+
 # ── broker_orders collection name ─────────────────────────────────────────────
 _BROKER_ORDERS_COL = 'broker_orders'
 
@@ -958,7 +961,13 @@ def _place_initial_protection_orders(
         tp_price = _round_to_tick(tp_price, round_up=not is_sell)
 
     symbol = str(leg.get('symbol') or hist_doc.get('symbol') or '').strip()
-    qty = int(fill_qty or leg.get('quantity') or hist_doc.get('quantity') or 0)
+    if fill_qty:
+        # Broker's own reported filled_quantity — already actual contracts.
+        qty = int(fill_qty)
+    else:
+        # Fallback: stored quantity is lot count, not contracts — multiply by lot_size.
+        _fallback_lot_size = int(leg.get('lot_size') or hist_doc.get('lot_size') or 1)
+        qty = int(leg.get('quantity') or hist_doc.get('quantity') or 0) * max(1, _fallback_lot_size)
     sl_order_id = ''
     tgt_order_id = ''
     leg_for_order = dict(leg)
@@ -1406,16 +1415,33 @@ def process_broker_order_update(
             f'[ORDER {status}][{source}] trade={trade_id} leg={leg_id} '
             f'order_id={order_id} reason={rejection_reason or "-"}'
         )
-        # SquareOffAllLegs: exit all filled open legs when any entry is rejected
+        # SquareOffAllLegs (opt-in config) OR — unconditionally — a sibling leg of
+        # this same strategy already entered and is still open: that's a partial-
+        # entry failure (one leg in, one leg errored), so pause the strategy and
+        # auto-exit whatever did get entered, regardless of the config flag.
         try:
             trade_doc = trades_col.find_one({'_id': trade_id})
             if trade_doc and str(trade_doc.get('activation_mode') or '').strip() == 'live':
                 strategy_cfg = trade_doc.get('strategy') or {}
                 sq_all_raw = str(strategy_cfg.get('SquareOffAllLegs') or 'False').strip().lower()
-                if sq_all_raw in ('true', '1', 'yes'):
+                square_off_all_legs_enabled = sq_all_raw in ('true', '1', 'yes')
+                has_sibling_open_leg = bool(hist_col.find_one({
+                    'trade_id': trade_id,
+                    'status': 1,
+                    'exit_trade': None,
+                    'entry_trade.entry_lifecycle_status': 'active',
+                }, {'_id': 1}))
+                if square_off_all_legs_enabled or has_sibling_open_leg:
                     broker = get_broker_for_trade(db, trade_doc)
                     if broker:
                         _rejection_squareoff_all(db, trade_doc, broker, now_ts, leg_id)
+                        pause_reason = 'partial_entry_failure' if has_sibling_open_leg else 'square_off_all_legs_config'
+                        notify_user(
+                            'strategy_paused',
+                            f'Strategy paused — leg {leg_id} entry {status.lower()} '
+                            f'({rejection_reason or "no reason given"}). Open legs were auto-exited.',
+                            {'trade_id': trade_id, 'leg_id': leg_id, 'reason': pause_reason},
+                        )
         except Exception as _sq_exc:
             log.error('[SQUAREOFF ALL LEGS ERROR] trade=%s: %s', trade_id, _sq_exc)
         return True
@@ -1432,8 +1458,11 @@ def get_broker_for_trade(db, trade: dict):
       - "flattrade" in name/icon → FlatTradeAdapter
       - otherwise                → KiteConnect (Zerodha)
 
-    Falls back to default KiteConnect via kite_market_config when no broker
-    is mapped on the trade.
+    Falls back to default broker via kite_market_config when no broker is mapped
+    on the trade — Kite or Dhan, whichever has enabled=True there. Dhan is only
+    reachable through this global-default fallback today, not as a per-trade
+    selectable broker_configuration account (Dhan credentials live in
+    kite_market_config, not broker_configuration).
     """
     broker_id = str(trade.get('broker') or '').strip()
 
@@ -1441,9 +1470,10 @@ def get_broker_for_trade(db, trade: dict):
         try:
             from bson import ObjectId
             from features.flattrade_broker import _is_flattrade_doc, get_flattrade_instance
+            from features.dhan_broker import _is_dhan_doc, get_dhan_instance
             broker_doc = db._db['broker_configuration'].find_one(
                 {'_id': ObjectId(broker_id)},
-                {'access_token': 1, 'user_id': 1, 'name': 1, 'broker_icon': 1},
+                {'access_token': 1, 'user_id': 1, 'name': 1, 'broker_icon': 1, 'broker_user_id': 1},
             ) or {}
             access_token = str(broker_doc.get('access_token') or '').strip()
             if access_token and _is_flattrade_doc(broker_doc):
@@ -1452,18 +1482,31 @@ def get_broker_for_trade(db, trade: dict):
                 if ft:
                     log.debug('broker=flattrade trade=%s', str(trade.get('_id') or ''))
                     return ft
+            elif access_token and _is_dhan_doc(broker_doc):
+                client_id = str(broker_doc.get('broker_user_id') or broker_doc.get('user_id') or '').strip()
+                dhan = get_dhan_instance(db, client_id, access_token)
+                if dhan:
+                    log.debug('broker=dhan trade=%s', str(trade.get('_id') or ''))
+                    return dhan
             elif access_token:
                 from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance
                 return get_kite_instance(access_token)
         except Exception as exc:
             log.debug('broker lookup error broker=%s: %s', broker_id, exc)
 
-    # Fallback — default Kite market config
+    # Fallback — default broker via kite_market_config (Kite or Dhan, whichever is enabled)
     try:
-        from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance
-        market_cfg = db._db['kite_market_config'].find_one({'enabled': True}, {'access_token': 1}) or {}
+        market_cfg = db._db['kite_market_config'].find_one({'enabled': True}, {'broker': 1, 'access_token': 1, 'user_id': 1, 'dhan_client_id': 1}) or {}
         access_token = str(market_cfg.get('access_token') or '').strip()
-        if access_token:
+        if access_token and str(market_cfg.get('broker') or '').strip().lower() == 'dhan':
+            from features.dhan_broker import get_dhan_instance
+            client_id = str(market_cfg.get('user_id') or market_cfg.get('dhan_client_id') or '').strip()
+            dhan = get_dhan_instance(db, client_id, access_token)
+            if dhan:
+                log.debug('broker=dhan (default) trade=%s', str(trade.get('_id') or ''))
+                return dhan
+        elif access_token:
+            from features.broker_gateway import get_broker_rest_client_with_token as get_kite_instance
             return get_kite_instance(access_token)
     except Exception as exc:
         log.debug('market config token lookup error: %s', exc)
@@ -1640,8 +1683,6 @@ def place_live_entry_order(
             'error': f'option_type_mismatch:{expected_option_type}!={resolved_option_type}',
         }
 
-    qty = 65
-
     kite = get_broker_for_trade(db, trade)
     if not kite:
         log.warning('[LIVE ORDER] no broker instance for trade=%s', trade_id)
@@ -1775,8 +1816,31 @@ def place_live_entry_order(
                 'error': '',
             }
 
-        order_id = kite.place_order(**order_params)
-        order_id = str(order_id or '').strip()
+        result = place_broker_order(
+            kite,
+            tradingsymbol=order_params['tradingsymbol'],
+            exchange=order_params['exchange'],
+            transaction_type=order_params['transaction_type'],
+            quantity=order_params['quantity'],
+            order_type=order_params['order_type'],
+            product=order_params['product'],
+            variety=order_params['variety'],
+            price=order_params.get('price', 0.0),
+            trigger_price=order_params.get('trigger_price', 0.0),
+            context={'trade_id': trade_id, 'leg_id': leg_id, 'purpose': 'entry', 'symbol': symbol},
+        )
+        if result['status'] != 'success':
+            log.error('[LIVE ORDER FAILED] trade=%s leg=%s symbol=%s: %s', trade_id, leg_id, symbol, result['message'])
+            log_db_error('broker_orders', 'place_entry_order', Exception(result['message']), f'{trade_id}/{leg_id}')
+            return {
+                'order_id':      '',
+                'order_type':    kite_order_type,
+                'limit_price':   limit_price,
+                'trigger_price': trigger_price,
+                'order_status':  'FAILED',
+                'error':         result['message'],
+            }
+        order_id = result['order_id']
         _register_active_entry_order(order_id)
 
         print(
@@ -1845,8 +1909,6 @@ def place_live_exit_order(
 
     if not symbol:
         return {'order_id': '', 'order_type': _ORDER_TYPE_MARKET, 'order_status': 'FAILED', 'error': 'no_symbol'}
-
-    qty = 65
 
     kite = get_broker_for_trade(db, trade)
     if not kite:
@@ -1963,8 +2025,31 @@ def place_live_exit_order(
                 'error': '',
             }
 
-        order_id = kite.place_order(**order_params)
-        order_id = str(order_id or '').strip()
+        result = place_broker_order(
+            kite,
+            tradingsymbol=order_params['tradingsymbol'],
+            exchange=order_params['exchange'],
+            transaction_type=order_params['transaction_type'],
+            quantity=order_params['quantity'],
+            order_type=order_params['order_type'],
+            product=order_params['product'],
+            variety=order_params['variety'],
+            price=order_params.get('price', 0.0),
+            trigger_price=order_params.get('trigger_price', 0.0),
+            context={'trade_id': trade_id, 'leg_id': leg_id, 'purpose': f'exit:{exit_reason}', 'symbol': symbol},
+        )
+        if result['status'] != 'success':
+            log.error('[LIVE EXIT ORDER FAILED] trade=%s leg=%s: %s', trade_id, leg_id, result['message'])
+            log_db_error('broker_orders', 'place_exit_order', Exception(result['message']), f'{trade_id}/{leg_id}')
+            return {
+                'order_id':      '',
+                'order_type':    kite_order_type,
+                'limit_price':   limit_price,
+                'trigger_price': trigger_price,
+                'order_status':  'FAILED',
+                'error':         result['message'],
+            }
+        order_id = result['order_id']
         _register_active_exit_order(order_id)
 
         print(
@@ -2312,7 +2397,8 @@ def poll_pending_order_fills(db) -> int:
                     try:
                         broker_orders_cache[cache_key] = kite.orders() or []
                     except Exception as exc:
-                        log.debug('kite.orders() error: %s', exc)
+                        log.error('kite.orders() error broker=%s: %s', broker_id or 'default', exc)
+                        notify_admin('broker_unreachable', f'kite.orders() failed broker={broker_id or "default"}: {exc}', {'broker': broker_id or 'default'})
                         broker_orders_cache[cache_key] = []
                 else:
                     broker_orders_cache[cache_key] = []
@@ -2439,7 +2525,8 @@ def poll_pending_order_fills(db) -> int:
                     try:
                         broker_orders_cache[cache_key] = kite.orders() or []
                     except Exception as exc:
-                        log.debug('kite.orders() exit error: %s', exc)
+                        log.error('kite.orders() exit error broker=%s: %s', broker_id or 'default', exc)
+                        notify_admin('broker_unreachable', f'kite.orders() (exit poll) failed broker={broker_id or "default"}: {exc}', {'broker': broker_id or 'default'})
                         broker_orders_cache[cache_key] = []
                 else:
                     broker_orders_cache[cache_key] = []
@@ -2609,28 +2696,26 @@ def live_manual_square_off_trade(db, trade: dict) -> dict:
         if exit_price <= 0:
             log.warning('[MANUAL SQ] no price for %s leg=%s', symbol, leg_id)
             continue
-        try:
-            if _is_live_order_punch_enabled():
-                order_id = broker.place_order(
-                    tradingsymbol=symbol,
-                    exchange=exchange,
-                    transaction_type=txn_type,
-                    quantity=qty,
-                    order_type=_ORDER_TYPE_LIMIT,
-                    price=exit_price,
-                    product=product,
-                    variety=_VARIETY_REGULAR,
-                )
-            else:
-                order_id = _build_simulated_live_order_id(trade_id, leg_id, 'manual_sq')
-            print(
-                f'[MANUAL SQ] exit placed trade={trade_id} leg={leg_id} '
-                f'symbol={symbol} txn={txn_type} qty={qty} price={exit_price} order={order_id}'
+        if _is_live_order_punch_enabled():
+            result = place_broker_order(
+                broker,
+                tradingsymbol=symbol, exchange=exchange, transaction_type=txn_type,
+                quantity=qty, order_type=_ORDER_TYPE_LIMIT, price=exit_price, product=product,
+                variety=_VARIETY_REGULAR,
+                context={'trade_id': trade_id, 'leg_id': leg_id, 'purpose': 'manual_squareoff', 'symbol': symbol},
             )
-            exit_orders_placed += 1
-        except Exception as exc:
-            log.error('[MANUAL SQ] exit order failed trade=%s leg=%s symbol=%s: %s',
-                      trade_id, leg_id, symbol, exc)
+            if result['status'] != 'success':
+                log.error('[MANUAL SQ] exit order failed trade=%s leg=%s symbol=%s: %s',
+                          trade_id, leg_id, symbol, result['message'])
+                continue
+            order_id = result['order_id']
+        else:
+            order_id = _build_simulated_live_order_id(trade_id, leg_id, 'manual_sq')
+        print(
+            f'[MANUAL SQ] exit placed trade={trade_id} leg={leg_id} '
+            f'symbol={symbol} txn={txn_type} qty={qty} price={exit_price} order={order_id}'
+        )
+        exit_orders_placed += 1
 
     summary = {
         'trade_id': trade_id,
@@ -2644,8 +2729,23 @@ def live_manual_square_off_trade(db, trade: dict) -> dict:
 
 
 def _rejection_squareoff_all(db, trade: dict, broker, _now_ts: str, rejected_leg_id: str) -> None:
-    """Exit all filled (active) open legs when SquareOffAllLegs=True and an entry is rejected."""
+    """
+    Exit all filled (active) open legs when an entry is rejected — either because
+    SquareOffAllLegs=True, or unconditionally when a sibling leg already entered
+    (partial-entry failure). Always marks the strategy paused: legs got exited
+    involuntarily here, so it shouldn't keep taking new entries until someone
+    looks at it.
+    """
     trade_id = str(trade.get('_id') or '')
+    db._db['algo_trades'].update_one(
+        {'_id': trade_id},
+        {'$set': {
+            'is_paused': True,
+            'paused_reason': 'partial_entry_failure',
+            'paused_at': _now_ts,
+            'paused_context': {'rejected_leg_id': rejected_leg_id},
+        }},
+    )
     hist_col = db._db['algo_trade_positions_history']
     open_legs = list(hist_col.find(
         {
@@ -2654,12 +2754,13 @@ def _rejection_squareoff_all(db, trade: dict, broker, _now_ts: str, rejected_leg
             'exit_trade': None,
             'entry_trade.entry_lifecycle_status': 'active',
         },
-        {'leg_id': 1, 'symbol': 1, 'quantity': 1, 'position': 1},
+        {'leg_id': 1, 'symbol': 1, 'quantity': 1, 'lot_size': 1, 'position': 1},
     ))
     for hist in open_legs:
-        symbol  = str(hist.get('symbol') or '').strip()
-        qty     = int(hist.get('quantity') or 0)
-        leg_id  = str(hist.get('leg_id') or '').strip()
+        symbol   = str(hist.get('symbol') or '').strip()
+        lot_size = int(hist.get('lot_size') or 1)
+        qty      = int(hist.get('quantity') or 0) * lot_size
+        leg_id   = str(hist.get('leg_id') or '').strip()
         if not symbol or qty <= 0:
             continue
         exchange = _resolve_exchange(symbol, trade, {'id': leg_id})
@@ -2667,24 +2768,21 @@ def _rejection_squareoff_all(db, trade: dict, broker, _now_ts: str, rejected_leg
         txn_type = _TXN_BUY if is_sell else _TXN_SELL
         product  = _get_leg_product(trade, leg_id)
         exit_price = _get_aggressive_exit_price(broker, exchange, symbol, txn_type)
-        try:
-            order_id = broker.place_order(
-                tradingsymbol=symbol,
-                exchange=exchange,
-                transaction_type=txn_type,
-                quantity=qty,
-                order_type=_ORDER_TYPE_LIMIT,
-                price=exit_price,
-                product=product,
-                variety=_VARIETY_REGULAR,
-            )
-            print(
-                f'[SQUAREOFF ALL LEGS] trade={trade_id} rejected_leg={rejected_leg_id} '
-                f'exiting leg={leg_id} symbol={symbol} txn={txn_type} qty={qty} '
-                f'price={exit_price} order_id={order_id}'
-            )
-        except Exception as exc:
-            log.error('[SQUAREOFF ALL LEGS FAILED] trade=%s leg=%s symbol=%s: %s', trade_id, leg_id, symbol, exc)
+        result = place_broker_order(
+            broker,
+            tradingsymbol=symbol, exchange=exchange, transaction_type=txn_type,
+            quantity=qty, order_type=_ORDER_TYPE_LIMIT, price=exit_price, product=product,
+            variety=_VARIETY_REGULAR,
+            context={'trade_id': trade_id, 'leg_id': leg_id, 'purpose': 'rejection_squareoff', 'symbol': symbol},
+        )
+        if result['status'] != 'success':
+            log.error('[SQUAREOFF ALL LEGS FAILED] trade=%s leg=%s symbol=%s: %s', trade_id, leg_id, symbol, result['message'])
+            continue
+        print(
+            f'[SQUAREOFF ALL LEGS] trade={trade_id} rejected_leg={rejected_leg_id} '
+            f'exiting leg={leg_id} symbol={symbol} txn={txn_type} qty={qty} '
+            f'price={exit_price} order_id={result["order_id"]}'
+        )
 
 
 def _margin_squareoff_trade(db, trade: dict, kite, _now_ts: str) -> None:
@@ -2696,11 +2794,12 @@ def _margin_squareoff_trade(db, trade: dict, kite, _now_ts: str) -> None:
     hist_col = db._db['algo_trade_positions_history']
     open_legs = list(hist_col.find(
         {'trade_id': trade_id, 'status': 1, 'exit_trade': None},
-        {'leg_id': 1, 'symbol': 1, 'quantity': 1, 'position': 1},
+        {'leg_id': 1, 'symbol': 1, 'quantity': 1, 'lot_size': 1, 'position': 1},
     ))
     for hist in open_legs:
         symbol   = str(hist.get('symbol') or '').strip()
-        qty      = int(hist.get('quantity') or 0)
+        lot_size = int(hist.get('lot_size') or 1)
+        qty      = int(hist.get('quantity') or 0) * lot_size
         leg_id   = str(hist.get('leg_id') or '').strip()
         exchange = _resolve_exchange(symbol, trade, {'id': leg_id})
         is_sell  = 'sell' in str(hist.get('position') or '').lower()
@@ -2709,24 +2808,21 @@ def _margin_squareoff_trade(db, trade: dict, kite, _now_ts: str) -> None:
         if not symbol or qty <= 0:
             continue
         exit_price = _get_aggressive_exit_price(kite, exchange, symbol, txn_type)
-        try:
-            order_id = kite.place_order(
-                tradingsymbol=symbol,
-                exchange=exchange,
-                transaction_type=txn_type,
-                quantity=qty,
-                order_type=_ORDER_TYPE_LIMIT,
-                price=exit_price,
-                product=product,
-                variety=_VARIETY_REGULAR,
-            )
-            print(
-                f'[MARGIN SQUAREOFF] trade={trade_id} leg={leg_id} '
-                f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
-                f'price={exit_price} product={product} order_id={order_id}'
-            )
-        except Exception as exc:
-            log.error('[MARGIN SQUAREOFF FAILED] trade=%s symbol=%s: %s', trade_id, symbol, exc)
+        result = place_broker_order(
+            kite,
+            tradingsymbol=symbol, exchange=exchange, transaction_type=txn_type,
+            quantity=qty, order_type=_ORDER_TYPE_LIMIT, price=exit_price, product=product,
+            variety=_VARIETY_REGULAR,
+            context={'trade_id': trade_id, 'leg_id': leg_id, 'purpose': 'margin_squareoff', 'symbol': symbol},
+        )
+        if result['status'] != 'success':
+            log.error('[MARGIN SQUAREOFF FAILED] trade=%s symbol=%s: %s', trade_id, symbol, result['message'])
+            continue
+        print(
+            f'[MARGIN SQUAREOFF] trade={trade_id} leg={leg_id} '
+            f'exchange={exchange} symbol={symbol} txn={txn_type} qty={qty} '
+            f'price={exit_price} product={product} order_id={result["order_id"]}'
+        )
 
 
 def _convert_to_aggressive_limit(
@@ -2773,16 +2869,17 @@ def _convert_to_aggressive_limit(
 
     # Step 3 — Place fresh aggressive limit order
     try:
-        new_order_id = str(kite.place_order(
-            tradingsymbol=symbol,
-            exchange=exchange,
-            transaction_type=txn_type,
-            quantity=qty,
-            order_type=_ORDER_TYPE_LIMIT,
-            price=limit_price,
-            product=product,
+        result = place_broker_order(
+            kite,
+            tradingsymbol=symbol, exchange=exchange, transaction_type=txn_type,
+            quantity=qty, order_type=_ORDER_TYPE_LIMIT, price=limit_price, product=product,
             variety=_VARIETY_REGULAR,
-        ) or '').strip()
+            context={'trade_id': trade_id, 'leg_id': leg_id, 'purpose': 'aggressive_retry', 'symbol': symbol},
+        )
+        if result['status'] != 'success':
+            log.error('[AGGRESSIVE LIMIT FAILED] trade=%s leg=%s symbol=%s: %s', trade_id, leg_id, symbol, result['message'])
+            return
+        new_order_id = result['order_id']
 
         # Update DB so poller tracks the new order_id + reset modification timer
         history_id = hist_doc.get('_id')

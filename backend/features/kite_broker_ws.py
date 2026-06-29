@@ -37,6 +37,7 @@ Tick listener signature:
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections import defaultdict
@@ -45,6 +46,15 @@ from typing import Callable
 from features.debug_flags import runtime_print
 
 log = logging.getLogger(__name__)
+
+_KITE_MONTH_MAP = {
+    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12,
+    '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6,
+    '7': 7, '8': 8, '9': 9, 'O': 10, 'N': 11, 'D': 12,
+}
+_KITE_MONTHLY_RE = re.compile(r'^([A-Z]+)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d+(?:\.\d+)?)(CE|PE)$')
+_KITE_WEEKLY_RE = re.compile(r'^([A-Z]+)(\d{2})([1-9OND])(\d{1,2})(\d+(?:\.\d+)?)(CE|PE)$')
 
 
 def _trace_stdout(message: str) -> None:
@@ -269,6 +279,78 @@ def validate_access_token(access_token: str = '') -> bool:
         return True
     except Exception:
         return False
+
+
+def parse_kite_tradingsymbol(tradingsymbol: str) -> dict | None:
+    """
+    Kite's options symbol grammar differs between monthly and weekly
+    contracts (3-letter month vs single-char month+day), so instead of
+    hand-rolling a regex this does a reverse lookup against
+    spot_atm_utils._load_kite_instruments()'s cache — built from Kite's own
+    instrument dump — for the entry whose 'symbol' matches. Same technique
+    flattrade_broker._to_flattrade_symbol() uses, just inverted.
+
+    Returns {underlying, expiry: "YYYY-MM-DD", strike, option_type} or None
+    if the symbol isn't found in today's cached instrument dump (e.g. Kite
+    instruments were never loaded because Dhan is the active feed broker).
+    """
+    sym = str(tradingsymbol or '').strip()
+    if not sym:
+        return None
+    try:
+        from features.spot_atm_utils import _load_kite_instruments  # type: ignore
+        cache = _load_kite_instruments()
+        for (name, exp_str, strike, opt), inst in cache.items():
+            if str(inst.get('symbol') or '').strip() == sym:
+                return {'underlying': name, 'expiry': exp_str, 'strike': strike, 'option_type': opt}
+    except Exception:
+        pass
+
+    monthly_match = _KITE_MONTHLY_RE.match(sym)
+    if monthly_match:
+        underlying, year_2, month_code, strike_raw, option_type = monthly_match.groups()
+        month = _KITE_MONTH_MAP.get(month_code)
+        if month:
+            try:
+                from calendar import monthrange
+                from datetime import date
+
+                year = 2000 + int(year_2)
+                day = monthrange(year, month)[1]
+                strike = float(strike_raw)
+                strike_value = int(strike) if strike.is_integer() else strike
+                expiry = date(year, month, day).isoformat()
+                return {
+                    'underlying': underlying,
+                    'expiry': expiry,
+                    'strike': strike_value,
+                    'option_type': option_type,
+                }
+            except Exception:
+                pass
+
+    weekly_match = _KITE_WEEKLY_RE.match(sym)
+    if weekly_match:
+        underlying, year_2, month_code, day_raw, strike_raw, option_type = weekly_match.groups()
+        month = _KITE_MONTH_MAP.get(month_code)
+        if month:
+            try:
+                from datetime import date
+
+                year = 2000 + int(year_2)
+                day = int(day_raw)
+                strike = float(strike_raw)
+                strike_value = int(strike) if strike.is_integer() else strike
+                expiry = date(year, month, day).isoformat()
+                return {
+                    'underlying': underlying,
+                    'expiry': expiry,
+                    'strike': strike_value,
+                    'option_type': option_type,
+                }
+            except Exception:
+                pass
+    return None
 
 
 def get_common_api_key() -> str:

@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -89,6 +90,36 @@ def _to_flattrade_symbol(kite_symbol: str, exchange: str) -> str:
 
     log.warning('[FLATTRADE SYMBOL] not found in kite instruments cache: %s — using as-is', sym)
     return sym
+
+
+_TSYM_OPTION_RE = re.compile(r'^([A-Z]+)(\d{2})([A-Z]{3})(\d{2})([CP])(\d+(?:\.\d+)?)$')
+
+
+def parse_flattrade_tsym(tsym: str) -> dict | None:
+    """
+    Inverse of _to_flattrade_symbol — pulls FlatTrade's options tsym format
+    "{NAME}{DD}{MMM}{YY}{C|P}{strike}" (e.g. "NIFTY28APR26C23850") back into
+    {underlying, expiry: "YYYY-MM-DD", strike, option_type: "CE"|"PE"}.
+
+    Returns None for anything that isn't an options contract in this exact
+    shape (futures, equity, unrecognized) so callers can skip it safely.
+    """
+    from datetime import datetime as _dt
+
+    match = _TSYM_OPTION_RE.match(str(tsym or '').strip().upper())
+    if not match:
+        return None
+    name, day, mon, yr, cp, strike = match.groups()
+    try:
+        expiry = _dt.strptime(f'{day}{mon}{yr}', '%d%b%y').strftime('%Y-%m-%d')
+    except ValueError:
+        return None
+    return {
+        'underlying': name,
+        'expiry': expiry,
+        'strike': float(strike),
+        'option_type': 'CE' if cp == 'C' else 'PE',
+    }
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -379,6 +410,26 @@ class FlatTradeAdapter:
                 "product":       "MIS" if p.get("prd") == "I" else "NRML",
             })
         return out
+
+    def raw_positions(self) -> list:
+        """
+        Same PositionBook call as positions(), but returns FlatTrade's rows
+        unmodified instead of collapsing them into the lossy Kite-shaped dict
+        above — callers that need native fields (tsym, netqty, netavgprc, lp,
+        exch, prd) for cross-broker merging should use this instead.
+        """
+        result = self._post("PositionBook", {"uid": self.user_id, "actid": self.user_id})
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and str(result.get("stat") or "").strip().lower() == "not_ok":
+            # An empty PositionBook also comes back in this same {stat: Not_Ok}
+            # shape (e.g. "no data"), so only raise when emsg actually points at
+            # a session/auth problem — anything else is tolerated as "no
+            # positions", same as the list branch above.
+            emsg = str(result.get("emsg") or "").strip()
+            if "session" in emsg.lower() or "invalid" in emsg.lower() or "login" in emsg.lower() or "token" in emsg.lower():
+                raise Exception(emsg or "FlatTrade session invalid")
+        return []
 
     # ── cancel_order ─────────────────────────────────────────────────────────
 

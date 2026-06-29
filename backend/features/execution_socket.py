@@ -24,10 +24,12 @@ from time import perf_counter
 from typing import Any
 
 from bson import ObjectId
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pymongo import DESCENDING
 
 from features.mongo_data import MongoData
+from features import auth as app_auth
+from features.broker_accounts import DEFAULT_APP_USER_ID
 import builtins as _builtins_exec
 import features.debug_flags as _debug_flags
 from features.debug_flags import entry_print, runtime_print, trade_event_print
@@ -117,6 +119,12 @@ WEBSOCKET_USER_MAP: dict[int, tuple[str, str]] = {}
 LAST_EXECUTE_ORDER_SIG: dict[str, str] = {}   # user_id → md5 of record structure
 LAST_OPEN_POSITION_SIG: dict[str, str] = {}   # user_id → md5 of open positions
 PENDING_EXECUTE_ORDER_DIRTY: dict[str, dict[str, Any]] = {}
+# Separate from PENDING_EXECUTE_ORDER_DIRTY on purpose: the execute-orders socket's
+# own 1s loop consumes (pops) that dict to flush execute_order broadcasts, which was
+# racing with the update socket's fast-forward subscribe_tokens refresh below —
+# whichever loop's timeout fired first stole the flag, so the LTP token-filter
+# refresh would intermittently never run after a new fast-forward leg was entered.
+PENDING_FF_TOKEN_REFRESH_DIRTY: dict[str, bool] = {}
 PENDING_BROKER_SETTINGS_DIRTY: dict[str, str] = {}  # "user_id:activation_mode" → activation_mode
 PENDING_STRATEGY_ACTIVITIES: dict[str, list[dict]] = {}  # user_id → list of activity dicts
 
@@ -255,6 +263,37 @@ async def _broadcast_channel_message(channel: str, message: str) -> int:
 
 
 # ─── User room helpers ────────────────────────────────────────────────────────
+
+async def _ws_authenticate(websocket: WebSocket, *, timeout: float = 10.0) -> bool:
+    """Require the client's first message to be {"type": "auth", "token": "<jwt>"}.
+
+    Replaces the old "trust whatever user_id is in the URL" model — the JWT
+    travels in-band as the first frame (never in the URL/query string, so it
+    never lands in access/proxy logs) and is verified with the same
+    app_auth.decode_access_token() used for REST routes. Closes the socket on
+    timeout/missing/invalid/expired token and returns False; caller must stop
+    without registering or sending anything.
+    """
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=timeout)
+    except (asyncio.TimeoutError, WebSocketDisconnect):
+        await websocket.close(code=4401, reason='Authentication timed out')
+        return False
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = {}
+    token = str((parsed or {}).get('token') or '').strip()
+    if str((parsed or {}).get('type') or '').strip() != 'auth' or not token:
+        await websocket.close(code=4401, reason='Authentication required')
+        return False
+    try:
+        app_auth.decode_access_token(token)
+    except HTTPException:
+        await websocket.close(code=4401, reason='Invalid or expired token')
+        return False
+    return True
+
 
 def _register_user_websocket(channel: str, user_id: str, websocket: WebSocket) -> None:
     uid = str(user_id or '').strip()
@@ -506,6 +545,8 @@ def mark_execute_order_dirty(
         dirty_entry['group_ids'].add(normalized_group_id)
     if normalized_trade_id:
         dirty_entry['trade_ids'].add(normalized_trade_id)
+    if normalized_mode == 'fast-forward':
+        PENDING_FF_TOKEN_REFRESH_DIRTY[f'{uid}|{normalized_trade_date}|{normalized_mode}'] = True
 
 
 def mark_execute_order_dirty_from_trade(trade: dict | None) -> None:
@@ -1050,6 +1091,17 @@ def _is_market_order(leg_cfg: dict, side: str = 'exit') -> bool:
     return 'market' in raw and 'mpp' not in raw
 
 
+def _is_terminal_broker_rejection(error: str) -> bool:
+    """True for broker rejections that are config/input problems, not transient ones —
+    retrying changes nothing until a human fixes the config, so the entry loop must
+    stop instead of hitting the broker again every tick forever."""
+    err = str(error or '').lower()
+    return any(marker in err for marker in (
+        'dh-905',        # Dhan: Invalid IP (server IP not whitelisted)
+        'invalid ip',
+    ))
+
+
 def _build_mode_entry_order_payload(
     db: MongoData,
     trade: dict,
@@ -1059,12 +1111,18 @@ def _build_mode_entry_order_payload(
     quantity: int,
     entry_price: float,
     exchange_ts: str,
+    lot_size: int = 1,
 ) -> dict[str, Any]:
     """
     Build mode-specific broker-order metadata for a leg entry.
 
     Common entry storage stays shared for every mode; only live mode injects
     the real broker order details here.
+
+    `quantity` is the stored lot count (matches the algo_trades/positions_history
+    storage convention used everywhere else); the broker only ever receives actual
+    contracts, so the live order call below multiplies by `lot_size` itself —
+    callers must not pre-multiply `quantity` before passing it in here.
     """
     activation_mode = str(trade.get('activation_mode') or '').strip()
     if activation_mode != 'live' or not symbol:
@@ -1075,23 +1133,45 @@ def _build_mode_entry_order_payload(
         }
 
     leg_id_str = str(leg.get('id') or '')
+    broker_quantity = max(0, int(quantity)) * max(1, int(lot_size or 1))
     try:
         from features.live_order_manager import place_live_entry_order
 
         live_order = place_live_entry_order(
-            db, trade, leg, leg_cfg, symbol, quantity, entry_price
+            db, trade, leg, leg_cfg, symbol, broker_quantity, entry_price
         )
         if not live_order.get('order_id'):
+            order_error = str(live_order.get('error') or 'live_order_failed')
             log.warning(
                 '[LIVE ORDER] placement failed leg=%s trade=%s: %s',
                 leg_id_str,
                 str(trade.get('_id') or ''),
-                live_order.get('error'),
+                order_error,
             )
+            # Config/input-level broker rejections (wrong IP, invalid symbol, etc.) will
+            # fail identically on every retry — without bailing out here, the monitor's
+            # ~1s loop hits the broker again every tick forever, spamming the same error
+            # and blocking the event loop on each failing call. Square off so it stops.
+            if _is_terminal_broker_rejection(order_error):
+                trade_id = str(trade.get('_id') or '')
+                log.error(
+                    '[LIVE ORDER] terminal broker rejection — squaring off trade=%s leg=%s: %s',
+                    trade_id, leg_id_str, order_error,
+                )
+                try:
+                    _square_off_trade_like_manual(db, trade, exit_timestamp=exchange_ts, activation_mode='live')
+                except Exception as _sq_exc:
+                    log.error('[LIVE ORDER] auto squareoff failed trade=%s: %s', trade_id, _sq_exc)
+                from features.telegram_notifier import notify_user
+                notify_user(
+                    'order_placement_failed',
+                    f'Trade {trade_id} squared off — broker rejected entry leg={leg_id_str}: {order_error}',
+                    {'leg_id': leg_id_str, 'trade_id': trade_id},
+                )
             return {
                 'allowed': False,
                 'payload': {},
-                'error': str(live_order.get('error') or 'live_order_failed'),
+                'error': order_error,
             }
 
         payload: dict[str, Any] = {
@@ -1111,6 +1191,8 @@ def _build_mode_entry_order_payload(
         }
     except Exception as exc:
         log.error('[LIVE ORDER] entry order error leg=%s: %s', leg_id_str, exc)
+        from features.telegram_notifier import notify_user
+        notify_user('order_placement_failed', f'Entry order error leg={leg_id_str}: {exc}', {'leg_id': leg_id_str})
         return {
             'allowed': False,
             'payload': {},
@@ -1198,6 +1280,12 @@ def _dispatch_mode_exit_order(
             str(trade.get('_id') or ''),
             leg_id,
             exc,
+        )
+        from features.telegram_notifier import notify_user
+        notify_user(
+            'order_placement_failed',
+            f'Exit order error trade={trade.get("_id")} leg={leg_id}: {exc}',
+            {'trade_id': str(trade.get('_id') or ''), 'leg_id': leg_id},
         )
 
 
@@ -1444,10 +1532,12 @@ def close_leg_in_db(db: MongoData, trade_id: str, leg_index: int,
     if leg_id:
         _hist = db._db['algo_trade_positions_history'].find_one(
             {'trade_id': trade_id, 'leg_id': leg_id, 'exit_trade': None},
-            {'symbol': 1, 'quantity': 1, 'position': 1},
+            {'symbol': 1, 'quantity': 1, 'lot_size': 1, 'position': 1},
         ) or {}
         _symbol = str(_hist.get('symbol') or '').strip()
-        _qty = int(_hist.get('quantity') or 1)
+        # quantity stored is lot count, not contracts — broker exit order needs the
+        # actual contract count, same convention as live_manual_square_off_trade.
+        _qty = int(_hist.get('quantity') or 1) * max(1, int(_hist.get('lot_size') or 1))
         _trade = db._db['algo_trades'].find_one({'_id': trade_id}) or {}
         _leg = next(
             (l for l in (_trade.get('legs') or [])
@@ -3214,10 +3304,26 @@ def _queue_live_broker_pending_momentum_entry(
         return False
 
     if not broker_entry.get('order_id'):
+        momentum_order_error = str(broker_entry.get('error') or 'live_order_failed')
         print(
             f'[MOMENTUM BROKER ORDER BLOCKED] trade={trade_id} leg={leg_id} '
-            f'reason={str(broker_entry.get("error") or "live_order_failed")}'
+            f'reason={momentum_order_error}'
         )
+        if _is_terminal_broker_rejection(momentum_order_error):
+            log.error(
+                '[MOMENTUM BROKER ORDER] terminal broker rejection — squaring off trade=%s leg=%s: %s',
+                trade_id, leg_id, momentum_order_error,
+            )
+            try:
+                _square_off_trade_like_manual(db, trade, exit_timestamp=exchange_ts, activation_mode='live')
+            except Exception as _sq_exc:
+                log.error('[MOMENTUM BROKER ORDER] auto squareoff failed trade=%s: %s', trade_id, _sq_exc)
+            from features.telegram_notifier import notify_user
+            notify_user(
+                'order_placement_failed',
+                f'Trade {trade_id} squared off — broker rejected momentum entry leg={leg_id}: {momentum_order_error}',
+                {'leg_id': leg_id, 'trade_id': trade_id},
+            )
         return False
 
     entry_trade_payload = {
@@ -3225,7 +3331,7 @@ def _queue_live_broker_pending_momentum_entry(
         'trigger_price': target_price,
         'underlying_trigger_price': spot_price,
         'price': target_price,
-        'quantity': actual_quantity,
+        'quantity': lot_config_value,
         'underlying_at_trade': spot_price,
         'traded_timestamp': exchange_ts,
         'exchange_timestamp': exchange_ts,
@@ -3262,7 +3368,7 @@ def _queue_live_broker_pending_momentum_entry(
         'token': token,
         'symbol': symbol,
         'exchange': str(broker_entry.get('exchange') or ''),
-        'quantity': actual_quantity,
+        'quantity': lot_config_value,
         'lot_size': lot_size,
         'lot_config_value': lot_config_value,
         'current_sl_price': sl_price,
@@ -3327,6 +3433,12 @@ def _process_momentum_pending_feature_legs(
     """
     trade_id = str(trade.get('_id') or '')
     entered_ids: list[str] = []
+
+    # Strategy paused (e.g. a sibling leg's entry already failed) — don't take any
+    # further entries until someone clears it. Pure read of an already-fetched
+    # field, doesn't touch the surrounding momentum-timing logic itself.
+    if trade.get('is_paused'):
+        return entered_ids
 
     # Early exit if entry time hasn't arrived — avoids all DB ops and noisy prints
     if activation_mode in {'live', 'fast-forward'}:
@@ -3781,9 +3893,11 @@ def _process_momentum_pending_feature_legs(
             # )
             trade_event_print(f'[PENDING ENTRY] leg={leg_id} current_price={current_price} strike={strike} option={option_type} — entering immediately')
         else:
+            # Underlying momentum types track the index/spot; all others track the option price
+            _mom_check_price = spot_price if 'Underlying' in str(momentum_type or '') else current_price
             # ── Arm: set base/target price on first tick ──────────────────────
             if base_price <= 0 or target_price <= 0:
-                if current_price <= 0:
+                if _mom_check_price <= 0:
                     entry_print(f'[MOMENTUM PENDING] leg={leg_id} waiting for price data')
                     try:
                         feature_col.update_one(
@@ -3793,7 +3907,7 @@ def _process_momentum_pending_feature_legs(
                     except Exception:
                         pass
                     continue
-                base_price = current_price
+                base_price = _mom_check_price
                 target_price = _resolve_simple_momentum_target(base_price, momentum_type, momentum_value)
                 armed_now = now_ts
                 try:
@@ -3902,10 +4016,10 @@ def _process_momentum_pending_feature_legs(
                 # Placement still failing — fall through to tick-level trigger check
 
             # ── Check if momentum target is reached ───────────────────────────
-            if not _is_simple_momentum_triggered(current_price, target_price, momentum_type):
+            if not _is_simple_momentum_triggered(_mom_check_price, target_price, momentum_type):
                 runtime_print(
                     f'[MOMENTUM WAIT] leg={leg_id} type={momentum_type} value={momentum_value} '
-                    f'base={base_price} target={target_price} current={current_price} strike={strike}'
+                    f'base={base_price} target={target_price} current={_mom_check_price} strike={strike}'
                 )
                 try:
                     feature_col.update_one(
@@ -3918,7 +4032,7 @@ def _process_momentum_pending_feature_legs(
 
             print(
                 f'[MOMENTUM OK] leg={leg_id} type={momentum_type} value={momentum_value} '
-                f'base={base_price} target={target_price} current={current_price} — entering'
+                f'base={base_price} target={target_price} current={_mom_check_price} — entering'
             )
         is_sell_pos = _is_sell(position_str)
         all_leg_configs = _resolve_trade_leg_configs(trade)
@@ -4015,10 +4129,26 @@ def _process_momentum_pending_feature_legs(
                 )
                 order_id = str(broker_result.get('order_id') or '').strip()
                 if not order_id:
+                    pending_leg_order_error = str(broker_result.get('error') or 'live_order_failed')
                     log.warning(
                         '[LIVE ENTRY] order placement failed leg=%s trade=%s: %s',
-                        leg_id, trade_id, broker_result.get('error'),
+                        leg_id, trade_id, pending_leg_order_error,
                     )
+                    if _is_terminal_broker_rejection(pending_leg_order_error):
+                        log.error(
+                            '[LIVE ENTRY] terminal broker rejection — squaring off trade=%s leg=%s: %s',
+                            trade_id, leg_id, pending_leg_order_error,
+                        )
+                        try:
+                            _square_off_trade_like_manual(db, trade, exit_timestamp=exchange_ts, activation_mode='live')
+                        except Exception as _sq_exc:
+                            log.error('[LIVE ENTRY] auto squareoff failed trade=%s: %s', trade_id, _sq_exc)
+                        from features.telegram_notifier import notify_user
+                        notify_user(
+                            'order_placement_failed',
+                            f'Trade {trade_id} squared off — broker rejected pending-leg entry leg={leg_id}: {pending_leg_order_error}',
+                            {'leg_id': leg_id, 'trade_id': trade_id},
+                        )
                     feature_col.update_one(
                         {'_id': feat_doc['_id'], 'status': 'processing'},
                         {'$set': {'status': 'active', 'processing_started_at': None}},
@@ -4416,6 +4546,9 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
     Resolves strike/expiry from option_chain ATM and sets entry_trade.
     Returns True if entered.
     """
+    if trade.get('is_paused'):
+        return False, 'strategy_paused'
+
     underlying = str(
         (trade.get('strategy') or {}).get('Ticker')
         or (trade.get('config') or {}).get('Ticker')
@@ -4693,11 +4826,14 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
             token = str(current_chain_doc.get('token') or token or make_token(underlying, expiry, strike, option_type))
             symbol = str(current_chain_doc.get('symbol') or symbol or token)
 
+        # Underlying momentum types track the index/spot; all others track the option price
+        _mom_check_px = spot_price if 'Underlying' in str(_momentum_type or '') else current_option_price
+
         if base_price <= 0 or target_price <= 0:
-            if current_option_price <= 0:
+            if _mom_check_px <= 0:
                 entry_print(f'[MOMENTUM WAIT] leg={leg_id_log} type={_momentum_type} reason=base_price_missing')
                 return False, 'momentum_wait'
-            base_price = current_option_price
+            base_price = _mom_check_px
             target_price = _resolve_simple_momentum_target(base_price, _momentum_type, _momentum_value)
             try:
                 if is_pending_feature_leg and feature_row_id:
@@ -4759,17 +4895,17 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
             )
             return False, 'momentum_wait'
 
-        if not _is_simple_momentum_triggered(current_option_price, target_price, _momentum_type):
+        if not _is_simple_momentum_triggered(_mom_check_px, target_price, _momentum_type):
             runtime_print(
                 f'[MOMENTUM WAIT] leg={leg_id_log} type={_momentum_type} '
                 f'value={_momentum_value} base={base_price} target={target_price} '
-                f'current={current_option_price} strike={strike}'
+                f'current={_mom_check_px} strike={strike}'
             )
             return False, 'momentum_wait'
 
         runtime_print(
             f'[MOMENTUM OK] leg={leg_id_log} type={_momentum_type} value={_momentum_value} '
-            f'base={base_price} target={target_price} current={current_option_price} — proceeding to entry'
+            f'base={base_price} target={target_price} current={_mom_check_px} — proceeding to entry'
         )
         entry_price = current_option_price if _is_market_order(_leg_cfg_early, 'entry') else target_price
         resolved_chain_doc = current_chain_doc
@@ -5031,6 +5167,7 @@ def _try_enter_pending_leg(db: MongoData, trade: dict, leg: dict,
         actual_quantity,
         entry_price,
         exchange_ts,
+        lot_size=lot_size,
     )
     if not bool(mode_entry_order.get('allowed', True)):
         error_message = str(mode_entry_order.get('error') or 'live_order_failed')
@@ -5211,6 +5348,8 @@ def apply_resolved_live_entries(
     trade_id = str(trade_doc.get('_id') or '')
     if not trade_id or not leg_entries:
         return []
+    if trade_doc.get('is_paused'):
+        return []
 
     created_original_legs, refreshed_trade = _queue_original_legs_if_needed(db, trade_doc, now_ts)
     if created_original_legs:
@@ -5260,6 +5399,25 @@ def apply_resolved_live_entries(
         ))
         actual_quantity = lot_config_value
 
+        # Lot size for the live broker call: prefer the per-instrument value already
+        # synced from Dhan's feed onto the resolved token doc (info['lot_size']) — it
+        # reflects the exact contract being traded, not a hand-maintained date table.
+        # Falls back to the static lot_sizes lookup when the Dhan-sourced value isn't
+        # available (e.g. non-Dhan broker, or tokens not yet synced).
+        dhan_lot_size = _safe_int(info.get('lot_size'))
+        if dhan_lot_size > 0:
+            leg_lot_size = dhan_lot_size
+        else:
+            underlying_for_lot = str(
+                trade_doc.get('ticker')
+                or (trade_doc.get('config') or {}).get('Ticker')
+                or ''
+            ).strip()
+            try:
+                leg_lot_size = int(db.get_lot_size(_extract_trade_date_from_doc(trade_doc), underlying_for_lot))
+            except Exception:
+                leg_lot_size = 1
+
         entry_trade_payload = {
             'trigger_timestamp': exchange_ts,
             'trigger_price': entry_price,
@@ -5283,6 +5441,7 @@ def apply_resolved_live_entries(
             actual_quantity,
             entry_price,
             exchange_ts,
+            lot_size=leg_lot_size,
         )
         if not bool(mode_entry_order.get('allowed', True)):
             print(
@@ -5310,7 +5469,7 @@ def apply_resolved_live_entries(
             'token': str(info.get('token') or ''),
             'symbol': str(info.get('symbol') or ''),
             'quantity': actual_quantity,
-            'lot_size': 1,
+            'lot_size': leg_lot_size,
             'lot_config_value': lot_config_value,
             'current_sl_price': sl_price,
             'initial_sl_value': sl_price,
@@ -6319,6 +6478,1120 @@ def _build_open_position_updates(
                 'token': str(leg.get('token') or chain_doc.get('token') or ''),
             })
     return open_positions
+
+
+def _latest_trading_day(raw_db, today: str) -> str:
+    """
+    Most recent NSE trading day on/before `today` — `today` itself on a normal
+    trading weekday (the common case), otherwise walks back skipping
+    weekends/market_holidays dates until it lands on one. Used so that
+    checking the app on a non-trading day (weekend/holiday) shows the last
+    real session's own price/change (e.g. Friday's vs Thursday's close)
+    instead of comparing that session's frozen, still-being-repeated price
+    against itself and reading +0.00%.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+
+    holidays_col = raw_db['market_holidays']
+    cursor_date = _date.fromisoformat(today[:10])
+    for _ in range(10):  # bounded — comfortably covers any realistic holiday run
+        if cursor_date.weekday() < 5 and not holidays_col.find_one({'date': cursor_date.isoformat()}):
+            return cursor_date.isoformat()
+        cursor_date -= _timedelta(days=1)
+    return today[:10]
+
+
+def _previous_session_close(col, underlying: str, today: str) -> float:
+    """
+    The most recent prior TRADING day's close for `underlying`, anchored to
+    NSE/BSE's 15:30 IST close (+ a 5 min buffer for the final settlement
+    tick) rather than the literal last tick before today.
+
+    "Most recent tick before today" alone isn't enough to mean "previous
+    trading day" — the feed keeps writing ticks (a frozen repeat of the last
+    real price) even on weekends/holidays when markets are shut, so on a
+    Monday — or right now, since today is itself a Sunday — that naive
+    lookup lands on Saturday's/Sunday's stale repeat of Friday's close
+    instead of Friday's real close, and change_pct/change_points round to
+    ~0%. Step back by calendar day, skipping anything that isn't an actual
+    NSE trading day (weekend or a market_holidays date — that collection
+    only stores actual holidays, not weekends, so both checks are needed),
+    until a real session is found.
+
+    Ticks well after market close are after-hours noise. For BSE indices
+    (SENSEX/BANKEX) specifically, that noise can — hours later — overwrite
+    the correct close with a wrong value (confirmed against live data: SENSEX
+    froze correctly at 15:30:48, then started flip-flopping with a wrong
+    value from ~17:42 onward). Picking "whichever tick is chronologically
+    last in the day" used to grab that wrong value; anchoring on the close
+    window itself sidesteps the noise regardless of when/why it appears.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+
+    holidays_col = col.database['market_holidays']
+    cursor_date = _date.fromisoformat(today[:10])
+    for _ in range(10):  # bounded — comfortably covers any realistic holiday run
+        cursor_date -= _timedelta(days=1)
+        if cursor_date.weekday() >= 5:  # Saturday=5, Sunday=6
+            continue
+        day_str = cursor_date.isoformat()
+        if holidays_col.find_one({'date': day_str}):
+            continue
+
+        close_doc = col.find_one(
+            {'underlying': underlying, 'timestamp': {'$gte': day_str, '$lte': f'{day_str}T15:35:00'}},
+            sort=[('timestamp', -1)],
+        )
+        if close_doc:
+            return _safe_float(close_doc.get('spot_price'))
+        # No tick landed in the post-close window that day (sparse feed for this
+        # underlying) — fall back to whatever's chronologically latest that day
+        # rather than treating it as a non-trading day and stepping past it.
+        any_doc = col.find_one(
+            {'underlying': underlying, 'timestamp': {'$gte': day_str, '$lt': f'{day_str}T23:59:59'}},
+            sort=[('timestamp', -1)],
+        )
+        if any_doc:
+            return _safe_float(any_doc.get('spot_price'))
+    return 0.0
+
+
+def _equity_previous_close(raw_db, symbol: str) -> float:
+    """
+    Genuine previous-trading-day close for an individual F&O stock (e.g.
+    BSE, TCS) — read from the scanner's own daily EOD sync
+    (scanner_stock_historical_data), the same table scanner/service.py's
+    _load_latest_closes() already reads for the portfolio-detail page.
+
+    Deliberately not Dhan's NSE_EQ /marketfeed/quote 'ohlc.close': that
+    field mirrors the current/live price all day (confirmed live: ltp and
+    ohlc.close came back identical for BSE), the same quirk
+    _previous_session_close() above already routes around for indices.
+    Using it for stocks made change_pct/change_points round to ~0.00% on
+    every refresh, no matter how often the page re-fetched.
+    """
+    doc = raw_db['scanner_stock_historical_data'].find_one(
+        {'h_symbol': symbol},
+        {'_id': 0, 'ch_closing_price': 1},
+        sort=[('ch_timestamp', -1)],
+    ) or {}
+    return _safe_float(doc.get('ch_closing_price'))
+
+
+# underlying → last-seen-good quote dict (same shape _quote_entry() returns).
+# Dhan's /marketfeed/quote can come back genuinely empty for a segment (no
+# trade yet today — common pre-market, or a transient 429/network hiccup),
+# in which case _fetch_dhan_index_quotes() below would otherwise just drop
+# that underlying entirely. Never evict: a slightly stale real quote is
+# always a better fallback than the UI showing "—" for change_pct/points.
+_LAST_GOOD_UNDERLYING_QUOTE: dict[str, dict] = {}
+
+
+def _fetch_dhan_index_quotes(db: MongoData, underlyings: set[str]) -> dict[str, dict[str, float]]:
+    """
+    One shared {spot_price, change_pct, change_points} object per underlying.
+
+    Dhan's IDX_I /marketfeed/quote 'ohlc.close' tracks the current/live price
+    (live_option_chain.py falls back to that same field for LTP, not for a
+    prior close), so it can't be used as the previous-day reference — using it
+    that way made change_pct/change_points round to ~0 every time. spot_price
+    and OHLC open/high/low still come from that live REST call; the actual
+    previous-close reference always comes from _previous_session_close() (the
+    last genuine close tick of the prior trading day in option_chain_index_spot).
+    """
+    if not underlyings:
+        return {}
+
+    raw_db = db._db if hasattr(db, '_db') else db
+    col = raw_db['option_chain_index_spot']
+    today = datetime.now().strftime('%Y-%m-%d')
+    # On a non-trading day (weekend/holiday) this resolves back to the last real
+    # session (e.g. Friday) — both "what counts as the current price" and "what's
+    # the previous close to compare it against" anchor off that day instead of
+    # literal today, so the weekend view shows Friday-vs-Thursday's real move
+    # rather than Friday's frozen price compared against itself.
+    session_day = _latest_trading_day(raw_db, today)
+    quotes: dict[str, dict[str, float]] = {}
+
+    dhan_spot_ids = {
+        'NIFTY': '13',
+        'BANKNIFTY': '25',
+        'FINNIFTY': '27',
+        'SENSEX': '51',
+        'MIDCPNIFTY': '11915',
+        'BANKEX': '69',
+    }
+
+    def _quote_entry(spot_price: float, prev_close: float, ohlc_open: float, ohlc_high: float, ohlc_low: float) -> dict[str, float]:
+        change_pct = round((spot_price - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0.0
+        change_points = round(spot_price - prev_close, 2) if prev_close > 0 else 0.0
+        return {
+            'spot_price': spot_price,
+            'ltp': spot_price,
+            'previous_close': prev_close,
+            'change_pct': change_pct,
+            'change_points': change_points,
+            'ohlc_open': ohlc_open,
+            'ohlc_high': ohlc_high,
+            'ohlc_low': ohlc_low,
+            'ohlc_close': prev_close,
+        }
+
+    try:
+        cfg = raw_db['kite_market_config'].find_one({'broker': 'dhan', 'enabled': True}) or {}
+        access_token = str(cfg.get('access_token') or '').strip()
+        client_id = str(cfg.get('user_id') or cfg.get('dhan_client_id') or '').strip()
+        idx_tokens = [int(tok) for und, tok in dhan_spot_ids.items() if und in underlyings and str(tok).strip().isdigit()]
+
+        if access_token and client_id and idx_tokens and session_day == today:
+            from features.broker_gateway import dhan_quote_post
+
+            # Was a blind time.sleep(1.1) here to dodge a 429 against whatever
+            # else might be calling Dhan's quote endpoint "inside the same
+            # positions API cycle" — but that's only one of several
+            # independent callers in this app (option chain, stock spot,
+            # live-quote WS's background refresh, ...), so a local sleep here
+            # couldn't actually coordinate with any of them. dhan_quote_post()
+            # is the single shared gate every one of those now goes through.
+            response = dhan_quote_post({'IDX_I': idx_tokens}, access_token, client_id, timeout=5.0)
+            payload = response.json() if response is not None and response.ok else {}
+            idx_data = (payload.get('data') or {}).get('IDX_I') or payload.get('IDX_I') or {}
+            for underlying, token in dhan_spot_ids.items():
+                if underlying not in underlyings:
+                    continue
+                info = idx_data.get(str(token)) if isinstance(idx_data, dict) else None
+                if not isinstance(info, dict):
+                    continue
+                spot_price = _safe_float(info.get('last_price') or info.get('ltp'))
+                if spot_price <= 0:
+                    continue
+                ohlc = info.get('ohlc') if isinstance(info.get('ohlc'), dict) else {}
+                prev_close = _previous_session_close(col, underlying, session_day)
+                quotes[underlying] = _quote_entry(
+                    spot_price, prev_close,
+                    _safe_float(ohlc.get('open')), _safe_float(ohlc.get('high')), _safe_float(ohlc.get('low')),
+                )
+                _LAST_GOOD_UNDERLYING_QUOTE[underlying] = quotes[underlying]
+    except Exception as exc:
+        log.debug('dhan index quote rest fallback error: %s', exc)
+
+    # Stock underlyings (anything not in the hardcoded index set above, e.g.
+    # individual F&O stocks like BSE/TCS) — there's no spot token for these
+    # stored anywhere in this app's own collections, but Dhan's CSV scrip
+    # master always carries the cash-equity security id for any NSE symbol,
+    # quotable via the same /marketfeed/quote endpoint (segment NSE_EQ, one
+    # batched call for every stock underlying still missing). Same approach
+    # already proven for the option chain's own stock spot price
+    # (api.py get_live_greeks_chain, NSE_EQ branch) — reused here instead of
+    # duplicated so this function can price *any* underlying, not just the
+    # 6 named indices, and callers (e.g. /simulator/positions/all's
+    # `underlyings` map) get change_pct/change_points for stocks too.
+    #
+    # prev_close specifically does NOT come from that NSE_EQ quote's
+    # info['prev_close'] (sourced from Dhan's ohlc.close) — confirmed live
+    # that ohlc.close mirrors the current/live price all day for NSE_EQ too,
+    # exactly like the IDX_I quirk this function already routes around above
+    # via _previous_session_close(). Using it made every stock's
+    # change_pct/change_points round to ~0.00% on every single refresh,
+    # no matter how often the page re-fetched. The scanner's own daily EOD
+    # sync (scanner_stock_historical_data, h_symbol/ch_timestamp/
+    # ch_closing_price — same table scanner/service.py's _load_latest_closes
+    # already reads for the portfolio-detail page) carries the real
+    # previous-trading-day close instead.
+    stock_underlyings = [u for u in underlyings if u not in quotes and u not in dhan_spot_ids]
+    if stock_underlyings and session_day == today:
+        try:
+            from api import _get_dhan_equity_sec_id, _fetch_dhan_market_data  # type: ignore  (lazy: api.py imports this module's package at startup)
+            sec_id_by_underlying = {
+                u: sec_id
+                for u in stock_underlyings
+                if (sec_id := _get_dhan_equity_sec_id(u))
+            }
+            if sec_id_by_underlying:
+                equity_quotes = _fetch_dhan_market_data(
+                    'NSE_EQ', [int(sec_id) for sec_id in sec_id_by_underlying.values()], db,
+                )
+                for underlying, sec_id in sec_id_by_underlying.items():
+                    info = equity_quotes.get(str(sec_id)) or {}
+                    spot_price = _safe_float(info.get('ltp'))
+                    if spot_price <= 0:
+                        continue
+                    prev_close = _equity_previous_close(raw_db, underlying)
+                    quotes[underlying] = _quote_entry(spot_price, prev_close, 0.0, 0.0, 0.0)
+                    _LAST_GOOD_UNDERLYING_QUOTE[underlying] = quotes[underlying]
+        except Exception as exc:
+            log.debug('dhan stock equity quote error underlyings=%s: %s', stock_underlyings, exc)
+
+    for underlying in underlyings:
+        if underlying in quotes:
+            continue
+        session_doc = col.find_one(
+            {'underlying': underlying, 'timestamp': {'$gte': session_day, '$lt': f'{session_day}T23:59:59'}},
+            sort=[('timestamp', -1)],
+        ) or {}
+        spot_price = _safe_float(session_doc.get('spot_price'))
+        if spot_price > 0:
+            prev_close = _previous_session_close(col, underlying, session_day)
+            quotes[underlying] = _quote_entry(spot_price, prev_close, 0.0, 0.0, 0.0)
+            _LAST_GOOD_UNDERLYING_QUOTE[underlying] = quotes[underlying]
+
+    # Last resort — Dhan returned nothing for this underlying on this call
+    # (pre-market quiet segment, transient 429, etc.): reuse the last real
+    # quote we ever saw for it instead of dropping it (which the UI renders
+    # as a bare "—" for spot/change_pct/change_points).
+    for underlying in underlyings:
+        if underlying not in quotes and underlying in _LAST_GOOD_UNDERLYING_QUOTE:
+            quotes[underlying] = _LAST_GOOD_UNDERLYING_QUOTE[underlying]
+
+    return quotes
+
+# Token metadata (active_option_tokens, broker='dhan') is contract
+# definitions written once per token-sync run, not per price tick — yet
+# _fetch_dhan_broker_option_positions() below re-scanned the whole
+# 130k+-row collection and rebuilt both lookup dicts from scratch on every
+# single positions poll, which timing confirmed was the single largest
+# fixed cost on /simulator/positions/all (~0.7-0.9s out of ~2.5-4.4s total).
+# A short TTL absorbs that for free without ever serving metadata more than
+# a few seconds stale — same pattern as _FNO_STOCKS_CACHE/_india_vix_cache.
+_DHAN_TOKEN_MAPS_CACHE: dict[str, Any] = {}
+_DHAN_TOKEN_MAPS_CACHE_TTL = 30.0
+
+
+def _get_dhan_token_maps(raw_db) -> tuple[dict[str, dict], dict[tuple[str, str, float, str], dict]]:
+    cached = _DHAN_TOKEN_MAPS_CACHE
+    if cached and (perf_counter() - cached.get('fetched_at', 0)) < _DHAN_TOKEN_MAPS_CACHE_TTL:
+        return cached['token_map'], cached['dhan_token_by_contract']
+
+    token_rows = list(raw_db['active_option_tokens'].find(
+        {'broker': 'dhan'},
+        {
+            '_id': 0,
+            'token': 1,
+            'instrument': 1,
+            'expiry': 1,
+            'strike': 1,
+            'option_type': 1,
+            'symbol': 1,
+            'lot_size': 1,
+            'ws_segment': 1,
+        },
+    ))
+    token_map = {
+        str(row.get('token') or '').strip(): row
+        for row in token_rows
+        if str(row.get('token') or '').strip()
+    }
+    # Reverse index so a FlatTrade leg (which has no Dhan token of its own)
+    # can be matched to Dhan's token for the same contract — the join key the
+    # whole "LTP always from Dhan" design relies on.
+    dhan_token_by_contract = {
+        (
+            str(row.get('instrument') or '').strip().upper(),
+            str(row.get('expiry') or '').strip()[:10],
+            _safe_float(row.get('strike')),
+            str(row.get('option_type') or '').strip().upper(),
+        ): row
+        for row in token_rows
+    }
+    _DHAN_TOKEN_MAPS_CACHE['token_map'] = token_map
+    _DHAN_TOKEN_MAPS_CACHE['dhan_token_by_contract'] = dhan_token_by_contract
+    _DHAN_TOKEN_MAPS_CACHE['fetched_at'] = perf_counter()
+    return token_map, dhan_token_by_contract
+
+
+def _fetch_dhan_broker_option_positions(
+    db: MongoData,
+    selected_broker_id: str | None = None,
+    include_broker_status: bool = True,
+) -> dict[str, Any]:
+    """
+    Fetch live option positions normalized to the update-socket open_positions
+    shape used by the simulator frontend.
+
+    Positions/orders are per-broker (Dhan here via kite_market_config,
+    FlatTrade via broker_configuration — see the flattrade block below), but
+    LTP/spot is always resolved through Dhan's own feed (active_option_tokens
+    + dhan_ticker_manager/REST quotes) regardless of which broker actually
+    holds the leg. Same split AlgoTest/Sensibull use: trade execution stays
+    broker-native, market data is centralized on one feed.
+    """
+    from features.broker_gateway import (
+        broker_refresh_user_tokens as _broker_refresh_user_tokens,
+        get_broker_rest_quotes as _get_broker_rest_quotes,
+    )
+
+    raw_db = db._db if hasattr(db, '_db') else db
+    broker_status: list[dict] = []
+    normalized_selected_broker_id = str(selected_broker_id or '').strip()
+    selected_broker_kind = ''
+    # broker-status calls (include_broker_status=True) only need login state
+    # for the dropdown badges, never position data — every fetch below is
+    # skipped in that mode instead of pulling full positions and discarding
+    # them.
+    fetch_positions = not include_broker_status
+
+    # ── Dhan: positions fetched directly via kite_market_config ──
+    # Resolved from Dhan's own doc only — never gated by _active_broker()/the
+    # "enabled" toggle, which is a separate single-active-broker concept for
+    # market-data/WS routing (e.g. which ticker singleton starts), not for
+    # whether this user can view a given broker's positions here. Logging
+    # into one broker must never block reading another's (same reasoning as
+    # the FlatTrade/Kite branches below, which were never gated this way).
+    raw_positions: list[dict] = []
+    dhan_detail = ''
+    cfg = raw_db['kite_market_config'].find_one({'broker': 'dhan'}) or {}
+    dhan_broker_id = str(cfg.get('_id') or '').strip()
+    if normalized_selected_broker_id and normalized_selected_broker_id == dhan_broker_id:
+        selected_broker_kind = 'dhan'
+    dhan_access_token = str(cfg.get('access_token') or '').strip()
+    dhan_client_id = str(cfg.get('user_id') or cfg.get('dhan_client_id') or '').strip()
+    dhan_logged_in = bool(dhan_access_token and dhan_client_id)
+    if not dhan_logged_in:
+        dhan_detail = 'Dhan credentials not configured'
+    elif include_broker_status:
+        # Stored-credential presence can't tell a stale token from a live one
+        # — only worth the extra API ping here, on the low-frequency
+        # broker-status badge call, never on the position-poll hot path below
+        # (where the positions fetch itself already proves the session).
+        from features.dhan_broker_ws import validate_access_token as _validate_dhan_token
+        if not _validate_dhan_token(dhan_access_token):
+            dhan_logged_in = False
+            dhan_detail = 'Dhan session expired. Please login again.'
+
+    # Reverse index so a FlatTrade leg (which has no Dhan token of its own)
+    # can be matched to Dhan's token for the same contract — the join key the
+    # whole "LTP always from Dhan" design relies on. Cached (see
+    # _get_dhan_token_maps) since this metadata only changes when token-sync
+    # runs, not on every poll.
+    token_map, dhan_token_by_contract = _get_dhan_token_maps(raw_db)
+
+    # ── FlatTrade / Kite: account docs only (mongo) ──
+    # broker_configuration has no persisted "enabled"/"is_logged_in" flag for
+    # these two — historically the only way to know was a live API ping
+    # (kite.profile() / FlatTrade session validate), which is as slow as
+    # fetching positions itself. So, same as Dhan above, treat stored
+    # credential presence as "logged in" here too; the real proof of a still-
+    # valid session is the positions fetch below (already wrapped in
+    # try/except), which only runs for the one broker actually being used.
+    from features.flattrade_broker import get_flattrade_instance, parse_flattrade_tsym
+    from features.kite_broker_ws import parse_kite_tradingsymbol
+
+    def _broker_login_url(broker_name: str, broker_doc_id: str) -> str:
+        normalized_name = str(broker_name or '').lower()
+        if 'flattrade' in normalized_name:
+            return f'/broker/flattrade/login?broker_doc_id={broker_doc_id}'
+        if 'zerodha' in normalized_name or 'kite' in normalized_name:
+            return f'/broker/kite/login?broker_doc_id={broker_doc_id}'
+        return ''
+
+    def _list_broker_docs(broker_keywords: tuple[str, ...]) -> list[dict]:
+        query: dict[str, Any] = {'broker_type': 'live'}
+        if normalized_selected_broker_id:
+            try:
+                query['_id'] = ObjectId(normalized_selected_broker_id)
+            except Exception:
+                return []
+        docs: list[dict] = []
+        for doc in raw_db['broker_configuration'].find(query):
+            broker_name = str(doc.get('broker_name') or doc.get('name') or '').strip()
+            if any(keyword in broker_name.lower() for keyword in broker_keywords):
+                docs.append(doc)
+        return docs
+
+    def _account_login_state(doc: dict, verify_live: bool = False) -> dict:
+        broker_doc_id = str(doc.get('_id') or '').strip()
+        broker_name = str(doc.get('broker_name') or doc.get('name') or '').strip()
+        access_token = str(doc.get('access_token') or '').strip()
+        api_key = str(doc.get('api_key') or '').strip()
+        is_kite = 'zerodha' in broker_name.lower() or 'kite' in broker_name.lower()
+        has_credentials = bool(access_token) and (bool(api_key) if is_kite else True)
+
+        is_logged_in = has_credentials
+        message = '' if has_credentials else 'Credentials not configured'
+        if has_credentials and verify_live:
+            # Stored-token presence can't tell a stale Kite/FlatTrade token
+            # from a live one — both expire silently server-side with no DB
+            # write, so only a real API ping (kite.profile() / FlatTrade
+            # OrderBook, via the same check /broker-configurations already
+            # runs) tells the truth. Only paid for here, on the
+            # low-frequency broker-status badge call — never on the
+            # position-poll hot path, where the positions fetch itself is
+            # already a live proof of the session.
+            from features.broker_accounts import validate_broker_configuration_session
+            is_logged_in, _expired, validate_message = validate_broker_configuration_session(doc, raw_db)
+            if not is_logged_in:
+                message = validate_message or 'Session expired. Please login again.'
+
+        return {
+            '_id': broker_doc_id,
+            'broker_name': broker_name,
+            'broker_icon': str(doc.get('broker_icon') or '').strip(),
+            'account_id': str(doc.get('user_id') or '').strip(),
+            'user_name': str(doc.get('user_name') or '').strip(),
+            'api_key': api_key,
+            'access_token': access_token,
+            'is_logged_in': is_logged_in,
+            'login_url': '' if is_logged_in else _broker_login_url(broker_name, broker_doc_id),
+            'message': message,
+        }
+
+    try:
+        flattrade_docs = _list_broker_docs(('flattrade',))
+    except Exception as exc:
+        flattrade_docs = []
+        log.debug('flattrade account lookup error: %s', exc)
+    try:
+        kite_docs = _list_broker_docs(('kite', 'zerodha'))
+    except Exception as exc:
+        kite_docs = []
+        log.debug('kite account lookup error: %s', exc)
+
+    for doc in flattrade_docs:
+        if normalized_selected_broker_id and normalized_selected_broker_id == str(doc.get('_id') or '').strip():
+            selected_broker_kind = 'flattrade'
+    for doc in kite_docs:
+        if normalized_selected_broker_id and normalized_selected_broker_id == str(doc.get('_id') or '').strip():
+            selected_broker_kind = 'kite'
+
+    # ── Decide which single broker's positions actually need fetching ──
+    # A specific broker_id (the dropdown's by-broker call) always wins.
+    # Otherwise (the "All Brokers" view) only the first logged-in broker in
+    # dropdown order — Dhan, then FlatTrade, then Kite — is used, instead of
+    # merging all three brokers' positions on every load.
+    flattrade_accounts: list[dict] = []
+    kite_accounts: list[dict] = []
+    target_kind = selected_broker_kind
+
+    if fetch_positions and not normalized_selected_broker_id:
+        if dhan_logged_in:
+            target_kind = 'dhan'
+        else:
+            flattrade_accounts = [_account_login_state(doc) for doc in flattrade_docs]
+            if any(account['is_logged_in'] for account in flattrade_accounts):
+                target_kind = 'flattrade'
+            else:
+                kite_accounts = [_account_login_state(doc) for doc in kite_docs]
+                if any(account['is_logged_in'] for account in kite_accounts):
+                    target_kind = 'kite'
+
+    if include_broker_status:
+        # Dropdown badges need every broker's login state regardless of which
+        # one (if any) ends up supplying position data above.
+        if not flattrade_accounts:
+            flattrade_accounts = [_account_login_state(doc, verify_live=True) for doc in flattrade_docs]
+        if not kite_accounts:
+            kite_accounts = [_account_login_state(doc, verify_live=True) for doc in kite_docs]
+        broker_status.append({
+            'broker_id': dhan_broker_id,
+            'broker_name': 'dhan',
+            'broker_key': 'dhan',
+            'broker_icon': 'dhan.svg',
+            'user_name': str(cfg.get('user_name') or '').strip(),
+            'is_logged_in': dhan_logged_in,
+            'login_url': '',
+            'message': dhan_detail,
+        })
+        for account in flattrade_accounts:
+            broker_status.append({
+                'broker_id': account['_id'],
+                'broker_name': account.get('broker_name') or 'FlatTrade',
+                'broker_key': 'flattrade',
+                'broker_icon': account.get('broker_icon') or 'flattrade.svg',
+                'user_name': account.get('user_name') or '',
+                'is_logged_in': bool(account.get('is_logged_in')),
+                'login_url': account.get('login_url') or '',
+                'message': account.get('message') or '',
+            })
+        for account in kite_accounts:
+            broker_status.append({
+                'broker_id': account['_id'],
+                'broker_name': account.get('broker_name') or 'kite',
+                'broker_key': 'kite',
+                'broker_icon': account.get('broker_icon') or 'kite-logo.svg',
+                'user_name': account.get('user_name') or '',
+                'is_logged_in': bool(account.get('is_logged_in')),
+                'login_url': account.get('login_url') or '',
+                'message': account.get('message') or '',
+            })
+
+    if target_kind == 'dhan' and dhan_logged_in:
+        try:
+            import requests as _req  # type: ignore
+
+            response = _req.get(
+                'https://api.dhan.co/v2/positions',
+                headers={
+                    'access-token': dhan_access_token,
+                    'client-id': dhan_client_id,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                timeout=8,
+            )
+            payload = response.json() if response.ok else {}
+            if isinstance(payload, list):
+                raw_positions = payload
+            elif isinstance(payload, dict):
+                for key in ('data', 'positions', 'open_positions', 'result'):
+                    candidate = payload.get(key)
+                    if isinstance(candidate, list):
+                        raw_positions = candidate
+                        break
+        except Exception as exc:
+            dhan_detail = f'Failed to fetch dhan positions: {exc}'
+
+    flattrade_detail = ''
+    flattrade_raw_legs: list[dict] = []
+    if target_kind == 'flattrade':
+        if not flattrade_accounts:
+            flattrade_accounts = [_account_login_state(doc) for doc in flattrade_docs]
+        for account in flattrade_accounts:
+            if not account.get('is_logged_in'):
+                # Reached when a specific broker_id was requested directly
+                # (e.g. the Positions page's by-broker dropdown) and that
+                # account has no/missing credentials — surface why instead of
+                # silently returning zero positions.
+                flattrade_detail = account.get('message') or 'FlatTrade not logged in'
+                continue
+            adapter = get_flattrade_instance(str(account.get('account_id') or ''), str(account.get('access_token') or ''))
+            if adapter is None:
+                flattrade_detail = 'FlatTrade account_id or access_token missing'
+                continue
+            try:
+                rows = adapter.raw_positions()
+            except Exception as exc:
+                # raw_positions() only raises on a session/auth failure (see its
+                # docstring) — anything else it tolerates as "no positions" —
+                # so this is always a real "please log in again", not a blip.
+                log.debug('flattrade raw_positions error account=%s: %s', account.get('_id'), exc)
+                flattrade_detail = f'FlatTrade session expired: {exc}'
+                continue
+            flattrade_detail = ''  # this account's fetch succeeded
+            account_doc_id = str(account.get('_id') or '').strip()
+            for row in (rows or []):
+                if not isinstance(row, dict):
+                    continue
+                net_qty = _safe_int(row.get('netqty'))
+                if net_qty == 0:
+                    # Closed-leg booked P&L isn't mapped yet for FlatTrade (no
+                    # confirmed day-buy/day-sell/realized-pnl field names) — only
+                    # open legs are surfaced for now.
+                    continue
+                parsed = parse_flattrade_tsym(row.get('tsym'))
+                if not parsed:
+                    continue
+                contract_key = (parsed['underlying'], parsed['expiry'], parsed['strike'], parsed['option_type'])
+                flattrade_raw_legs.append({
+                    **parsed,
+                    'broker_id': account_doc_id,
+                    'net_qty': net_qty,
+                    'avg_price': _safe_float(row.get('netavgprc')),
+                    'own_ltp': _safe_float(row.get('lp')),
+                    'tsym': str(row.get('tsym') or ''),
+                    'dhan_token_doc': dhan_token_by_contract.get(contract_key) or {},
+                })
+            break  # only the first logged-in FlatTrade account in dropdown order
+
+    kite_detail = ''
+    kite_raw_legs: list[dict] = []
+    if target_kind == 'kite':
+        if not kite_accounts:
+            kite_accounts = [_account_login_state(doc) for doc in kite_docs]
+        for account in kite_accounts:
+            if not account.get('is_logged_in'):
+                # Reached when a specific broker_id was requested directly
+                # and that account has no/missing credentials — surface why
+                # instead of silently returning zero positions.
+                kite_detail = account.get('message') or 'Kite not logged in'
+                continue
+            try:
+                from kiteconnect import KiteConnect  # type: ignore
+                from kiteconnect.exceptions import TokenException  # type: ignore
+
+                api_key = str(account.get('api_key') or '').strip()
+                access_token = str(account.get('access_token') or '').strip()
+                if not api_key or not access_token:
+                    log.debug('kite account missing api_key/access_token account=%s', account.get('_id'))
+                    kite_detail = 'Kite api_key or access_token missing'
+                    continue
+                kite = KiteConnect(api_key=api_key)
+                kite.set_access_token(access_token)
+                positions = kite.positions() if kite is not None else {}
+                rows = positions.get('net') if isinstance(positions, dict) else []
+            except TokenException as exc:
+                log.debug('kite access token invalid account=%s: %s', account.get('_id'), exc)
+                kite_detail = f'Kite session expired: {exc}'
+                continue
+            except Exception as exc:
+                log.debug('kite positions error account=%s: %s', account.get('_id'), exc)
+                kite_detail = f'Failed to fetch Kite positions: {exc}'
+                continue
+            kite_detail = ''  # this account's fetch succeeded
+            account_doc_id = str(account.get('_id') or '').strip()
+            for row in (rows or []):
+                if not isinstance(row, dict):
+                    continue
+                net_qty = _safe_int(row.get('quantity'))
+                if net_qty == 0:
+                    continue
+                # Reverse-lookup against Kite's own instrument cache rather than a
+                # hand-rolled regex — see parse_kite_tradingsymbol's docstring for
+                # why (monthly vs weekly symbol grammar differs). Returns None
+                # (leg skipped, not crashed) if that cache is empty — notably when
+                # Dhan is the active feed broker, which it is today.
+                parsed = parse_kite_tradingsymbol(row.get('tradingsymbol'))
+                if not parsed:
+                    log.debug('kite leg symbol unresolved, skipping: %s', row.get('tradingsymbol'))
+                    continue
+                contract_key = (parsed['underlying'], parsed['expiry'], parsed['strike'], parsed['option_type'])
+                kite_raw_legs.append({
+                    **parsed,
+                    'broker_id': account_doc_id,
+                    'net_qty': net_qty,
+                    'avg_price': _safe_float(row.get('average_price')),
+                    'own_ltp': _safe_float(row.get('last_price')),
+                    'tsym': str(row.get('tradingsymbol') or ''),
+                    'dhan_token_doc': dhan_token_by_contract.get(contract_key) or {},
+                })
+            break  # only the first logged-in Kite account in dropdown order
+
+    spot_ltp_by_underlying: dict[str, float] = {}
+    try:
+        from features.dhan_ticker import dhan_ticker_manager
+        spot_ltp_by_underlying = {
+            str(key or '').strip().upper(): _safe_float(value)
+            for key, value in dict(dhan_ticker_manager.spot_map or {}).items()
+            if str(key or '').strip()
+        }
+        live_ltp_map = dict(dhan_ticker_manager.ltp_map or {})
+    except Exception:
+        spot_ltp_by_underlying = {}
+        live_ltp_map = {}
+
+    open_positions: list[dict] = []
+    subscribe_tokens: list[dict] = []
+    token_market_data: list[dict] = []
+    seen_tokens: set[str] = set()
+
+    ws_segment_by_token: dict[str, str] = {}
+    for row in (raw_positions or []):
+        if not isinstance(row, dict):
+            continue
+        token = str(
+            row.get("securityId")
+            or row.get("security_id")
+            or row.get("token")
+            or row.get("instrument_token")
+            or ""
+        ).strip()
+        if not token:
+            continue
+        token_doc = token_map.get(token) or {}
+        ws_segment = str(token_doc.get("ws_segment") or row.get("exchangeSegment") or "").strip().upper()
+        if ws_segment in {"NSE_FNO", "BSE_FNO"}:
+            ws_segment_by_token[token] = ws_segment
+
+    # FlatTrade/Kite legs matched to a Dhan token also need a quote
+    # prefetched — same centralized-LTP join as the Dhan-native rows above.
+    for leg in flattrade_raw_legs + kite_raw_legs:
+        dhan_token_doc = leg.get('dhan_token_doc') or {}
+        token = str(dhan_token_doc.get('token') or '').strip()
+        ws_segment = str(dhan_token_doc.get('ws_segment') or '').strip().upper()
+        if token and ws_segment in {"NSE_FNO", "BSE_FNO"}:
+            ws_segment_by_token[token] = ws_segment
+
+    rest_quote_map: dict[str, dict] = {}
+    if ws_segment_by_token:
+        try:
+            rest_quote_map = _get_broker_rest_quotes(list(ws_segment_by_token.keys()), raw_db, ws_segment_by_token)
+        except Exception as exc:
+            log.debug("dhan broker rest quote prefetch error: %s", exc)
+
+    def _append_external_broker_leg(leg: dict, source: str, broker_label: str) -> None:
+        """
+        Shared by the FlatTrade and Kite branches below — both produce legs
+        in the same {underlying, option_type, strike, expiry, net_qty,
+        avg_price, own_ltp, tsym, dhan_token_doc} shape, so they share one
+        leg-builder rather than duplicating it per broker.
+        """
+        underlying = leg['underlying']
+        option_type = leg['option_type']
+        strike = leg['strike']
+        expiry_date = leg['expiry']
+        net_qty = leg['net_qty']
+        position = 'BUY' if net_qty > 0 else 'SELL'
+        quantity = abs(net_qty)
+        entry_price = leg['avg_price']
+
+        dhan_token_doc = leg.get('dhan_token_doc') or {}
+        dhan_token = str(dhan_token_doc.get('token') or '').strip()
+        ws_segment = str(dhan_token_doc.get('ws_segment') or '').strip().upper()
+        rest_quote = rest_quote_map.get(dhan_token) or {} if dhan_token else {}
+        # Same centralized-LTP join as Dhan legs: prefer Dhan's live ticker/REST
+        # quote for this contract; only fall back to the source broker's own
+        # quote when Dhan hasn't synced this exact strike/expiry.
+        ltp = _safe_float(
+            live_ltp_map.get(dhan_token)
+            or rest_quote.get('ltp')
+            or leg['own_ltp']
+        )
+        if ltp <= 0:
+            ltp = leg['own_ltp'] or entry_price
+        spot_price = _safe_float(spot_ltp_by_underlying.get(underlying))
+        symbol = leg['tsym']
+
+        open_positions.append({
+            'trade_id': f'{source}:{dhan_token or symbol or len(open_positions)}',
+            'strategy_id': f'{source}-broker:{underlying or "UNKNOWN"}',
+            'strategy_name': f'{broker_label} Live Positions - {underlying}'.strip(' -') if underlying else f'{broker_label} Live Positions',
+            'group_name': 'Broker',
+            'broker_id': str(leg.get('broker_id') or '').strip(),
+            'broker_key': source,
+            'ticker': underlying,
+            'underlying': underlying,
+            'leg_id': f'{source}:{dhan_token or symbol or len(open_positions)}',
+            'position': position,
+            'option': option_type,
+            'strike': strike,
+            'expiry_date': expiry_date,
+            'entry_price': entry_price,
+            'exit_price': 0.0,
+            'ltp': ltp,
+            'spot_price': spot_price,
+            'quantity': quantity,
+            'exited': False,
+            'realized_pnl': 0.0,
+            'timestamp': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+            'symbol': symbol,
+            'token': dhan_token,
+            'source': f'{source}_positions',
+        })
+
+        if dhan_token and dhan_token not in seen_tokens:
+            seen_tokens.add(dhan_token)
+            subscribe_tokens.append({
+                'token': dhan_token,
+                'symbol': symbol,
+                'underlying': underlying,
+                'ws_segment': ws_segment or 'NSE_FNO',
+            })
+            token_market_data.append({
+                'token': dhan_token,
+                'symbol': symbol,
+                'underlying': underlying,
+                'ltp': ltp,
+                'option_type': option_type,
+                'exchange_segment': ws_segment or 'NSE_FNO',
+            })
+
+    for row in (raw_positions or []):
+        if not isinstance(row, dict):
+            continue
+        if normalized_selected_broker_id and selected_broker_kind and selected_broker_kind != 'dhan':
+            continue
+
+        token = str(
+            row.get('securityId')
+            or row.get('security_id')
+            or row.get('token')
+            or row.get('instrument_token')
+            or ''
+        ).strip()
+        token_doc = token_map.get(token) or {}
+
+        # FNO-only filter: Dhan's /v2/positions also returns NSE_EQ/CNC cash
+        # holdings in the same list — those must never reach the simulator.
+        ws_segment = str(token_doc.get('ws_segment') or row.get('exchangeSegment') or '').strip().upper()
+        if ws_segment not in {'NSE_FNO', 'BSE_FNO'}:
+            continue
+
+        raw_option_type = str(
+            token_doc.get('option_type')
+            or row.get('drvOptionType')
+            or row.get('optionType')
+            or row.get('right')
+            or ''
+        ).strip().upper()
+        # Dhan reports CALL/PUT (or NA for futures) instead of CE/PE.
+        option_type = {'CALL': 'CE', 'PUT': 'PE'}.get(raw_option_type, raw_option_type)
+        if option_type not in {'CE', 'PE'}:
+            option_type = 'FUT'
+
+        buy_qty = _safe_int(row.get('buyQty'))
+        sell_qty = _safe_int(row.get('sellQty'))
+        net_qty = _safe_int(
+            row.get('netQty')
+            or row.get('netqty')
+            or row.get('quantity')
+            or row.get('qty')
+        )
+        # netQty stays 0 once a leg is squared off — that's a closed position,
+        # not a missing one, so it must still be reported (with realized PnL).
+        exited = net_qty == 0
+        if exited and buy_qty == 0 and sell_qty == 0:
+            continue
+
+        # Dhan trading symbols are "<UNDERLYING>-<expiry>-<strike>-<CE/PE>" (or
+        # "<UNDERLYING>-<expiry>-FUT") — when the contract hasn't been synced
+        # into active_option_tokens yet, parse the underlying out of that
+        # symbol instead of falling back to the raw, unsplit string.
+        trading_symbol_raw = str(row.get('tradingSymbol') or row.get('securitySymbol') or '').strip()
+        parsed_underlying = trading_symbol_raw.split('-')[0].strip() if trading_symbol_raw else ''
+        underlying = str(
+            token_doc.get('instrument')
+            or row.get('underlying')
+            or parsed_underlying
+            or trading_symbol_raw
+            or ''
+        ).strip().upper()
+        expiry_date = str(
+            token_doc.get('expiry') or row.get('drvExpiryDate') or row.get('expiryDate') or row.get('expiry') or ''
+        ).strip()[:10]
+        strike = token_doc.get('strike')
+        if strike in (None, ''):
+            strike = _safe_float(row.get('drvStrikePrice') or row.get('strikePrice') or row.get('strike') or 0)
+
+        buy_avg = _safe_float(row.get('buyAvg'))
+        sell_avg = _safe_float(row.get('sellAvg'))
+        cost_price = _safe_float(row.get('costPrice'))
+        # Dhan doesn't expose fill order, so for a squared-off leg we assume the
+        # side with the larger filled quantity was the original entry direction.
+        position = 'BUY' if (net_qty > 0 or (exited and buy_qty >= sell_qty)) else 'SELL'
+
+        if exited:
+            entry_price = (buy_avg if position == 'BUY' else sell_avg) or _safe_float(
+                row.get('avgPrice') or row.get('averagePrice') or row.get('netPrice')
+            )
+            exit_price = sell_avg if position == 'BUY' else buy_avg
+        else:
+            # For an open position, Dhan's own UI shows "costPrice" as the
+            # Avg Price — it's the blended cost basis of the net (incl.
+            # carry-forward) position. buyAvg/sellAvg only reflect today's
+            # fills and get rebased for MTM once a leg carries forward from
+            # a prior day, which is why they drift from the broker's display.
+            entry_price = cost_price or (buy_avg if position == 'BUY' else sell_avg)
+            exit_price = 0.0
+
+        rest_quote = rest_quote_map.get(token) or {}
+        ltp = _safe_float(
+            live_ltp_map.get(token)
+            or rest_quote.get("ltp")
+            or row.get('lastPrice')
+            or row.get('ltp')
+            or row.get('lastTradedPrice')
+        )
+        if exited:
+            ltp = exit_price or entry_price
+        elif ltp <= 0:
+            ltp = entry_price
+
+        quantity = abs(net_qty) if not exited else max(buy_qty, sell_qty)
+        realized_pnl = _safe_float(row.get('realizedProfit')) if exited else 0.0
+        symbol = str(
+            token_doc.get('symbol')
+            or row.get('tradingSymbol')
+            or row.get('securitySymbol')
+            or ''
+        ).strip()
+        spot_price = _safe_float(spot_ltp_by_underlying.get(underlying))
+
+        open_positions.append({
+            'trade_id': f'dhan:{token or symbol or len(open_positions)}',
+            # Keyed per underlying so the simulator UI groups each
+            # underlying (NIFTY, SENSEX, ...) into its own card instead of
+            # merging every broker position under one shared strategy id.
+            'strategy_id': f'dhan-broker:{underlying or "UNKNOWN"}',
+            'strategy_name': f'Dhan Live Positions - {underlying}'.strip(' -') if underlying else 'Dhan Live Positions',
+            'group_name': 'Broker',
+            'broker_id': dhan_broker_id,
+            'broker_key': 'dhan',
+            'ticker': underlying,
+            'underlying': underlying,
+            'leg_id': f'dhan:{token or symbol or len(open_positions)}',
+            'position': position,
+            'option': option_type,
+            'strike': strike,
+            'expiry_date': expiry_date,
+            'entry_price': entry_price,
+            'exit_price': exit_price,
+            'ltp': ltp,
+            'spot_price': spot_price,
+            'quantity': quantity,
+            'exited': exited,
+            'realized_pnl': realized_pnl,
+            'timestamp': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+            'symbol': symbol,
+            'token': token,
+            'source': 'dhan_positions',
+        })
+
+        if token and token not in seen_tokens:
+            seen_tokens.add(token)
+            subscribe_tokens.append({
+                'token': token,
+                'symbol': symbol,
+                'underlying': underlying,
+                'ws_segment': ws_segment or 'NSE_FNO',
+            })
+            token_market_data.append({
+                'token': token,
+                'symbol': symbol,
+                'underlying': underlying,
+                'ltp': ltp,
+                'option_type': option_type,
+                'exchange_segment': ws_segment or 'NSE_FNO',
+            })
+
+    for leg in flattrade_raw_legs:
+        _append_external_broker_leg(leg, 'flattrade', 'FlatTrade')
+    for leg in kite_raw_legs:
+        _append_external_broker_leg(leg, 'kite', 'Kite')
+
+    try:
+        if subscribe_tokens:
+            _broker_refresh_user_tokens('__simulator_dhan_positions__', [item.get('token') for item in subscribe_tokens if item.get('token')])
+    except Exception as exc:
+        log.debug('dhan positions subscribe refresh error: %s', exc)
+
+    # One shared {spot_price, change_pct} object per underlying — fetched
+    # once here, then every leg of that underlying is pointed at the same
+    # entry below instead of each leg holding its own (possibly stale or
+    # inconsistent) copy.
+    underlyings = {str(item.get('underlying') or '').strip() for item in open_positions if item.get('underlying')}
+    try:
+        underlying_quotes = _fetch_dhan_index_quotes(db, underlyings)
+    except Exception as exc:
+        log.warning('dhan index quote error: %s', exc)
+        underlying_quotes = {}
+    for u in underlyings:
+        if u in underlying_quotes:
+            continue
+        # _fetch_dhan_index_quotes() comes back without this underlying whenever there's no
+        # live Dhan quote AND no tick already stored for *today* (e.g. weekends/holidays, or
+        # the simulator's forwarded feed running outside real market hours) — that used to
+        # hardcode change_pct/change_points to 0.0 here even though a live spot_price (from
+        # the ticker, not Dhan) was right there. Anchor on the latest actual trading day (same
+        # as _fetch_dhan_index_quotes) so a weekend/holiday view compares that day's own close
+        # against the one before it, instead of always reading +0.00%.
+        spot_price = _safe_float(spot_ltp_by_underlying.get(u))
+        prev_close = 0.0
+        try:
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            session_day = _latest_trading_day(raw_db, today_str)
+            prev_close = _previous_session_close(raw_db['option_chain_index_spot'], u, session_day)
+        except Exception as exc:
+            log.debug('previous session close fallback error underlying=%s: %s', u, exc)
+        underlying_quotes[u] = {
+            'spot_price': spot_price,
+            'change_pct': round((spot_price - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0.0,
+            'change_points': round(spot_price - prev_close, 2) if prev_close > 0 else 0.0,
+        }
+    for item in open_positions:
+        quote = underlying_quotes.get(str(item.get('underlying') or '').strip()) or {'spot_price': 0.0, 'change_pct': 0.0, 'change_points': 0.0}
+        item['spot_price'] = quote['spot_price']
+        item['change_pct'] = quote['change_pct']
+        item['change_points'] = quote.get('change_points', 0.0)
+
+    # Attach each leg's saved SL/Target ("simulator_triggers"), but only if the position's
+    # entry_price/quantity/exited state still matches what it was when the trigger was saved —
+    # otherwise the saved %/points was computed off stale numbers (e.g. the user added to the
+    # position, or this leg_id slot was closed and reopened by a genuinely different trade) and
+    # must not be silently reapplied. A mismatch flips the trigger to status="stale" (never
+    # deleted, so there's an audit trail) instead of attaching `risk` to the item below.
+    try:
+        triggers_col = raw_db['simulator_triggers']
+        leg_ids = list({str(item.get('leg_id') or '').strip() for item in open_positions if item.get('leg_id')})
+        trig_by_key: dict[tuple[str, str], dict] = {}
+        if leg_ids:
+            for trig in triggers_col.find({'leg_id': {'$in': leg_ids}, 'status': 'active'}):
+                trig_by_key[(str(trig.get('broker_id') or '').strip(), str(trig.get('leg_id') or '').strip())] = trig
+        stale_ids = []
+        for item in open_positions:
+            key = (str(item.get('broker_id') or '').strip(), str(item.get('leg_id') or '').strip())
+            trig = trig_by_key.get(key)
+            if not trig:
+                continue
+            entry_matches = abs(_safe_float(trig.get('entry_price_at_set')) - _safe_float(item.get('entry_price'))) < 0.01
+            qty_matches = _safe_int(trig.get('quantity_at_set')) == _safe_int(item.get('quantity'))
+            was_exited = bool(trig.get('exited_at_set'))
+            exited_matches = was_exited == bool(item.get('exited'))
+            if entry_matches and qty_matches and exited_matches and not was_exited:
+                item['risk'] = {
+                    'sl_mode': trig.get('sl_mode'), 'sl_value': trig.get('sl_value'),
+                    'tp_mode': trig.get('tp_mode'), 'tp_value': trig.get('tp_value'),
+                }
+            else:
+                stale_ids.append(trig['_id'])
+        if stale_ids:
+            triggers_col.update_many(
+                {'_id': {'$in': stale_ids}},
+                {'$set': {'status': 'stale', 'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}},
+            )
+    except Exception as exc:
+        log.debug('paper trade trigger drift-check error: %s', exc)
+
+    # Attach the payoff chart's saved upper/lower stoploss marker ("simulator_portfolio_triggers"),
+    # basket-level (one doc per broker+underlying, not per-leg) — only while the set of open
+    # legs (and their quantities) for that underlying still exactly matches what it was when the
+    # marker was saved. Any leg added/removed/resized since then means the payoff curve the
+    # marker was set against no longer reflects reality, so it's invalidated (status flips to
+    # "stale", never deleted) instead of being silently reapplied. One call here is always
+    # single-broker/multi-underlying (target_kind resolves to exactly one broker), so this is one
+    # batched query over underlying, not a query per underlying.
+    try:
+        portfolio_col = raw_db['simulator_portfolio_triggers']
+        call_broker_id = str(open_positions[0].get('broker_id') or '').strip() if open_positions else ''
+        trig_by_underlying: dict[str, dict] = {}
+        if call_broker_id and underlyings:
+            for trig in portfolio_col.find({'broker_id': call_broker_id, 'underlying': {'$in': list(underlyings)}, 'status': 'active'}):
+                trig_by_underlying[str(trig.get('underlying') or '').strip()] = trig
+        stale_portfolio_ids = []
+        for u in underlyings:
+            trig = trig_by_underlying.get(u)
+            if not trig:
+                continue
+            current_legs = {
+                (str(item.get('leg_id') or '').strip(), _safe_int(item.get('quantity')))
+                for item in open_positions
+                if str(item.get('underlying') or '').strip() == u and not item.get('exited') and _safe_int(item.get('quantity')) > 0
+            }
+            snapshot_legs = {(s.get('leg_id'), _safe_int(s.get('quantity'))) for s in (trig.get('legs_snapshot') or [])}
+            if current_legs == snapshot_legs:
+                for item in open_positions:
+                    if str(item.get('underlying') or '').strip() == u:
+                        item['portfolio_risk'] = {'sl_upper': trig.get('sl_upper'), 'sl_lower': trig.get('sl_lower')}
+            else:
+                stale_portfolio_ids.append(trig['_id'])
+        if stale_portfolio_ids:
+            portfolio_col.update_many(
+                {'_id': {'$in': stale_portfolio_ids}},
+                {'$set': {'status': 'stale', 'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}},
+            )
+    except Exception as exc:
+        log.debug('paper trade portfolio trigger drift-check error: %s', exc)
+
+    # Each broker's own *_detail above is only ever non-empty after a real
+    # failed attempt against the broker actually targeted (target_kind) —
+    # never for "no open positions right now" — so this is the one place
+    # that turns a swallowed auth/session error into a caller-visible
+    # ok=False + message instead of a quietly empty positions list.
+    final_detail = ''
+    if target_kind == 'dhan' and dhan_detail:
+        final_detail = dhan_detail
+    elif target_kind == 'flattrade' and flattrade_detail:
+        final_detail = flattrade_detail
+    elif target_kind == 'kite' and kite_detail:
+        final_detail = kite_detail
+
+    return {
+        'ok': not final_detail,
+        'detail': final_detail,
+        'underlyings': underlying_quotes,
+        'open_positions': open_positions,
+        'subscribe_tokens': subscribe_tokens,
+        'token_market_data': token_market_data,
+        'broker_status': broker_status,
+    }
 
 
 def _build_strategy_spot_subscribe_tokens(
@@ -11291,10 +12564,20 @@ async def execute_orders_socket(
     activation_mode: str = Query(default=''),
 ):
     await websocket.accept()
+    # Legacy live/algo-backtest/fast-forward .html dashboards (via
+    # assets/js/algo-stream-sockets.js) connect with ?user_id=... in the URL
+    # and no auth handshake — keep that contract untouched. Callers that omit
+    # user_id (algo-admin React app) are the new path and must authenticate
+    # via the first message instead (see _ws_authenticate).
+    is_legacy_caller = bool(str(user_id or '').strip())
+    if is_legacy_caller:
+        uid = str(user_id or '').strip()
+    else:
+        if not await _ws_authenticate(websocket):
+            return
+        uid = DEFAULT_APP_USER_ID
     _register_channel_websocket('execute-orders', websocket)
-    uid = str(user_id or '').strip()
-    if uid:
-        _register_user_websocket('execute-orders', uid, websocket)
+    _register_user_websocket('execute-orders', uid, websocket)
     await websocket.send_text(_build_message(
         'connection_established',
         'Execute orders websocket connected',
@@ -11303,7 +12586,7 @@ async def execute_orders_socket(
     print(
         '[WS CONNECTED] '
         f'channel=execute-orders '
-        f'user_id={uid or "-"} '
+        f'user_id={uid} '
         f'activation_mode={activation_mode or "-"}'
     )
     db = MongoData()
@@ -11373,11 +12656,12 @@ async def execute_orders_socket(
                 requested_date = str((parsed_message or {}).get('trade_date') or '').strip()
                 requested_mode = str((parsed_message or {}).get('activation_mode') or '').strip()
                 requested_group_id = str((parsed_message or {}).get('group_id') or '').strip()
-                requested_user_id = str((parsed_message or {}).get('user_id') or '').strip()
                 requested_autoload = (parsed_message or {}).get('autoload')
-                if requested_user_id and requested_user_id != uid:
-                    uid = requested_user_id
-                    _register_user_websocket('execute-orders', uid, websocket)
+                if is_legacy_caller:
+                    requested_user_id = str((parsed_message or {}).get('user_id') or '').strip()
+                    if requested_user_id and requested_user_id != uid:
+                        uid = requested_user_id
+                        _register_user_websocket('execute-orders', uid, websocket)
                 if requested_date:
                     trade_date = requested_date
                     seen_signatures = {}
@@ -11566,7 +12850,7 @@ async def execute_orders_socket(
                         log.error('squared-off error: %s', exc)
                         print(f'[SQUARE OFF] error: {exc}')
 
-                    emit_uid = uid or requested_user_id or str((parsed_message or {}).get('user_id') or '').strip()
+                    emit_uid = uid
                     if emit_uid:
                         await emit_execute_order_for_user(
                             db,
@@ -11683,10 +12967,18 @@ async def update_socket(
     activation_mode: str = Query(default=''),
 ):
     await websocket.accept()
+    # Legacy .html dashboards connect with ?user_id=... and no auth handshake
+    # — keep that contract untouched. Callers that omit user_id (algo-admin
+    # React app) must authenticate via the first message instead.
+    is_legacy_caller = bool(str(user_id or '').strip())
+    if is_legacy_caller:
+        uid = str(user_id or '').strip()
+    else:
+        if not await _ws_authenticate(websocket):
+            return
+        uid = DEFAULT_APP_USER_ID
     _register_channel_websocket('update', websocket)
-    uid = str(user_id or '').strip()
-    if uid:
-        _register_user_websocket('update', uid, websocket)
+    _register_user_websocket('update', uid, websocket)
     activation_mode = str(activation_mode or '').strip() or 'algo-backtest'
     await websocket.send_text(_build_message(
         'connection_established',
@@ -11696,7 +12988,7 @@ async def update_socket(
     print(
         '[WS CONNECTED] '
         f'channel=update '
-        f'user_id={uid or "-"} '
+        f'user_id={uid} '
         f'activation_mode={activation_mode}'
     )
     db = MongoData()
@@ -12034,21 +13326,22 @@ async def update_socket(
                     parsed_message = {}
                 requested_date = str((parsed_message or {}).get('trade_date') or '').strip()
                 requested_mode = str((parsed_message or {}).get('activation_mode') or '').strip()
-                requested_user_id = str((parsed_message or {}).get('user_id') or '').strip()
                 requested_status = str((parsed_message or {}).get('status') or '').strip()
                 requested_action = str((parsed_message or {}).get('action') or '').strip().lower()
                 requested_reason = str((parsed_message or {}).get('reason') or '').strip()
                 requested_listen_timestamp = str((parsed_message or {}).get('listen_timestamp') or '').strip()
                 requested_autoload = (parsed_message or {}).get('autoload')
+                if is_legacy_caller:
+                    requested_user_id = str((parsed_message or {}).get('user_id') or '').strip()
+                    if requested_user_id and requested_user_id != uid:
+                        uid = requested_user_id
+                        _register_user_websocket('update', uid, websocket)
                 _print_position_refresh_status(
                     'message_received',
                     trade_date=requested_date or trade_date,
                     activation_mode=requested_mode or activation_mode,
                     reason=requested_reason or requested_action or 'subscription',
                 )
-                if requested_user_id and requested_user_id != uid:
-                    uid = requested_user_id
-                    _register_user_websocket('update', uid, websocket)
                 if requested_date:
                     trade_date = requested_date
                     first_open_strategy_payload_printed = False
@@ -12097,6 +13390,52 @@ async def update_socket(
                 should_refresh_now = requested_action == 'get-position' or bool(
                     requested_date or requested_mode or requested_status
                 )
+                if requested_action in {'get-broker-positions', 'get-dhan-positions'}:
+                    broker_positions_payload = _fetch_dhan_broker_option_positions(db)
+                    open_positions = list(broker_positions_payload.get('open_positions') or [])
+                    subscribe_tokens = list(broker_positions_payload.get('subscribe_tokens') or [])
+                    token_market_data = list(broker_positions_payload.get('token_market_data') or [])
+                    if uid:
+                        register_update_user_tokens(uid, subscribe_tokens)
+                    await _send_update_message(_build_message(
+                        'update',
+                        'Broker positions snapshot refreshed',
+                        {
+                            'trade_date': trade_date,
+                            'activation_mode': activation_mode,
+                            'status': subscription_status,
+                            'trigger_reason': requested_reason or 'broker_positions',
+                            'refresh_status': 'completed' if broker_positions_payload.get('ok') else 'error',
+                            'source': 'dhan_positions',
+                            'detail': str(broker_positions_payload.get('detail') or ''),
+                            'open_positions': open_positions,
+                            'subscribe_tokens': subscribe_tokens,
+                            'token_market_data': token_market_data,
+                            'subscribed_tokens_count': len(subscribe_tokens),
+                            'count': len(open_positions),
+                        },
+                    ))
+                    await _send_update_message(_build_message(
+                        'ltp_update',
+                        'Broker LTP update for active positions',
+                        {
+                            'trade_date': trade_date,
+                            'listen_time': current_listen_hhmm,
+                            'listen_timestamp': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+                            'source': 'dhan_positions',
+                            'ltp': [
+                                {
+                                    'token': str(item.get('token') or ''),
+                                    'ltp': _safe_float(item.get('ltp')),
+                                    'underlying': str(item.get('underlying') or ''),
+                                    'option_type': str(item.get('option') or ''),
+                                }
+                                for item in open_positions
+                                if str(item.get('token') or '').strip()
+                            ],
+                        },
+                    ))
+                    continue
                 if should_refresh_now:
                     _refresh_reason = requested_reason or ('explicit_trigger' if requested_action == 'get-position' else 'subscription')
                     await asyncio.get_running_loop().run_in_executor(None, refresh_position_snapshot, _refresh_reason)
@@ -12264,6 +13603,23 @@ async def update_socket(
                         except Exception as _ltp_exc:
                             log.debug('live ltp_update error: %s', _ltp_exc)
                     # Always skip backtest simulation for live mode
+                    continue
+                # Fast-forward: refresh subscribe_tokens when dirty (new positions entered).
+                # Without this, _user_tokens in the LTP broadcast stays stale after a leg
+                # is entered and the new token never appears in the per-user LTP filter.
+                if activation_mode == 'fast-forward':
+                    if uid:
+                        _ff_dirty_key = f'{uid}|{trade_date}|fast-forward'
+                        _ff_is_dirty = bool(PENDING_FF_TOKEN_REFRESH_DIRTY.pop(_ff_dirty_key, False))
+                    else:
+                        _ff_is_dirty = False
+                    if _ff_is_dirty:
+                        try:
+                            await asyncio.get_running_loop().run_in_executor(
+                                None, refresh_position_snapshot, 'ff_new_position'
+                            )
+                        except Exception as _ffd_exc:
+                            log.debug('ff dirty position refresh error: %s', _ffd_exc)
                     continue
                 # backtest simulation path — only runs when autorun is enabled
                 if not autorun_enabled:
